@@ -1,0 +1,56 @@
+black:
+  blur: 1
+  colBGR: (0, 0, 0)
+  colmax: (255, 254, 30)
+  colmin: (0, 0, 0)
+  max_area: 1000
+  min_area: 90
+blue:
+  blur: 5
+  colBGR: (255, 0, 0)
+  colmax: (173, 254, 253)
+  colmin: (82, 93, 186)
+  max_area: 1000
+  min_area: 90
+brown:
+  blur: 1
+  colBGR: (42, 42, 165)
+  colmax: (32, 169, 250)
+  colmin: (0, 0, 5)
+  max_area: 1000
+  min_area: 90
+bw:
+  blur: 19
+  blur2: 7
+  erosion: 5
+  max_area: 2350
+  min_area: 156
+  treshold: 9
+bw_strict:
+  blur: 29
+  blur2: 25
+  erosion: 17
+  max_area: 1000
+  min_area: 0
+  treshold: 7
+green:
+  blur: 7
+  colBGR: (0, 128, 0)
+  colmax: (87, 231, 253)
+  colmin: (24, 58, 101)
+  max_area: 1000
+  min_area: 90
+orange:
+  blur: 3
+  colBGR: (0, 165, 255)
+  colmax: (32, 254, 255)
+  colmin: (13, 173, 8)
+  max_area: 1000
+  min_area: 90
+red:
+  blur: 35
+  colBGR: (0, 0, 255)
+  colmax: (114, 231, 63)
+  colmin: (0, 0, 0)
+  max_area: 1920
+  min_area: 90
