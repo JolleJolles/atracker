@@ -721,6 +721,10 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         elif opmode == "conv":
             self.drawing_widget.drawing_mode = "line"
         elif opmode == "point":
+    elif opmode == "mask":
+        self.drawing_widget.drawing_mode = "polygon"
+        self.mode_combo.clear(); self.mode_combo.addItems(["rectangle", "polygon", "circle", "ellipse"])
+        self.mode_combo.setCurrentText("polygon")
             self.drawing_widget.drawing_mode = "point"
         if opmode == "framelimits":
             self.flim_group.setVisible(True)
@@ -804,7 +808,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
                 new = min(self.total_frames - 1, self.current_frame_idx + self.fps_spin.value())
                 self.cap.set(cv2.CAP_PROP_POS_FRAMES, new + 1)
                 self.nextFrame()
-        elif key == Qt.Key_U:
+        elif key == Qt.Key_Y:
             if self.is_video:
                 self.onEndClicked()
         else:
