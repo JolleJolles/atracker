@@ -22,6 +22,17 @@ from pythutils.mathutils import points_to_angle, angle_to_vec, get_weights, ptsT
 import threading
 from typing import Callable
 
+
+def qimage_to_numpy(qimg):
+    """Convert a QImage (Grayscale8) to a NumPy array."""
+    qimg = qimg.convertToFormat(QImage.Format_Grayscale8)
+    width = qimg.width()
+    height = qimg.height()
+    ptr = qimg.bits()
+    ptr.setsize(qimg.byteCount())
+    arr = np.array(ptr).reshape(height, width)
+    return arr
+
 def start_powermate_listener(
     vendor_id: int = 1917,
     product_id: int = 1040,
@@ -316,20 +327,31 @@ def loadmask(maskfile):
 
 
 def coordsfrommask(maskfile):
-    if isinstance(maskfile,str):
+    """
+    Given a mask file (filename or numpy array), process it and return:
+      - maskconts: the contours found,
+      - maskcoords: a list of (x, y) coordinates from the contours.
+    """
+    if isinstance(maskfile, str):
         img_mask = cv2.imread(maskfile, 0)
-    elif isinstance(maskfile,np.ndarray):
+    elif isinstance(maskfile, np.ndarray):
         img_mask = maskfile
-        img_mask = cv2.cvtColor(img_mask, cv2.COLOR_BGR2GRAY)
+        if len(img_mask.shape) == 3:
+            img_mask = cv2.cvtColor(img_mask, cv2.COLOR_BGR2GRAY)
+    else:
+        return None, None
+
     try:
-        img_maskinv = cv2.erode(img_mask, np.ones((5,5),np.uint8))
+        img_maskinv = cv2.erode(img_mask, np.ones((5,5), np.uint8))
         img_maskinv = cv2.threshold(img_maskinv, 10, 255, cv2.THRESH_BINARY_INV)[1]
-        maskconts,_ = cv2.findContours(img_maskinv, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)[-2:]
-        maskcoords = [item for i in maskconts for item in contour_to_tuple(i)]
-    except:
+        maskconts, _ = cv2.findContours(img_maskinv, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+        maskcoords = [tuple(pt[0]) for cnt in maskconts for pt in cnt]
+    except Exception as e:
+        print("Mask error:", e)
         maskconts = None
         maskcoords = None
     return maskconts, maskcoords
+
 
 
 def framechecks(cap, frameOK, framelist=None, stopframe=999999, displaystep=100, identifier=""):
