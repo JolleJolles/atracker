@@ -1,0 +1,767 @@
+# Changelog
+
+## Todo
+- Fix optimal linking of IDs in multiple bw contours (clear issue in the animtest_group video where this doesn't happen)
+- Fix multiple colored object tracking (see error when running the tutorial group video)
+- Somehow polygon drawing is not working. It did work so much be related to version of python or something
+- Known issue with inmaskdis > 0 to fix in processor.py around lines 345-350
+
+# 250228 - v0.0.8
+## Improved
+- 18/03/2025 Rewrote the setting-up guide from scratch and made it very organised and clear, also for beginners, and included all steps for mad and windows.
+- 18/03/2025 Reorganised the documentation files, moved the tutorial jupyter file to documentation for working with and setting everything up with atracker, and integrated the documentation and jupyter file, making considerable updates throughout
+- 18/03/2025 Created a new tracking.ipynb tutorial file with all steps for running atracker and specifically related to the tutorial files
+
+## Fixed
+- 18/03/2025 For get_files function set cdir default to "originals"
+
+# 250228 - v0.0.7
+### Added
+- 28/02/2025 Added ceate_dummy_video.py file to the tutorial to create a white dummy video to create manual tracking for testing
+- 28/02/2025 Added a video to the documentation how to use the manual tracker
+
+## Improved
+- 12/03/2025 Improved explanation in 1-setting-up.md 
+- 28/02/2025 Included comment to set fname_vars to False when loading new videos added to 0originals folders that may have different name parameters
+- 28/02/2025 Added some commands to the tutorial jupyter file for processing
+
+# 250131 - v0.0.6
+### Added
+- 31/01/2025 Added/completely fixed pooling for processing using threading instead of multiprocessing
+- 31/01/2025 Also added print statements with idnr if processed file and made sure print statements were flushed (important when pooling)
+  
+### Fixed
+- 01/02/2025 Removed printing invalid rows detected from walls-related computations in the processing function as wrongly also showed when data was empty
+ 
+# 250131 - v0.0.5
+### Added
+- 31/01/2025 Added get_inds function to more easily get the indices of a list of files to be tracked and updated corresponding documentation and also incorporatied a `names` parameter in the track function to call this directly
+
+### Fixed
+- 31/01/2025 Fixed processor function not considering files with no tracking data, not it runs all processing and returns a file with empty dataframe
+
+## 250127 - v0.0.4
+### Added
+- 29/01/2025 Added that by default an "exclude" column is created in the overview file and that for tracking (and more generally the get_files function) it ignores files that have exclude=1. Also included a short explanation about the exclude parameter in the tutorial jupyter file.
+- 29/01/2025 Added printing of circle radius and rectangle area in the `ivideo` function to better draw masks of the same size across multiple videos
+
+### Improved
+- 27/01/2025 Further clarified the functioning of the `get_files()` function in the `3-using-atracker.md` documentation
+- 28/01/2025 Included note in setting-up documentation how to install ffmpeg on older mac systems
+- 29/01/2025 Included brief explanation what the `simple` parameter does in the atracker tutorial file
+- 29/01/2025 Added explanation to the atracker documention how to use the pools parameter
+
+### Fixed
+- 28/01/2025 Fixed getting the list of trackedfiles for process() function while checking for _E files working also on windows 
+- 29/01/2025 Fixed the set_config function documentation as a number of parameters were not shown
+- 29/01/2025 Fixed drymode setting pools temporary in the set_config function, while that does not have that parameter, only the track and process functions
+
+## 250122 - v0.0.3
+### Added
+- Implemented possibility to create custom treshinfo file with the set_interactive() function and to load it in the track() function
+- Start updating the version number in __version__.py in line with changes here and categories for added functionality, improved functionality, and fixes
+
+### Improved
+- Added calc_borderdistvec() function for more optimised use of checking distance to borders for excluding data in the processor() function
+- Added some further clarifications to the tutorial jupyter file about regions among other things
+- Improved the layout of the changelog
+
+### Fixed
+- Tracking older dataset "testpilots exp" and using orientbw = True encountered an error to do with angle variable being double generated, so fixed that in tracker.py file
+- Fixed fixheadtail() utils function using data.angle for computation but should be data.orientation based on recent changes
+- Fixed wallcoords computations in the processor function to better deal with missing data
+- Fixed issues with NA rows at start and end of data due to smoothing in processing, so removed those rows directly after smoothing now
+- Fixed issue with NA rows when checking if coordinates were near a mask in the nearmask() utils function 
+
+## 250121
+- Updated documentation for setting up python, virtual environments, etc and installing atracker
+- Improved the processcon function of the imgprocessor file to check for contour ratio to thereby better exclude noise such as very long contour shapes
+
+## 250117
+- For tracker_man fixed screen size of video window as could be overlapping beyong the screen height
+- For tracker_man Made sure that the coords drawn in the info panel are of the final data, thus including newly added data, and also relect com or fx,fy depending on the type shown (currently it always showed com)
+- Fixed the order of drawing for tracker_man, such that the centroid and heading angle are always on top, and mouse pointer and drawing rectangle and mouse coordinate on top of that
+- Further improved drawing in the tracker_man such that the show_both properly works and the centroid data is shown on top of the arrows, but then only the line is drawn rather than also the points, and changed color to black for better visibility
+- Fixed issue with display in tracker_man, that when I would swap individual or change the time window, it would show the corresponding centroid data but would only update the orientation data upon changing the frame
+- cleaned-up the doc for the keypress function of tracker_man
+- ! Incorporated a major improvement by integrating some functions in the utils file to read a powermate nob that can be used for scrolling through the video of the tracker_man function. Further improving this functionality we can now scroll back and forwards by frame or by second by simply toggling by pressing the powermate
+
+## 250110
+- For tracker_man improved drawing of angles by colouring based on absolute angle, and from red to green, making it easier to distinguish outlier values
+- For tracker_man integrated functionality to smooth angles to better understand how much specific outlier values matter, which can be shown for specific frames using the g-key.
+- For tracker_man fixed when deleting an angle arrow it would only show it when the frame was changed, both for single frame and using the rectangle selection
+- For tracker_man fixed that rectangle selection works when angle arrows are displayed as it wrongly selected the fx,fy columns instead
+- For tracker_man made sure that the orientation is drawn irrespective if arrow angles are shown or com data
+- For tracker_man integrated possibility to toggle drawing of coordinates size based on speed on or off with keypress (j) as for the former points are only drawn when there is data two subsequent frames
+- For tracker_man fixed referring to coords for plotting by creating another variable plotcoords
+
+## 241220
+- Fixed 'b' key in tracker_man file not being explained in the keypresses documentation
+- Added new display option in the tracker_man file to show the coordinates of the current mouse position, which can be toggled with the 'h' key
+- Added parameter delcontdata to processor file to remove contour data, which is helpful for when tracking colored data and bw contours were tracked for angle only
+
+## 241205
+- Updated utils with some new functions to get the screen resolution as screen_info somehow didn't work in some virtual environment I created so now it should be more failsafe. Updated ivideo file accordingly.
+
+## 241009
+- Updated internal documentation and tutorial about storing and using tresh_types
+- Integrated simple `save` function to store the overview file
+- Integrated easy way to create multiple bw treshtypes in the same treshinfo file, simply add a suffix and it will work automatically. For this I updated the imgprocessor, tracker, atracker, and ivideo files
+- fixed all pathing from mac-specific (i.e. "/") to system general using os.path.join mainly in all relevant files, so now atracker is fully functional in windows as well!
+- Wrote processing doc text with details about all variables. Renamed a number of them and reordered based on appearance.
+- Wrote detailed processing documentation, including for manual tracking, and extended tutorial file with processing steps
+
+## 241008
+- Created five dedicated animated videos for the atracker tutorial for learning to track single objects with simple and advanced (skeleton etc) characterisation, pairs of objects, setting the roi and regions for separate objects, groups of objects for bw and color tracking, and group of barcoded objects.
+- fixed that atracker rightly also loads and renames .m4v files
+- Removed the fixdat column as now obsolete with fully functioning mantracking function
+- Fixed lineprint for 'no files to convert' statement in atracker file
+- Removed some not-needed import statements
+- Improved printing during background extraction
+- Fixed renaming `region` to `regions` in tutorial for setting configuration
+- Added set_regions function to easily add regions information to the overview file
+- Fixed indexing of files for the set_interactive function from iloc to loc
+- Improve the using-atracker documentation by further explanations, restructuring, and adapting for improvements with updated tutorial videos
+- Improved the zone drawing functionality to be able to also create a single zone image just like a mask (`maskzone`) and extended explanation in the tutorial documents
+- Integrated simple get_objects function to add number of objects to track to the overview file
+- fixed print statement for the treshtypes parameter of the `set_interactive` function
+- resized and repositioned wrongly positioned trackbars of the ivideo class functionality and maximised size of infopanel
+- included Hue infopanel to help select the right hue values, which dynamically shows the range selected by darkening the rest
+- fixed treshold panels for colors in the ivideo class as min and max values were not correct
+- in the tracker.py file fixed tracking stopping 1 frame too early
+- Created `check_maxframe` function in the core `AT` class to check all videos frame by frame for missing frame and fix the maxframe if there are missing frames, and integrated in the tutorial document using atracker
+- playing with the check_maxframe function using while loop and the `cap.set` function, I noticed a discrepancy of 1 frame, so I set the fcount in the atracker and ivideo classes -1.
+- After more work I discovered the discrepancy can sometimes even be 2. I realised I can use the cap.set function backwards very quickly to find the last working frame so I updated the check_maxframe function. And then I decided to remove it completely by implementing the new utils `find_max_working_pyframe` function directly into the setup_files function, much easier. Also updated the tracker_man file with the same changes to work correctly with the "pyframe", which is the frame number-1.
+
+## 241001
+- I added a version of numpy to make sure it would not through errors (1.26) and modified the warnings command in the utils file
+- Changed python-opencv version to an older one and to python-contrib-opencv (3.4) so atracker is still installable on mac OS 10.13 and working fast, as some newer versions were very slow on some systems I tried
+- fixed getting the right index when using the roi parameter in the set_interactive function
+- fixed mistake in imgprocessor function comparing the shape of an image with the mask
+
+## 240925
+- Updated setup file to automatically install python opencv, changed scikit to scikit-learn, and changed numpy to get it working
+- Wrote extensive readme with detailed steps how to get atracker up and running on a mac and windows system
+- Created documentation folder and moved much of the (new) contents of the readme to four separate documentation files, including setting-up, installing and loading, using atracker, and manual tracking
+- Integrated the reload function in initiation
+- Tried out various python versions and openv and numpy versions to make ATracker work out of the box after installing with no manual installation of dependencies anymore needed
+- Write complete guide how to use atracker and all its functionalities, stored in documentation folder, thereby used parts of the old guide.ipynb file and deleted it
+- fixed some things in the ivideo folder regarding max frames
+
+## 240906
+- Integrated computing turning acceleration variable in processing
+- Fixed some small issue to do with computing orientation correctly
+- Improved the `smooth` utils function to also work with non-series data
+- Integrated parameters in 'manfix' to already set the frameloc, tresholdspeed and timewindow, so quickly all the relevant data can be shown without needing to scroll through the bars
+- In the manfix function, integrated option to print the currently displayed trajectory data, helpful for further checking the data displayed. Including in-script computed speed variable, key for many tracking issues.
+- Added smoothwin trackbar to the manfix functionality to dynamically change coordinate smoothing to see its effects on the trajectories and computed speed
+
+## 240905
+- Further smoothlined the orientation improvement functions of the processing script and associated functions, including `smooth` and `fillmissing` to return a series rather than store in the original series, to avoid issues with subsetting
+- Implemented parameter in processing for the fillmissing function to set the max length of missing data to fill in, such as to be ale to fill in large gaps of missing orientation data, which arise after manual tracking only times with significant orientation change.
+
+## 240904
+- Fixed processing script not processing _E files and some issues with conversion as well as correctly storing the newly processed file (_F.csv)
+- Enhanced `removenearmask` function to fill missing trajectory IDs between the first and last frame of each trajectory and to remove trajectories shorter than a specified threshold, ensuring better trajectory consistency and data integrity.
+- Fixed new improve orientation function from not working well with indices
+
+## 240903
+- Added manonly parameter to processing to indicate if only manual fixing should be done or full processing
+- Renamed hx,hy columns to fx,fy in the manual processing function to correspond to this naming in the main processing file
+- Implemented some fixes and additions to update the processing script to better work with heading and/or orientation data together, including computing an optimized orientation variable based on heading above a speed treshold
+- Considerably reordened the processing steps to optimaly calculate orientation based on heading andd speed treshold
+
+## 240902
+- Fixed timewindow showing 1 frame too little and changed Frame position bar to show "Frame+1" to indicate how python shows numbers
+- Fixed the speed treshold computations to work properly and be in mm/sec, such that now with the treshold bar one can easily select a reasonable treshold, such as 5 (mm/s), which will then show all coordinate data at less that speed in red, to easily go there and fix orientation data manually
+- Added showing radius of the coordinate data based on min and max user provided speed values to better distinguish slow and fast motion
+- Created create_composite.py file for quickly creating a composite image of all changes observed during a video so easily any patterns can be detected, such as something blocking part of the camera view. Script is not yet very dynamic and integrated but the functionality is there.
+
+## 240830
+- Fixed an error resulting when displaying the tracking data when the current(ly selected) data has length 0
+- Integrated orientation to be drawn as a series of arrows
+- Changed colouring of arrows based on where they are in the frame series to recognise time
+- Integrated option to hide centroid coordinate data when showing orientation arrows (with l-key)
+- Integrated a speed treshold trackbar to dynamically show the speed the fish are moving and color points either orange (above it) or red (below it), to help focus on the slow-moving parts as at higher speeds we can simply use heading to compute orientations
+
+## 240731
+Made a further number of improvements to the manual tracker:
+- Integrated working with dataframe with an "orient" column that is then converted to head coordinates
+- Improved ptypes option to include "orient"
+- Enhanced display of tracking data by simultaneously showing centroid and heading coordinates
+- Enabled cropping and deleting of heading coordinates in same way as centroid
+- Calculated heading positions at standard distance and integrated to dynamically show them based on free angle drawing tool, even when at that frame the point is drawn at a very different distance
+- Enabled drawing of coordinates with size scaled on inversed speed to be able to more easily find times where animals are moving slow (clusters of larger points)
+- Improved saving function to work with the added heading coordinates data as well as showing number of changes made
+
+## 240730
+Made a number of fixes and improvements to the manual tracker:
+
+- Fixed that data shown with the time window bar is also actually the data that is deleted when selected with the rectangle rather than of the whole data
+- Fixed and improved printing of changes made to the data, including adding, editing, and removing of frames, and showing the list of frame numbers.
+- Add point vs rectangle selector to info panel
+- Fix that coordinates of drawn rectangle always starts with the top-left coordinates even when drawn from another corner
+- Fix that frame position and time window slider are same width as video plus info panel (also when resized)
+- make frame position ar show total numer of frames rather than 200 steps so the scrollbar is actually meaningful
+- make sure the time window slider starts at 1 frame difference and does not show all at 0 but at the end only
+- Add frame range to the info panel
+- Improve resolution and size of the info panel
+
+## 240513
+- Improved showing of framenumbers in manual tracker with option to only include
+  the nearest frame to the mouse position with white background and within the screen window
+
+## 240417
+- Fixed video resizing for manual fix function
+- Integrated drawing of rectangle in manual tracking function to delete coordinates
+  within the rectangle, which is helpful for outliers
+- Improved checking for tracking files if there exist edited files already select those
+
+## 221101
+- Fixed processed files no mx and my colums being written when no coordinate data
+- Fixed processor accidentally using converted nearmaskdis and reconverting it
+220918
+- Made a range of improvements and fixes to the manual tracking function to make
+  it work properly now it is integrated in atracker
+- Fixed existonly=False setting in the track function as otherwise indices would
+  be wrong
+- Integrated stand-alone mantrack package into atracker. Version 3.2.4 Version
+  history is provided below and from now integrated with that of atracker
+- Improved get_bgfiles function with functionality to provide a list of indices, a
+  list of startframes, and a list of stopframes to get more specific background
+  files, such as when needed when an animal is frozen for a long time
+- Updated showinfo function to work with files that have regions
+- Made temporary fix so old files with regions (now named zones) can still be
+  automatically processed
+
+## 220520
+- Fixed processor working with blank mask files
+- Fixed processor ignoring startframe of configfile when no startframe provided
+  in overview
+- Fixed issue with colouring of trajectories in visualise function
+- Fixed issue with data processing not being correct for cover trials
+
+## 220517
+- integrated using startframe as set in the config file when no startframe
+  provided in excel overview file
+- Changed naming of video window to actual name of current video file
+- Fixed issue with distreshold value in tracker file
+
+## 220325
+- Incorporated checks into processing function to work with overview files where
+  the ID and wall mask columns are missing
+- Fixed showinfo function to work with single files as string input
+- Added checkonschange parameter to turn off the sophisticated but very slow
+  contour splitting function when not needed
+- Added linkdistreshold parameter to use with tracker function to exclude linking
+  of IDs too far away
+- Improved tracker function to not link identities that are too far away when
+  the focal contour is not properly detected
+
+## 220324
+- Fixed issue with drymode working with a copy of AT.config, thereby falsely
+  not back overwriting the original settings
+
+## 220323
+- Improved tracker function to work with merged contours in groups with more
+  than two objects. Still to incorporate is the scenario when in one frame more
+  than 2 objects merge.
+- Integrated variable mergedmindist to config file that will be used as a
+  condition to determine if a very large contour is a merged contour of two
+  previous contours
+- Implemented custreshtypes and cusobjects parameters to the tracking class to
+  more easily quickly try out different tracking parameters
+- Fixed linkID function to link IDs for multiple BW contours (since changes to
+  the code for colored tracking)
+
+## 220322
+- Some small fixes to have atracker work with older config and tresh files where
+  there is no blur2 or orientfrombw parameters
+- Fixed fix_roi function in line with change on 220312
+
+## 220315
+- Integrated orientfrombw parameter in config file
+- Improved drawing of angle for color treshtypes
+- Integrated linking of col treshtypes and nearest bw contour to calculate object
+  angles
+- Adapted simple mode in tracking function to work with coloured tracking
+
+## 220314
+- Automatically set tracking mode of color tresh_types to simple
+- Made printing of ids different for BW and color tresh_types
+- Fixed linkids for bw to only check bw contours in movedat
+- Fixed tracker to work with bw and color tracking simultaneously
+- Integrated check in setuptracking function if treshtype exists in treshinfo
+- updated check_treshtypes function to convert tuple
+
+## 220312
+- Fixed roi such that the max coordinates are external such that images are not
+  wrongly cropped 1 pixel inside of their dimensions at default
+
+## 220303
+- Added fix to processing function to work with datafiles without any data
+- Integrated pooled processing, but with a limited pool based on all files in
+  tracked folder
+- Improved printing of processing function
+- Fixed an issue with addtrajsnmaskstate when trial ended under cover
+- Added function to check if code is executed from notebook or not
+- Fixed error of processing of headtail position at end of trajectory
+- Implemented get_size function, which is a simpler version of the ivideo script
+  dedicated to measuring the size of animals based on a folder of images
+- fixed pooltracking to quickly skip files currently being tracked
+- fixed pooltracking to work with already tracked files
+- improved showinfo function to work with list of files
+- fixed tracking error where skelpts where empty list
+- upgraded get_files function with parameter to only list files that exist
+- upgraded geom_tocoord function to work with shapely 2.0
+
+## 220301
+- Changes checking of skip variable for not being 1 to not necessarily have to
+  fill in the column with zero's
+- Fixed masked images stored with wrong size and implemented check in ivideo and
+  tracker to resize mask when required
+
+## 220225
+- With a lot of effort creating multiprocessing function that checks a pool of
+  existing files, skipping videos that are currently tracked for other regions
+  and picking them up later, complete with proper notifications.
+- Improved tracker function to work with pool of indices still to do rather than
+  a static list of files
+- Included printing of nr of files tracked and still to do in tracker function
+- Added ability to print frame with identifier during tracking
+- Fixed tracker not working properly yet with regions
+- Fixed wrongly naming of bg, mask, wall files
+
+## 220224
+- Fixed clean exit of pool process with ^C
+- Did some checks and pooled tracking is only possible from the terminal, so
+  integrated a check before pooling to avoid hanging in jupyter
+- Integrated better checking when tracking cannot be performed because the video
+  is already currently tracked and indices placed at end of tracking list
+- Fixed bgextractor not taking the right bgframe start and stopframes
+- Integrated bgextractor to use skip filter information
+- Fixed ivideo accidentally drawing roi in case of multiple regions in same video
+- Added standards for drawing for the various interactive modes to further speed
+  up the drawing process
+
+## 220223
+- Fixed computing of missing data where multiple trajectories are combined and
+  added parameter to be able to set this
+- Fixed getindsections to work with gaps where multiple trajectories are
+  combined
+- Improved interactive conversion setting by enabling a single or multiple pre-
+  determined measures to be set that will give a single conversion measure.
+- Made it default that nearmaskdis and inmaskdis parameters are provided in
+  real dimensions rather than pixels to more easily provide relevant parameters
+- Integrated nearmaskdis and inmaskdis parameters for respectively checking if
+  missing data is because the object is within the mask and for removing data
+  too near the mask.
+
+## 220222
+- Integrated usage of roi in ivideo mode to use for getting treshold parameters
+
+## 220127
+- Fixed ragged edges in masked image visualiser function
+- Get visualise function to work properly for videos tracked with color tresholding
+- Fixed hiding background and drawing coloured IDs
+
+## 220124
+- Updated tracker.linkIDs function to work with color treshtypes. Currently only
+  implemented to work with a single contour per color.
+- Updated tracker function so now multiple different color treshtypes can be
+  accurately tracked.
+
+## 220121
+- Fixed tresholded image and contour info not showing in interactive mode when
+  using simple.
+- Incorporated interactive color tresholding in the set_interactive function
+- Included a check for treshtype and included larger max size for contour size
+  in color tresholding
+- Got initial color tracking working with a single color. Further steps are to
+  run color tracking in parallel temporally for multiple colors and combine with
+  bw tracking for e.g. orientation calculation, as well as using color information
+  in visualisation
+
+## 220118
+- For tracking, if nrobjects is not provided now automatically a value of 1 is used
+
+## 220117
+- Fixed some issues with tracking and processing not working when no roi or conv
+  values are provided.
+- Fixed processing to calculate turning variables when only heading is available
+- Added abscumturn variable to processing
+
+## 220113
+- Updated checknearmask function to only require at least 1 frame that is within
+  the required distance.
+- Fixed the data not being sorted and having indices reset due to issue of
+  adding untracked frames to the end of the dataframe, impacting some measures
+
+## 220112
+- Changed differentiation of speed, acceleration, and turning speed to backwards
+  from forward differentiation and removed delNArows parameter from processing
+- For processing fulldata parameter made sure to subtract 1 to have the proper
+  full range of the data.
+- Changed calculation of turning speed per second and added cumulative turn
+  variable to see if tracked objects have a tendency to turn a certain direction
+  over time.
+- Added a lot of the draw_frame parameters to the visualise function
+- Fixed the add canvas functionality of the visualise function to create canvas
+  with right image type (np.uint8)
+
+## 220110
+- Added a guide.py and generated guide.html file with explanations and python
+  code for working with ATracker.
+- Fixed set_interactive crashing when the last frame of a video is corrupt
+- Made helperinfo display a bit smaller in the set_interactive function to still
+  fit on the screen
+- linked simple mode from set_interactive to config simple rather than a
+  separate option
+- Removed track_nobj parameter from config file and integrated its use via the
+  overview file to make it easier to track files with different object number
+- Removed 'cover' parameter from processing as it can be automatically extracted
+  from the overview file
+- Renamed processing parameter 'window' to 'alonewindow' to make it clearer it
+  is the time window for the removeoutliers functionality
+- Fixes issue in processing file with wrongly checking if maskcoords were none
+
+## 211201
+- Added new functionality to draw zones using ivid, which stores a colored mask
+  image with different zones that can be later used to analyse time spent in
+  different zones
+- Fixed findcontours function to work with all versions of opencv
+- Fixed ivid to not draw objbox when nan
+- Renamed zones, different areas to be tracked within a video separately, to
+  regions to not mix with zones in terms of different areas within an arena
+
+## 211123
+- Fixed maskcoords not being cropped to roi for mask checking functions
+- Fixed outofroi function as was using real roi rather than max coordinates
+- Fixed checknearmask function for falsely checking win+1
+- Made sure to exclude computing orientation-related information when such data
+  is missing from datafile
+
+## 210706
+- Fixed issue with processor
+
+## 210705
+- Fixed another issue that resulted in a tracking error due to no IDs being
+  available to link anymore when too much time has passed.
+- Fixed an issue that resulted in a tracking error due to wrong ID allocation
+  when more than the maximum number of contours were tracked.
+
+## 210629
+- Integrated data orientation into avgvel function
+- Fixed issue with wrongly calculating distance matrix
+- Integrated movedat in IDlinking to work with not just data from the previously
+  tracked frame
+- Fixed issue with wrongly allocating IDs for the first frame.
+- Fixed weightedavg and avgvel functions to always at least give np.nan
+
+## 210628
+- Fixed an issue with processing of files with multiple ids
+
+## 210625
+- Fixed the smooth function as it was not writing the newly smoothed data correctly
+- Made some small fixes to overcome errors for various processing functions
+- Further improved prediction of current contours by calculating fishes' heading
+  with a time delay
+- Integrated creation of temporary movedat dictionary to be used for predicting
+  future contour positions and allocations of IDs with little runtime required
+
+## 210623
+- Created temporary visual fixid function
+- Added temporary fix regarding area checks
+- Integrated previous contour predictions for contour splitting function
+- Improved weighted average function
+- Fixed issue with ID numbers being floats not integers
+
+## 210622
+- Fixed trajectory being wrongly drawn increasingly thick
+
+## 210621
+- Fixed issue with consplit function with drawing filled-in contours
+- Got consplit function working properly into the tracker class
+
+## 210616
+- Improved filledconcoords and consplit functions further by blurring and dilating
+  to not get weird points far away from main contour
+- Further optimized allocation of points to contours based on ratio of previous
+  points
+- Improved consplit function by working with all points inside the contours rather
+  than just points on contour edge
+- Created filledconcoords function to get the coordinates of all points inside a
+  contour, including the contour edge
+- Created roifromcon function to get roi from con to be used for drawing a canvas
+  image of just a contour
+
+## 210615
+- Improved split merged contour function by integrating (temporary) a predictive
+  module of current contour positions based on previous speed and heading
+- Improved split merged contour function by optimal allocating based on contour
+  size
+- Created working split merged contour function
+
+## 210613
+- Added function that determines if contours are merged or split, to be used for
+  contour splitting and linkID checking functionalities
+- Fixed LinkID function that wrongly allocated to previous IDs
+
+## 210611
+- Included config option to draw uniq nicely spaced colours for all IDs
+- Created functions that in various ways split a merged contour in the most
+  likely contours linked to two previous contours. Works okay but issue is contour
+  is increasingly allocated to only one of the contours.
+
+## 210609
+- Fixed issue with smoothing multiplying nan values at start of trajectory
+- Integrated another conditional rule in head-tail swapping that accounts for if
+  that frame would be excluded because too close to the edges
+- Improved checking for existing files for processing function
+- Added rule to remove head and tail data near the roi
+- Fixed that coordinate data continued to be linked even when going out of roi
+- Finalised fixing that centroid is in the centre and that user provided point
+  can be used if available
+- Integrated some further improvements and fixes to processing function
+- Made some fixes so visualiser function works properly with updated processing
+  function
+
+## 210603
+- Fixed displaying wrong framenumber on tracked videos
+- Added simple showvideo utility function
+- Worked hard (again) on the fixheadtail function to better deal with various
+  situations. Working better yet again, but it remains very difficult to get
+  close to 100% good orientation data.
+- Improved trajectory determination by integrating gap parameter
+- Improved usage of fillmissing function by integrating ability to set time and
+  distance windows
+- Fixed borderdist function calculation as did wrongly take into account the roi
+- Integrated additional rule for excluding orientation data based on turning speed
+
+## 210601
+- Further fixed fixheadtail function for working at the end of trajectories and
+  with data where all area measures are nan
+- Improved coordsfrommmask function to also add outer coordinates, such as when
+  mask intersects with roi
+- Fixed mistake in use of converting function
+- Fixed calculation of roi distance
+- Fixed and improved calculation of mask distance
+- Fixed visualisation function not showing non-tracked frames
+- Fix calculation of points on mask (which was wrong due to above convert issues)
+- Fixed that missing frames (such as when object goes out roi) were not in data
+- Added pt drawing to visualise functionality
+
+## 210531
+- Fixed swapheadtail function for only swapping the outer points
+- Improved visualise functions to use a data dictionary instead
+
+## 210527
+- Improved speed of trajectory computation function
+- Fully cleaned and updated visualisation function, which now enables visualising
+  all kinds of data in an easy way
+- Added coordsfrommask function
+
+## 210526
+- Integrated new processing functions for erroneous head and tail positions and
+  swapping them where possible. Works a lot better than the original orientation
+  fix functions.
+
+## 210525
+- Get basic visualise function working
+- Fixed orientation calculation in processing function
+
+## 210524
+- Fixed trajectories not showing
+- Get processor working with improved tracking files (except still for orientation)
+
+## 210521
+- Improved drawing of skeletons and added function for drawing coordlists in general
+- Added lathom measurement to get an indication of longitudinal variation in
+  the thickness of the object. This is usefull to determine when orientations
+  are more likely to swap and be wrong, i.e. at low values.
+- Added outerarea measure to help identify moments when fish make a sharp turn
+  and curve their body
+
+## 210520
+- After some effort finally got a nice IDpairing and ID allocation function
+  working and integrated that is relatively fast. Also works well for trials with
+  multiple objects (not just noise).
+- Piloted various solutions for overcoming overlaps and have a couple that sort-of
+  work but not well enough yet to integrate them into atracker.
+
+## 210519
+- Added drymode function to quickly track a random number of sequences for a
+  random selection of videos to help further check if the treshinfo values are
+  optimally chosen. To be used before intensive full-scale tracking.
+- Added alternative headpoint calculation for cases where the shapely function fails
+
+## 210518
+- Past week sped up tracking considerably by creating a vastly improved image
+  processing function, better calculation of object tracking, better storing
+  of temporary data, and removing prevlist and movelist objects
+- Integrated calculation of object skeleton and thereby much improved determination
+  of object head, tail, and inner centre of mass
+- Improved calculation of skeleton to exclude potential other contours in same
+  cropped region of interest
+- Further improved calculation of tip of head by calculating point of intersection
+  between polygon and line extending outwards from object's orientation
+- Cleaned up image processing further by making it into a class with initialisation
+- Fixed proper converting of various shapely geometries to coordinates
+- Further fixed/improved working with shapely contours for calculating tip of head
+- Improved writing of data to increase tracking speed
+
+## 210517
+- Fixed mask not being used in image processing
+- Fixed display video not closing after stopping visualisation
+- Fixed drawing of trajectory behind contour not working properly
+
+## 210514
+- Improved positioning and sizing of ivideo windows and prevented overlapping
+- Improved creating and writing to conlist
+- Fixed minimum box potentially having coordinates outside of video window
+- Added ordering of contours from top to bottom and left to right
+- Added significant improvements to imgprocess functionalities, including the
+  calculation of internal centre of mass, very accurate head and tail calculation
+  and skeleton calculation. Also considerably improved speed of image processing
+  in various ways.
+- Improved drawing of skeleton as clear single polyline
+- Added drawing of individual boxes for the tracked objects in ivideo
+
+## 210511
+- added drawing of orientation calculation to ivideo
+- fixed conditions for calculating angle for contour extraction
+
+## 210504
+- fixed bgfile extractor falsely skipping files that did not yet have a bgimg
+- improved orientation tracking further by using the midpoint of the box rather
+  than moment, then 99+% of the time orientaiton is correct and any further
+  orientation comparisons are not necessary
+
+## 210503
+- removed delete files when overwriting as too dangerous..
+- improved linking of identities over time and excluding duplicates. Worked on
+  optimal matching of identities when multiple objects need to be tracked, but
+  is not yet working properly.
+
+## 210430
+- incorporated option to temporarily overwrite start and stopframes for tracking
+- incorporated option to skip files when they already exist for tracking
+
+## 210427
+- fixed tracker stopping upon missing frames, which are not skipped when near
+  the start of the video, which happens with gopro videos when audio is not
+  deleted. Better is to convert videos like that with ffmpeg, but very time-
+  consuming (ffmpeg -i [videoname] -vcodec copy -an [videoname])
+- fixed get_bgfiles function to not stop when issue with single file
+- fixed get_bgfiles function to work with multiple zones in same video
+- improved centralise processing function to both work with the roi and walls
+- improved mask creation by integrating subtracting and adding additional shapes
+- added helperlines functionality to interactive video mode
+- integrated drawing of ellipse to interactive video mode and mask creation
+- added roi_fix function to make sure the coordinates lie within the video limits
+- fixed dataframe querying functionality when values contained both strings and numbers
+- added reload function to reload the overview file when updated manually while
+  the ATracker instance is still loaded
+- interactive video mode now automaticall skips missing frames and notifies user
+- integrated vid_displaysize option for interactive video mode
+- fixed zones not working in updating the overview file
+- changed excel file reading and writing to overcome xlwt warnings
+- video files with capital extensions are automatically renamed with lower extensions
+
+## 210426
+- added walldist function
+- considerably improved orientation and head and tail computations using centre of mass
+- incorporated centre-of-mass inside polygon function
+- added arena centroid distance processing function
+- incorporated new centralise function that puts the coordinates at the centre
+  of the arena at (0,0)
+
+## 210422
+- incorporated calculating distance to mask and visualising closest point on mask
+- added first version of visualise function to visualise processed tracking data
+- improved processing function to convert data after all other processing and
+  compute _c variables to facilitate plotting of the raw data
+- incorporated fillmissing of orientation data and front coordinates
+- fixed orientation calculation in processing function
+
+## 210416
+- get function working
+- integrated processing functionality to change the fps and convert coordinates,
+- added interactive mode to add tupe of width and height conversion
+
+## 210415
+- got fixdat to work where data is set to nan when in the fixdat column of the overview
+- added display of framenumber to tracked videos
+- created fix functionality to prepare tracked files and make sure they
+  have complete and appropriate row and column data
+- created new processor class for the processing of tracked data
+
+## 210414
+- ivideo now has fullrange option that is used for setting the start and stopframes, otherwise
+  video is temporally cropped to within the frame region
+- fixed issue for ivideo function with goto key refreshing screen
+
+## 210413
+- now set_interactive uses existing treshold data when available
+- with some effort got pool tracking to work, but this won't work in jupyter
+- added overwrite mode if files should be skipped when already tracked
+- integrated tracking of multiple zones and correct writing and moving of files
+
+## 210409
+- added ability to add and remove zones to configuration and use them accordingly
+- made set_interactive work with videos with zones
+- improved get_bgfiles function to only check for files that do not have a bg file yet
+- fixed get_bgfiles from error about floats when start and stopframes were provided
+- added conversion drawing mode to the interactive video function
+- improved setup_files function to check for existing files, making it easy to add new files
+- fixed and improve orientation calculation
+
+## 210408
+- made possible to draw trajectories below the fishes' contours
+- fixed mask not incorporated into tracking
+- made sure that visualisation of tracking single fish is working
+- got tracking of single fish working while showing contour and ID, at ~50fps
+- got video loading, writing, exiting, file moving to work
+
+## 210407
+- improved get_vids function to ignore inds not in dataframe (instead of giving an error)
+- fixed not closing windows after using interactive video mode
+- added changelog file
+
+## Changelog for mantrack until its integration with atracker on 18/09/2022
+- 190122 - 3.2.4  Improved notes
+- 190122 - 3.2.3  Fixed a number of small issues, mainly to do with python3
+- 181213 - 3.2.2  Fixed sequential files overwriting each other
+- 181212 - 3.2.1  Savedata now checks if there is actually data to be written
+- 181212 - 3.2.0  Added functionality to create multiple datafiles within same manual tracking instance
+- 181212 - 3.1.0  Added custom stepsize function
+- 181212 - 3.0.3  Fixed cropping data not cropping
+- 181207 - 3.0.2  Fixed further issue with updating of trackbar
+- 181207 - 3.0.1  Fixed updating of trackbar based on keypresses
+- 181207 - 3.0.0  Added full functionality of trackbar that updates based on keypresses and subsetted datafiles
+- 181207 - 2.2.0  Integrated function that gives optimal step number and step size for trackbar
+- 181207 - 2.1.0  Added documentation for the Track_manual class and keypress function
+- 181206 - 2.0.0  Integrated possibility of adding state variable
+- 181206 - 1.10.1 Fixed showing all datapoints when datafile contains multiple ids
+- 181206 - 1.10.0 All points (and frame nrs) now immideately update when point is changed
+- 181206 - 1.9.1  Fixed cropping of data when setting start and stop frame
+- 181206 - 1.9.0  Added toggles to show/hide all datapoints and their corresponding frame numbers
+- 181206 - 1.8.0  Added way for user to type in specific frame number
+- 181206 - 1.7.1  Integrated option to replace, append, or create new datafile
+- 181206 - 1.7.0  Add video info panel
+- 181206 - 1.6.5  Fixed pd_to_coords: already written coordinates now being multiplied by resizeval
+- 181206 - 1.6.4  Trackbar is now same width as video, also when resized
+- 181206 - 1.6.3  Fixed trackbar issue making manual tracking very slow
+- 181107 - 1.6.2  Made python 2 and 3 compatible
+- 180827 - 1.6.1  Fixed rounding of realpt data
+- 180827 - 1.6.0  Integrated possibility to later overwrite a cropped file
+- 180827 - 1.5.2  Fixed drawing all coordinates when resizeval is not 1
+- 180827 - 1.5.1  Integrated printing information at start of script
+- 180827 - 1.5.0  Added user functionality by cropping dataset to first and last manually tracked frame
+- 180827 - 1.4.0  Added possible automated sequence numbering to filenames instead of overwriting
+- 180827 - 1.3.0  Added user functionality of the trackbar to go to the required frame
+- 180827 - 1.2.1  Improved printing newly added data with fixed widths
+- 180827 - 1.2.0  Added functionality of drawing all coordinates as points and line with framenumbers
+- 180827 - 1.1.0  Added functionality of drawing and printing of current coordinates
+- 180827 - 1.0.1  Integrated loading and appending to existing datafile
+- 180810 - 1.0.0  First fully working version of mantrack
