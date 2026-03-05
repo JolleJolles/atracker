@@ -1,7 +1,5 @@
 #! /usr/bin/env python
 
-from __future__ import print_function
-
 import os
 import cv2
 import pandas as pd
@@ -63,7 +61,7 @@ class Tracker_man:
                  firstframe = None, lastframe = None, resizeval = 1, arrowl = 40,
                  statevar = None, customstep = None, indir = True, internal=False, 
                  conv=1, min_speed=0, max_speed=100, smoothwin=25,
-                 frameloc = 0, timewindow = 0, treshold_speed = 0, powermate = False):
+                 frameloc = 0, timewindow = 0, threshold_speed = 0, powermate = False):
 
         check_media(vidfile)
 
@@ -206,7 +204,7 @@ class Tracker_man:
         self.current_frame = None
         self.smoothed_angles = None
         self.show_smoothed_angles = False 
-        self.treshold_speed = treshold_speed
+        self.threshold_speed = threshold_speed
 
         self.powermate = powermate
         
@@ -241,10 +239,10 @@ class Tracker_man:
         cv2.resizeWindow('Info panel', ipanel_width, 160)
         cv2.moveWindow('Info panel', 0, 249)
         
-        cv2.namedWindow('Speed treshold', cv2.WINDOW_NORMAL)
-        cv2.resizeWindow('Speed treshold', ipanel_width, 30)
-        cv2.moveWindow('Speed treshold', 0, 437)
-        cv2.createTrackbar('Speed treshold', 'Speed treshold', int(self.treshold_speed), 100, nothing)
+        cv2.namedWindow('Speed threshold', cv2.WINDOW_NORMAL)
+        cv2.resizeWindow('Speed threshold', ipanel_width, 30)
+        cv2.moveWindow('Speed threshold', 0, 437)
+        cv2.createTrackbar('Speed threshold', 'Speed threshold', int(self.threshold_speed), 100, nothing)
 
         cv2.namedWindow('Smooth window', cv2.WINDOW_NORMAL)
         cv2.resizeWindow('Smooth window', ipanel_width, 30)
@@ -470,7 +468,7 @@ class Tracker_man:
                             # Check if speed is below or above the threshold
                             color = "orange" 
                             if self.show_speedcoords:
-                                color = "orange" if speeds[i - 1] >= self.treshold_speed else "red"
+                                color = "orange" if speeds[i - 1] >= self.threshold_speed else "red"
                                 cv2.circle(self.draw_frame, coord, circle_radius, namedcols(color), -1)
                             else:
                                 cv2.circle(self.draw_frame, coord, 3, namedcols(color), -1)
@@ -816,11 +814,11 @@ class Tracker_man:
             self.reset()
 
 
-    def movetreshold(self):
+    def movethreshold(self):
 
-        treshold_speed = cv2.getTrackbarPos('Speed treshold','Speed treshold')
-        if treshold_speed != self.treshold_speed:
-            self.treshold_speed = treshold_speed
+        threshold_speed = cv2.getTrackbarPos('Speed threshold','Speed threshold')
+        if threshold_speed != self.threshold_speed:
+            self.threshold_speed = threshold_speed
             self.reset()
 
 
@@ -852,7 +850,7 @@ class Tracker_man:
                 self.key = cv2.waitKey(1) & 0xff
                 self.movebar()
                 self.movetimewindow()
-                self.movetreshold()
+                self.movethreshold()
                 self.movesmoothwindow()
 
                 if self.powermate:

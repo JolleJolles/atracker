@@ -1,72 +1,312 @@
 # Changelog
+### To incorporate ####
+- If working in fullscreen with set_interactive then stay in fullscreen and no need to press s key twice and then go fullscreen manually again.
+- Integrate more advanced threshold parameters already implemented in non-simple tracking.
+- For Tracking, check for all potential files if they are already tracked or not and subset trackfile list for that so they dont each go into the loop and then much more slowly it shows they are already tracked..
+! Fix query for creating masks (are combined now..)
+- integrate the maskzone in processing similar as the mask
+- Way to store key parameters used in set_interactive so next video it uses the same.
 
-## Todo
-- Fix optimal linking of IDs in multiple bw contours (clear issue in the animtest_group video where this doesn't happen)
-- Fix multiple colored object tracking (see error when running the tutorial group video)
-- Somehow polygon drawing is not working. It did work so much be related to version of python or something
-- Known issue with inmaskdis > 0 to fix in processor.py around lines 345-350
+# 09/12/2025 v0.3.8
+- Fixed the dist_to_rect function to correctly compute distance measures when coordinates never overlap with a zone
+- Fixed orientation pipeline: head coordinates (hx, hy) are now correctly mapped to fx, fy and used for orientation when orientfrombw = False and clarified orientation modes: orientfrombw = True now consistently triggers angle-based orientation and removes head-coordinate columns (fx, fy).
 
-# 250228 - v0.0.8
-## Improved
+# 27/11/2025 v0.3.7
+- Updated `get_inds` function to work with regions as well.
+- Updated `check_interactive` to load correct datafile when working with regions.
+- Updated the `get_bgfiles` function to work correctly with regions.
+- Fixed `annotation_gui` to be able to load correctly with empty datafiles.
+- Fixed `prep` processor function to remove any data from the file beyond the start and stopframes.
+- Added `force_single_traj` option to trajectories processor to fix data into single trajectories.
+
+# 20/10/2025 v0.3.6
+- Fixed batch_measure function to append to file if it exists rather than skipping the files already done but still overwriting the file.
+
+# 17/09/2025 v0.3.5
+- Fixed the `load_and_convert_tracking_dataframe` function to also load properly new files without detailed orientation data.
+- Set "highlight current" checkbox of the visual_editor to True to by default show the current locations.
+- Fix default trajectory display when switching to "Current ID" mode: force-set tp_current_id = 0 to show ID1 correctly.
+- Add support for undoing multi-point deletions by updating undoLastDelete() to handle actions-based undo buffer format.
+- Fixed the loop not showing in visual_editor.
+
+# 12/09/2025 v0.3.4
+- Added an "event" mode to the `set_interactive` function, enabling the user to set a list of tuple pairs of event changes using the "k" key and to remove the last keypress with the "l" key, automatically stored in the AT.overview file.
+- Fixed "measure" mode accordingly so it would work with the updated results output as input.
+
+# 12/09/2025 v0.3.3
+- Improved the `get_filepart` utils function to provide specific file extensions.
+- Fixed `batch_measure` function not escaping fully when pressing the escape key.
+- Enabled `batch_measure` to load and append to file, if it exists.
+- Added deleting of last drawn point functionality using the `d` key to the visual editor for measuring mode.
+- Updated `batch_measure` to store area information of polygon if more than 3 points were drawn.
+- Improved `bath_measure` with option of user to provide a list of variables to measure.
+
+# 25/08/2025 v0.3.2
+- Improved `batch_measure` function with "skip_first" parameter to also include the first image and "conversion" parameter to allow user to only use first or all images for conversion.
+- Added `get_filepart` utils function to quickly get a list of parts of filenames.
+- Updated the `smooth` utils function to ensure target columns are float dtype.
+- Improvedd the `processor` script to correctly stop post-processing when "emptydat" is True.
+
+# 01/08/2025 v0.3.1
+- Fixed date column of AT.overview being automatically converted to date with added time and then onverted to string anyway.
+- Added overwrite parameter to the `track` function that overrules the same parameter in the config file, for easier changing of the setting.
+- Updated the `showinfo` function with "return_inds" parameter to be able to return a list of indices for easy subsequent further use.
+- Added `update_overview` function to the ATracker class for easy updating of the overview file.
+- Addded point opacity slider to the `set_interative` function to make it easier to fix tracking data by still being able to see the tracked object behind the tracking data.
+- Fixed timepoints mode to enforce one point per ID per frame; clicking now moves the point instead of adding new ones.
+- Improved undo support for moved and edited points in timepoints mode.
+- Fixed some issues that had come up due to the new integrations with `check_interactive` and `filter_tracking_jumps` to make sure it also works across tracking multiple videos.
+ 
+# 31/07/2025 v0.3.0
+- Fixed that video out of tracking uses the fps as provided in the `fps` column of the fileinfo extraction of AT.overview
+- Implemented a `filter_tracking_jumps` utils function that we call in the main `tracker.py` file to on-the-fly exclude tracking of contours that are beyond a set threshold distance measure that grows with each frame. This can be set with the `max_framedist` parameter in the `track` function.
+- Fixed potential errors for drawing trajectories due to nan's in the data in the `tracker.py` file.
+- Added a new main `check_interactive` functionality to the ATracker class with which one can now load files via inds and names like the other ATracker functions and thereby interactively manipulate tracking data stored in tracking files in the "3tracked" folder while automatically the original accompanying video is displayed with roi cropped out.
+
+# 24/07/2025 v0.2.11
+- Fixed wrong key explanation for zones drawing (from 'o' key to 'z' key).
+- Fixed custom treshtypes not defaulting to normal tresholding in set_interactive when starting with "bw".
+- Added note in the guide and tutorial about providing custom treshnames and custom treshfiles.
+- Fixed tracking not conclusively being able to work with custom treshtypes starting with "bw"
+
+# 22/07/2025 v0.2.10
+- Included computing point distance computations in the `processor` function file, which was apparently missing after all considerable revisions of the function.
+- Fixed conversion accidentally removing roi[0] again while tracking was already based on that, so updated the `convert` utils function with parameter `already_relative`.
+- Unified all distance computations by shifting cx, cy to full-image coordinates (xs_full, ys_full) before calling dist_to_*()
+- Ensured roi, mask, wall, zone, and point distances are now computed in consistent coordinate space
+
+# 16/07/2025 v0.2.9
+- Fixed spelling of tresh** throughout the package (to thresh**)
+
+# 15/07/2025 v0.2.8
+- Fixed mask not being drawn always when using the set_interactive mode for thresholding.
+- Improved thresholding mode in set_interactive to take into account the mask.
+- Fixed overlay semi-transparency such that contours are clearly visible.
+- Fixed saving and escaping in fullscreen going back to normal window size rather than exiting the current instance.
+ 
+# 14/07/2025 v0.2.7
+- Updated the `showinfo` and `get_files` functions. Former now displays the AT.overview subset based on the indices or filenames provided and the latter now has parameter to hide extension or not.
+- Fixed in zones mode accidentally the background image being used as zone default rather than a white background.s
+- For zones mode now by default the zones mask is being displayed.
+- For thresholding bars in the visual_editor now also added spinbox so the user can type in a value rather than only using the scrollbar, especially useful for small values on bars with large possible range.
+- Fixed the color threshold bars being shown for normal thresholding and all threshold bars being shown for color thresholding.
+- Updated the installation guide with optional installation of virtualenvwrapper.
+
+# 11/07/2025 v0.2.6
+- Updated `using_atracker` tutorial to better explain users can update the `threshinfo.yml` file manually if needed.
+- Fixed issue with naming of zone and wallimg columns in the overview.
+- Added new `compute_zone_distances_auto` utils function that uses three different approaches to calculate the distance to a zone, and depending on its complexity chooses the fastest one. It always uses the conv conversion.
+- Improved and streamlined the various functionalities for computing distances to points, rectangles, polygons and masks.
+- Made considerable improvements to the `processor` file, particularly focused on the distance computations, loading of masks, streamlining logic for roi,mask,walls,zones-related calculations, and using converted and flipped data.
+
+# 09/07/2025 v0.2.5
+- `setup_files` now populates the overview for videos even if conversion to .mp4 is not performed (autoconvert=False), helpful to set variables such as fps already.  
+- Improved file setup to automatically handle video filenames with or without version suffixes (_vXX), adding a vidseq column to the overview for the version if present. Users don't need to specify a version field in fname_vars; version detection and overview handling are automatic.
+- updated the using_atracker guide to have a brief mention one can use the AT.save() command to save the overview to disk when the user updated in Python for example.
+- updated the convert_h264_to_mp4 function to have as input a list of fps values
+
+# 08/07/2025 v0.2.4
+- Added a poolatracker.py file to the tutorial folder and some further explanation to the tracking jupyter tutorial file how to use the pool. 
+- Measure mode now supports polyline measurement: users can click multiple times to define a path, and the total length is calculated on Save (S key). The drawing mode selector is automatically disabled in Measure mode to prevent confusion.
+- Support for a new ids parameter in batch_measure, allowing users to supply a list of custom IDs (same length as the file list). Each result row will use these IDs if provided.
+
+# 28/06/2025  v0.2.3
+Updated the processing function to efficiently compute distances to each zone when a zones mask is provided and name and round them correctly.
+- Added coordsfromzones utils function to efficiently get contours from colors on zones image.
+- Updated the add_kdtree_distances utils function to also work with multiple contours and provide parameter to add coordinates of the nearest point on the mask/zone contour. 
+- Integrated that zone distance is 0 when the object is inside the zone, which doesnt work with kdtree as distance is always positive.
+- Made sure the same nr of columns with "z" followed by a numeric are added as there are zones and these come after the mdist and rdist columns and rounded to 1 decimal.
+
+# 27/06/2025  v0.2.2
+- Fixed small issue with "total_frames" missing in set_interactive.
+- Added possibility to show/hide a loop that shows a zoomed-in area at the mouse pointer.
+- Reorganised the keyPressEvent function of the visual_editor and added new keys to change mode (U-key) and to go up and down IDs (I and O keys).
+- Fixed qwerty keys to not function when working with image.
+- Fixed the ID number and frame number for showing 1 too many using the "near" toggle.
+- Added generate_distinct_colors utils function, which will be used for unique color drawing of IDs.
+- Improved showing ID colors as a list of colored squares, as many as there are IDs, and integrated ability for user to click IDs when "Current ID" is selected, which facilitates quickly jumping between IDs. The list will expand and push the other interface options down when needed.
+- Fixed angles in visual_editor to be stored in the right coordinate system.
+- Improved the draw_arrow_head utils function to be able to draw it also at the origin
+- Added a scrollbar to dynamically change the length of the arrow line being shown, so arrow heads can for example also be shown at the origin.
+- Moved position of Highlight current frame to next to mode selector and unchecked as default.
+
+# 18/06/2025 v0.2.1
+- Fixed set_interactive mode to now store information to allinds based on the query and category
+- Integrated a much improved load (old) tracking data function and a separate function to convert it to dictionaries to work with visual_editor
+- Made various improvements to visual_editor to be able to work with older, complex files, such as with mixed IDs
+
+# 17/06/2025 v0.2.0
+- Switched arrowhead angle logic to fix direction rendering near 0 degrees.
+- Changed visible range indexing to start at 0 to allow showing just the current frame.
+- Adjusted point filtering logic to correctly include current frame in visible range.
+- Made frame numbers visible even when points are hidden.
+- Added background transparency slider below “Drawing Hue” and renamed section to “Drawing functions”.
+- Modified paintEvent to draw the current frame’s point and arrow thicker in black for emphasis.
+- Scoped point and angle display to current ID if selector is active, using shared scope_mode.
+- Ensured scope_mode and tp_current_id are synced to the drawing widget.
+- Fixed logic in tracker.py to increment point IDs by 1 so they align with GUI display
+- Moved the "Highlight current frame" checkbox inside the Timepoints group (below Angles), and connected it so toggling instantly updates the drawing area.
+- Make editing of angle data possibly by mouse press events
+- Updated saving of timepoints to make it work again now with all point types and angle.
+- Integrated ability for user to load datafile without mediafile and set width and height in annotation_gui and manual_tracker.
+  
+# 13/06/2025 v0.1.10
+- Removed the process.py file, which was long time ago overwritten by the expanded imgprocessor.py file, which was now renamed to image_process.py.
+- Fixed image processing to wrongly store trail and icom columns as numpy
+- Removed the "icom" variable everywhere and the centroid based on the skeleton is now written directly to com to simplify things.
+- Tracking and overlay output now use separate cx,cy, hx,hy, and tx,ty columns instead of tuple-based com, head, and tail for clearer downstream processing and video rendering.
+- Included load_tracking_data function in visual_editor to be able to load and work with tracking data from ATracker.
+- Fixed showing info of nearest point of any ID in visual editor.
+- Integrated ability to load and work with head,tail,angle data in the visual_editor.
+- Integrated numerous improvements in the timepoints options in the sidebar of the visual_editor.
+- Reorganised and cleaned the code for the whole drawing interface with the visual_editor.
+- Integrated drawing of arrows and in colors based on the angle value in the visual_editor.
+
+# 10/06/2025 v0.1.9
+Made various improvements to the visual-editor:
+- Added ability to crop (delete) points inside any temporary shape (rectangle, polygon, circle, ellipse) in timepoints mode without needing to press “A”; shape remains for repeated use. Also Improved polygon shape finalization and display logic for cropping/deleting.
+- Improved undo logic: avoids KeyError when undo buffer is empty or called multiple times.
+- Enhanced nearest frame indicator to show both ID and frame number (e.g., #4-112) for all IDs, with a clear white outline for readability.
+- Fixed: “Current ID” selector now properly syncs with the number of IDs, disables invalid selections, and never allows selection above maximum.
+- Integrated “Move points” with radio buttons with option to select “None", “Any ID” and “Current ID”.
+- Improved ID color display: supports up to 20 IDs, displays color squares above visible range slider, and highlights current ID.
+- Improved logic so points from IDs above current NR IDs are hidden but not deleted.
+- Added option to draw helperlines across the screen with both h-key and checkbox in the functions panel
+- Added checkbox to toggle visibility of the crosshair in the functions panel
+- General UI/UX improvements throughout timepoints mode, including consistent color coding and clearer text rendering.
+- Removed the ivideo.py file as became obsolete as all functionalities have been overtaken and improved with PyQT in the visual_editor.py file.
+
+
+# 10/06/2025 v0.1.8
+- Added batch_measure.py script for efficient batch manual measurement of image and video files via the ATracker annotation GUI, with results saved to CSV or returned as a pandas DataFrame.
+
+# 10/06/2025 v0.1.7
+- Updated the installation guide further to work better with virtual environments on Mac and resolves potential issues with MVS and kernels
+- Updated media type detection by introducing a dedicated get_media_type function, ensuring images and videos are handled appropriately and preventing OpenCV video stream errors for image files.
+- Updated the using_atracker Jupyter tutorial to include new documentation and guidance on the batch measurement workflow and related improvements.
+
+# 02/06/2025 v0.1.6
+- Updated installation guide with platform-specific Python setup, virtual environments, and ffmpeg installation instructions.
+- Added hybrid .h264 → .mp4 conversion with automatic fallback from ffmpeg to imageio for full portability.
+- Improved path handling in ATracker() to support drag-and-drop and mixed slashes across Windows, macOS, and Linux.
+- Updated the atracker installation and usage guide to make installation simpler and install in developer mode (`-e`).
+- Fully tested installing atracker on Windows and made some further improvements to the code and tutorials. 
+
+#   14/05/2025 v0.1.4
+- Updated set_objects function to change all rows if indices are not provided.
+- Fixed atracker without filedir to correctly load current working directory of notebook and avoid writing files starting with dot.
+- Updated instances where np.Inf was called to np.inf, according with numpy 2.x.
+- Improved processor function by moving all coordinate unpacking (icom, head, tail) to prep(), dropped unused object columns to prevent dtype warnings.
+- Fixed FutureWarning by setting dtype=object in newdat DataFrame used for filling missing frames.
+- Fixed crash in checknearmask by coercing coordinate columns to numeric before applying np.isinf.
+- Removed dependency on 'icom' in fillmissing(); it now uses the cx/cy columns passed via colpair, matching the updated coordinate setup in Processor.process().
+- Improved robustness of movement variable calculations in Processor.process() by coercing cx_c and cy_c to numeric before using them in calcudiff(), avoiding ufunc errors.
+- Updated differentiate() to always use pd.to_numeric() and return NumPy arrays, ensuring compatibility with vectorized operations in calcudiff() and turn metrics.
+- Added safety checks in trajectory processing to ensure cx/cy-derived columns are clean before computing displacement, speed, and orientation.
+- Introduced series_to_point_tuple() as a helper to extract (x, y) coordinate arrays from DataFrames, simplifying angle calculations with points_to_angle().
+- Fixed potential crash in final post-processing by coercing cx_c to numeric before checking for NaNs or using np.isinf(), improving error resilience.
+- Refactored wall and mask distance calculations in Processor.process() into a reusable function, add_kdtree_distances(), using KDTree queries.
+- Centralized coordinate cleaning, filtering, and distance assignment logic to avoid repetition and ensure consistency across structure distance calculations.
+- Ensured all cx_c and cy_c values are properly cleaned before KDTree queries, preventing type-related crashes during distance computations.
+- Standardized output columns for structure distances (e.g., mdist/mx/my and wdist/wx/wy) for easier downstream analysis and plotting.
+- Cleaned up the final data export step in Processor.process(): grouped rounding by precision, used safe column selection, and streamlined column ordering.
+- Simplified removenearmask(): it now only removes coordinate and tracking data near the mask and leaves trajectory assignment and labeling to later steps.
+- Reorganized the object-level loop in Processor.process() for clarity and logical flow: now removes in-mask data first, then interpolates, then assigns trajectories.
+- Refactored head/tail correction logic within each trajectory, merging swapping, exclusion, and interpolation steps into one coherent block.
+- Updated coordinate conversion logic to safely handle optional fx/fy columns and to fall back on cx/cy when conversion is not needed.
+- Streamlined movement variable calculations (e.g., displacement, speed, heading) by using clear indexing and separating per-ID and per-traj steps.
+- Updated lit_converter() function to robustly handle NaNs, valid tuples, and malformed strings when parsing coordinate tuples from CSV.
+- Unified trajectory processing with new process_trajectories() function; replaces and simplifies masking, interpolation, and short trajectory removal.
+- Ensured consistency between inmask and traj; all position data is now correctly cleared when fish are in cover.
+- Updated _unpack_coords() to ensure unpacked coordinate columns are explicitly cast to float, preventing dtype issues during smoothing and interpolation.
+- Ensured inmask and traj columns are not duplicated during processing by de-duplicating columns after concatenation or merging.
+- Replaced .set_index("frame") with .index = data["frame"] to preserve the frame column while aligning the index.
+- Fixed handling of empty datasets by guaranteeing essential columns (cx, cy, traj, inmask, etc.) are always present and properly initialized.
+- Prevented KeyError during assignment by ensuring columns like mdist exist before setting values conditionally.
+- Added a check after outlier removal in prep() to flag datasets as empty when all rows are discarded.
+
+# 07/05/2025 v0.1.3
+- Fixed track function that somehow missed part of the code
+- Made max size in visual_editor 10000 instead of 5000. Will want to integrate a way for user to set these values.
+- Added drawing of centroid to visual_editor thresholding mode
+
+# 29/04/2025 v0.1.2
+- Implemented new barcoding functionality to generate barcodes with various patemeters, visualise, save and load them
+
+# 28/04/2025 v0.1.1
+- Changed max size in visual editor from 2000 to 5000 to work better with larger objects/higher resolution (should implement it as a parameter in the future)
+- Clarified note in tracking guide for thresholding that user should aim for blue not red shapes
+- Fixed "erode" wrongly called "erosion in the tracker.py file
+- Fixed storage of roi coordinates as only topleft and bottomright corner in visual_editor.py
+
+# 17/04/2025 v0.1.0
+- Made huge upgrades to the interactive functionalities over the past many weeks so now for that rely on pyqt5 rather than opencv, which is much faster and user friendly but required a complete overhaul. I did not include any detailed changelogs here or a full description of what has been implemented, but will do that from now on now the atracker.set_interactive functionality calls the new visual_editor file and the old set_interactive and ivideo functionality is obsolete.
+- Removed a lot of dependencies across atracker and thereby considerably simplified install_requires of the setup file, including removing pirecorde, scikit-learn, pathos, pyyaml, future, xlrd, xlwt, some python2 related stuff and specific versions. Also further cleaned up the setup file, reorganised, added comments etc.
+- Fixed AT.reload function to also reload the config file when manually updated
+- Added section to installation guide for manually installing latest version of pythutils
+- Integrated double fast escape key for exiting all videos in the set_interactive function
+- Fully integrated drawing of zones, which creates a white mask with multiple colored shapes representing different zones.
+- Fixed mask and zone images not loading with correct size as original image or video
+- Fixed getpts functionality to store a range of values to point columns
+- Properly integrated thresholding into set_interactive, with ability to load a list of threshtypes
+- Made final changes to using-atracker jupyter tutorial file
+- Added robust video output handling using imageio with automatic resizing to ensure even dimensions, improving compatibility with ffmpeg and preventing encoder errors.
+- Fixed Box error that resulted when AT.config was loaded with track instance and an error occurred, preventing the same code cell to be rerun\
+- Added error handling for missing threshtype entries in threshinfo.yml, preventing crashes and printing a clear skip message.
+- Fixed region suffix formatting by converting float regions (e.g., 1.0) to integer format (1) in output filenames.
+- Improved color thresholding support by adapting threshinfo parsing to new HSV-based config format, and added blur/min_area/max_area sliders to the visual editor for color modes.
+- Show general thresholding sliders (blur, min/max area) also in color mode of visual_editor.
+- Fix KeyError when storing angle in fulldat during multi-color threshold tracking.
+- Improved linkIDs() function to assign contour IDs more consistently over time using Hungarian matching and fallback logic based on distance thresholds. Prevents random reassignment after merges or splits.
+- Added compact tutorial Jupyter notebook atracker_tutorial_compact.ipynb with minimal steps and clear annotations for setting up and tracking tutorial videos.
+ - Updated README with clearer description of ATracker’s core functionalities, interactive modes, configuration and thresholding system, and added references to the documentation and tutorial folder.
+- Updated the ATracker installation guide for clarity and reliability, replacing pyenv with virtualenvwrapper, consolidating Python install steps, and improving beginner usability.
+
+# v0.0.9
+- 28/03/2025 Improved imgprocessor function by making sure blur and erode values are always odd
+- 10/04/2025 Removed the bg_extract file and moved the corresponding function to the utils
+- 10/04/2025 Improved the get_bgfiles function to better check if bgfiles exist and added overwrite parameter
+- 10/04/2025 Completely updated the big section 5 in the using atracker jupyter tutorial document
+
+# v0.0.8
 - 18/03/2025 Rewrote the setting-up guide from scratch and made it very organised and clear, also for beginners, and included all steps for mad and windows.
 - 18/03/2025 Reorganised the documentation files, moved the tutorial jupyter file to documentation for working with and setting everything up with atracker, and integrated the documentation and jupyter file, making considerable updates throughout
 - 18/03/2025 Created a new tracking.ipynb tutorial file with all steps for running atracker and specifically related to the tutorial files
-
-## Fixed
 - 18/03/2025 For get_files function set cdir default to "originals"
 
-# 250228 - v0.0.7
-### Added
+# v0.0.7
+- 12/03/2025 Improved explanation in 1-setting-up.md 
 - 28/02/2025 Added ceate_dummy_video.py file to the tutorial to create a white dummy video to create manual tracking for testing
 - 28/02/2025 Added a video to the documentation how to use the manual tracker
-
-## Improved
-- 12/03/2025 Improved explanation in 1-setting-up.md 
 - 28/02/2025 Included comment to set fname_vars to False when loading new videos added to 0originals folders that may have different name parameters
 - 28/02/2025 Added some commands to the tutorial jupyter file for processing
 
 # 250131 - v0.0.6
-### Added
 - 31/01/2025 Added/completely fixed pooling for processing using threading instead of multiprocessing
 - 31/01/2025 Also added print statements with idnr if processed file and made sure print statements were flushed (important when pooling)
-  
-### Fixed
 - 01/02/2025 Removed printing invalid rows detected from walls-related computations in the processing function as wrongly also showed when data was empty
  
 # 250131 - v0.0.5
-### Added
 - 31/01/2025 Added get_inds function to more easily get the indices of a list of files to be tracked and updated corresponding documentation and also incorporatied a `names` parameter in the track function to call this directly
-
-### Fixed
 - 31/01/2025 Fixed processor function not considering files with no tracking data, not it runs all processing and returns a file with empty dataframe
 
 ## 250127 - v0.0.4
-### Added
-- 29/01/2025 Added that by default an "exclude" column is created in the overview file and that for tracking (and more generally the get_files function) it ignores files that have exclude=1. Also included a short explanation about the exclude parameter in the tutorial jupyter file.
-- 29/01/2025 Added printing of circle radius and rectangle area in the `ivideo` function to better draw masks of the same size across multiple videos
-
-### Improved
 - 27/01/2025 Further clarified the functioning of the `get_files()` function in the `3-using-atracker.md` documentation
 - 28/01/2025 Included note in setting-up documentation how to install ffmpeg on older mac systems
+- 28/01/2025 Fixed getting the list of trackedfiles for process() function while checking for _E files working also on windows 
 - 29/01/2025 Included brief explanation what the `simple` parameter does in the atracker tutorial file
 - 29/01/2025 Added explanation to the atracker documention how to use the pools parameter
-
-### Fixed
-- 28/01/2025 Fixed getting the list of trackedfiles for process() function while checking for _E files working also on windows 
+- 29/01/2025 Added that by default an "exclude" column is created in the overview file and that for tracking (and more generally the get_files function) it ignores files that have exclude=1. Also included a short explanation about the exclude parameter in the tutorial jupyter file.
+- 29/01/2025 Added printing of circle radius and rectangle area in the `ivideo` function to better draw masks of the same size across multiple videos
 - 29/01/2025 Fixed the set_config function documentation as a number of parameters were not shown
 - 29/01/2025 Fixed drymode setting pools temporary in the set_config function, while that does not have that parameter, only the track and process functions
 
 ## 250122 - v0.0.3
-### Added
-- Implemented possibility to create custom treshinfo file with the set_interactive() function and to load it in the track() function
+- Implemented possibility to create custom threshinfo file with the set_interactive() function and to load it in the track() function
 - Start updating the version number in __version__.py in line with changes here and categories for added functionality, improved functionality, and fixes
-
-### Improved
 - Added calc_borderdistvec() function for more optimised use of checking distance to borders for excluding data in the processor() function
 - Added some further clarifications to the tutorial jupyter file about regions among other things
 - Improved the layout of the changelog
-
-### Fixed
 - Tracking older dataset "testpilots exp" and using orientbw = True encountered an error to do with angle variable being double generated, so fixed that in tracker.py file
 - Fixed fixheadtail() utils function using data.angle for computation but should be data.orientation based on recent changes
 - Fixed wallcoords computations in the processor function to better deal with missing data
@@ -104,9 +344,9 @@
 - Updated utils with some new functions to get the screen resolution as screen_info somehow didn't work in some virtual environment I created so now it should be more failsafe. Updated ivideo file accordingly.
 
 ## 241009
-- Updated internal documentation and tutorial about storing and using tresh_types
+- Updated internal documentation and tutorial about storing and using thresh_types
 - Integrated simple `save` function to store the overview file
-- Integrated easy way to create multiple bw treshtypes in the same treshinfo file, simply add a suffix and it will work automatically. For this I updated the imgprocessor, tracker, atracker, and ivideo files
+- Integrated easy way to create multiple bw threshtypes in the same threshinfo file, simply add a suffix and it will work automatically. For this I updated the imgprocessor, tracker, atracker, and ivideo files
 - fixed all pathing from mac-specific (i.e. "/") to system general using os.path.join mainly in all relevant files, so now atracker is fully functional in windows as well!
 - Wrote processing doc text with details about all variables. Renamed a number of them and reordered based on appearance.
 - Wrote detailed processing documentation, including for manual tracking, and extended tutorial file with processing steps
@@ -124,10 +364,10 @@
 - Improve the using-atracker documentation by further explanations, restructuring, and adapting for improvements with updated tutorial videos
 - Improved the zone drawing functionality to be able to also create a single zone image just like a mask (`maskzone`) and extended explanation in the tutorial documents
 - Integrated simple get_objects function to add number of objects to track to the overview file
-- fixed print statement for the treshtypes parameter of the `set_interactive` function
+- fixed print statement for the threshtypes parameter of the `set_interactive` function
 - resized and repositioned wrongly positioned trackbars of the ivideo class functionality and maximised size of infopanel
 - included Hue infopanel to help select the right hue values, which dynamically shows the range selected by darkening the rest
-- fixed treshold panels for colors in the ivideo class as min and max values were not correct
+- fixed threshold panels for colors in the ivideo class as min and max values were not correct
 - in the tracker.py file fixed tracking stopping 1 frame too early
 - Created `check_maxframe` function in the core `AT` class to check all videos frame by frame for missing frame and fix the maxframe if there are missing frames, and integrated in the tutorial document using atracker
 - playing with the check_maxframe function using while loop and the `cap.set` function, I noticed a discrepancy of 1 frame, so I set the fcount in the atracker and ivideo classes -1.
@@ -152,7 +392,7 @@
 - Integrated computing turning acceleration variable in processing
 - Fixed some small issue to do with computing orientation correctly
 - Improved the `smooth` utils function to also work with non-series data
-- Integrated parameters in 'manfix' to already set the frameloc, tresholdspeed and timewindow, so quickly all the relevant data can be shown without needing to scroll through the bars
+- Integrated parameters in 'manfix' to already set the frameloc, thresholdspeed and timewindow, so quickly all the relevant data can be shown without needing to scroll through the bars
 - In the manfix function, integrated option to print the currently displayed trajectory data, helpful for further checking the data displayed. Including in-script computed speed variable, key for many tracking issues.
 - Added smoothwin trackbar to the manfix functionality to dynamically change coordinate smoothing to see its effects on the trajectories and computed speed
 
@@ -168,12 +408,12 @@
 ## 240903
 - Added manonly parameter to processing to indicate if only manual fixing should be done or full processing
 - Renamed hx,hy columns to fx,fy in the manual processing function to correspond to this naming in the main processing file
-- Implemented some fixes and additions to update the processing script to better work with heading and/or orientation data together, including computing an optimized orientation variable based on heading above a speed treshold
-- Considerably reordened the processing steps to optimaly calculate orientation based on heading andd speed treshold
+- Implemented some fixes and additions to update the processing script to better work with heading and/or orientation data together, including computing an optimized orientation variable based on heading above a speed threshold
+- Considerably reordened the processing steps to optimaly calculate orientation based on heading andd speed threshold
 
 ## 240902
 - Fixed timewindow showing 1 frame too little and changed Frame position bar to show "Frame+1" to indicate how python shows numbers
-- Fixed the speed treshold computations to work properly and be in mm/sec, such that now with the treshold bar one can easily select a reasonable treshold, such as 5 (mm/s), which will then show all coordinate data at less that speed in red, to easily go there and fix orientation data manually
+- Fixed the speed threshold computations to work properly and be in mm/sec, such that now with the threshold bar one can easily select a reasonable threshold, such as 5 (mm/s), which will then show all coordinate data at less that speed in red, to easily go there and fix orientation data manually
 - Added showing radius of the coordinate data based on min and max user provided speed values to better distinguish slow and fast motion
 - Created create_composite.py file for quickly creating a composite image of all changes observed during a video so easily any patterns can be detected, such as something blocking part of the camera view. Script is not yet very dynamic and integrated but the functionality is there.
 
@@ -182,7 +422,7 @@
 - Integrated orientation to be drawn as a series of arrows
 - Changed colouring of arrows based on where they are in the frame series to recognise time
 - Integrated option to hide centroid coordinate data when showing orientation arrows (with l-key)
-- Integrated a speed treshold trackbar to dynamically show the speed the fish are moving and color points either orange (above it) or red (below it), to help focus on the slow-moving parts as at higher speeds we can simply use heading to compute orientations
+- Integrated a speed threshold trackbar to dynamically show the speed the fish are moving and color points either orange (above it) or red (below it), to help focus on the slow-moving parts as at higher speeds we can simply use heading to compute orientations
 
 ## 240731
 Made a further number of improvements to the manual tracker:
@@ -245,7 +485,7 @@ Made a number of fixes and improvements to the manual tracker:
 - integrated using startframe as set in the config file when no startframe
   provided in excel overview file
 - Changed naming of video window to actual name of current video file
-- Fixed issue with distreshold value in tracker file
+- Fixed issue with disthreshold value in tracker file
 
 ## 220325
 - Incorporated checks into processing function to work with overview files where
@@ -253,7 +493,7 @@ Made a number of fixes and improvements to the manual tracker:
 - Fixed showinfo function to work with single files as string input
 - Added checkonschange parameter to turn off the sophisticated but very slow
   contour splitting function when not needed
-- Added linkdistreshold parameter to use with tracker function to exclude linking
+- Added linkdisthreshold parameter to use with tracker function to exclude linking
   of IDs too far away
 - Improved tracker function to not link identities that are too far away when
   the focal contour is not properly detected
@@ -269,30 +509,30 @@ Made a number of fixes and improvements to the manual tracker:
 - Integrated variable mergedmindist to config file that will be used as a
   condition to determine if a very large contour is a merged contour of two
   previous contours
-- Implemented custreshtypes and cusobjects parameters to the tracking class to
+- Implemented custhreshtypes and cusobjects parameters to the tracking class to
   more easily quickly try out different tracking parameters
 - Fixed linkID function to link IDs for multiple BW contours (since changes to
   the code for colored tracking)
 
 ## 220322
-- Some small fixes to have atracker work with older config and tresh files where
+- Some small fixes to have atracker work with older config and thresh files where
   there is no blur2 or orientfrombw parameters
 - Fixed fix_roi function in line with change on 220312
 
 ## 220315
 - Integrated orientfrombw parameter in config file
-- Improved drawing of angle for color treshtypes
-- Integrated linking of col treshtypes and nearest bw contour to calculate object
+- Improved drawing of angle for color threshtypes
+- Integrated linking of col threshtypes and nearest bw contour to calculate object
   angles
 - Adapted simple mode in tracking function to work with coloured tracking
 
 ## 220314
-- Automatically set tracking mode of color tresh_types to simple
-- Made printing of ids different for BW and color tresh_types
+- Automatically set tracking mode of color thresh_types to simple
+- Made printing of ids different for BW and color thresh_types
 - Fixed linkids for bw to only check bw contours in movedat
 - Fixed tracker to work with bw and color tracking simultaneously
-- Integrated check in setuptracking function if treshtype exists in treshinfo
-- updated check_treshtypes function to convert tuple
+- Integrated check in setuptracking function if threshtype exists in threshinfo
+- updated check_threshtypes function to convert tuple
 
 ## 220312
 - Fixed roi such that the max coordinates are external such that images are not
@@ -358,25 +598,25 @@ Made a number of fixes and improvements to the manual tracker:
   too near the mask.
 
 ## 220222
-- Integrated usage of roi in ivideo mode to use for getting treshold parameters
+- Integrated usage of roi in ivideo mode to use for getting threshold parameters
 
 ## 220127
 - Fixed ragged edges in masked image visualiser function
-- Get visualise function to work properly for videos tracked with color tresholding
+- Get visualise function to work properly for videos tracked with color thresholding
 - Fixed hiding background and drawing coloured IDs
 
 ## 220124
-- Updated tracker.linkIDs function to work with color treshtypes. Currently only
+- Updated tracker.linkIDs function to work with color threshtypes. Currently only
   implemented to work with a single contour per color.
-- Updated tracker function so now multiple different color treshtypes can be
+- Updated tracker function so now multiple different color threshtypes can be
   accurately tracked.
 
 ## 220121
-- Fixed tresholded image and contour info not showing in interactive mode when
+- Fixed thresholded image and contour info not showing in interactive mode when
   using simple.
-- Incorporated interactive color tresholding in the set_interactive function
-- Included a check for treshtype and included larger max size for contour size
-  in color tresholding
+- Incorporated interactive color thresholding in the set_interactive function
+- Included a check for threshtype and included larger max size for contour size
+  in color thresholding
 - Got initial color tracking working with a single color. Further steps are to
   run color tracking in parallel temporally for multiple colors and combine with
   bw tracking for e.g. orientation calculation, as well as using color information
@@ -591,7 +831,7 @@ Made a number of fixes and improvements to the manual tracker:
 
 ## 210519
 - Added drymode function to quickly track a random number of sequences for a
-  random selection of videos to help further check if the treshinfo values are
+  random selection of videos to help further check if the threshinfo values are
   optimally chosen. To be used before intensive full-scale tracking.
 - Added alternative headpoint calculation for cases where the shapely function fails
 
@@ -702,7 +942,7 @@ Made a number of fixes and improvements to the manual tracker:
 - fixed issue for ivideo function with goto key refreshing screen
 
 ## 210413
-- now set_interactive uses existing treshold data when available
+- now set_interactive uses existing threshold data when available
 - with some effort got pool tracking to work, but this won't work in jupyter
 - added overwrite mode if files should be skipped when already tracked
 - integrated tracking of multiple zones and correct writing and moving of files

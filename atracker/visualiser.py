@@ -3,8 +3,6 @@
 import os
 import cv2
 import time
-import pandas as pd
-from ast import literal_eval
 
 from pythutils.sysutils import lineprint
 from pythutils.mediautils import crop, videowriter, add_transimg, imgresize
@@ -47,7 +45,7 @@ def addcanvas(img, dims, color):
 
 
 
-def visualise(data, videofile, img_bg = None, img_mask = None, img_tresh=None,
+def visualise(data, videofile, img_bg = None, img_mask = None, img_thresh=None,
               wallconts = None, roi = None,
               framestep = 1,
               displaystep = 25,
@@ -118,8 +116,6 @@ def visualise(data, videofile, img_bg = None, img_mask = None, img_tresh=None,
     if "com" not in data:
         if "cx" in data:
             data["com"] = [np.nan if np.isnan(a) else (int(a),int(b)) for a,b in zip(data.cx, data.cy)]
-        else:
-            data["com"] = data["icom"]
     if "head" not in data:
         if "fx" in data:
             data["head"] = [np.nan if np.isnan(a) else (int(a),int(b)) for a,b in zip(data.fx, data.fy)]
@@ -197,7 +193,7 @@ def visualise(data, videofile, img_bg = None, img_mask = None, img_tresh=None,
                 framedat["trajdat"].append(list(data.query('ID==@id & frame in @tframes')["com"]))
 
         # Draw everything on the image
-        img_draw = draw_frame(img, framedat, img_bg, img_mask, img_tresh=img_tresh,
+        img_draw = draw_frame(img, framedat, img_bg, img_mask, img_thresh=img_thresh,
             roi=roi,
             resizeimg=resize,
             resizetosmooth=smoothresize,
@@ -262,7 +258,7 @@ def visualise(data, videofile, img_bg = None, img_mask = None, img_tresh=None,
     lineprint("Completed in "+"%.2f" % timediff+" s at "+speed+" fps")
 
 
-def draw_frame(img, framedat, img_bg = None, img_mask = None, img_tresh = None,
+def draw_frame(img, framedat, img_bg = None, img_mask = None, img_thresh = None,
                roi = None, wallconts=None, wallconts2=None,
                cropimg = True,
                resizeimg = 1,
@@ -372,8 +368,8 @@ def draw_frame(img, framedat, img_bg = None, img_mask = None, img_tresh = None,
 
         # 6) Draw trajectories behind objects
         #--------------------
-        if drawtrajsbehind and not drawobjects and img_tresh is not None:
-            img_draw[img_tresh == 255] = img[img_tresh == 255]
+        if drawtrajsbehind and not drawobjects and img_thresh is not None:
+            img_draw[img_thresh == 255] = img[img_thresh == 255]
 
         # 7) Draw contours
         #--------------------

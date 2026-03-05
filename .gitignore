@@ -1,31 +1,18 @@
-# Byte-compiled / optimized / DLL files
 __pycache__/
+*.pyc
 *.py[cod]
 *.so
-
-# Jupyter Notebook checkpoints
+*.log
+*.temp
+*.spec
 .ipynb_checkpoints/
-
-# Environment files
 .env
 .venv/
+.vscode/
+.DS_Store
 env/
 venv/
-
-# VS Code settings
-.vscode/
-
-# Mac system files
-.DS_Store
-
-# Python packaging
-*.egg-info/
 dist/
 build/
-
-# Logs and test output
-*.log
 coverage/
 
-# PyInstaller
-*.spec
