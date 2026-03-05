@@ -1,26 +1,25 @@
 #! /usr/bin/env python
 
+import re
 import os
 import cv2
-import sys
 import pandas as pd
+from scipy.spatial import cKDTree
 from ast import literal_eval
 
 import multiprocessing
-from pythutils.sysutils import lineprint
 from pythutils.mathutils import points_to_angle, angle_to_vec, ptsToDist
 
 from .utils import *
-from .tracker_man import Tracker_man
+#from .tracker_man import Tracker_man
 
 class Processor:
 
-    def __init__(self, dirs, config, overview, trackedfiles, orientfrombw,overwrite, addIDs, removeoutliers,
-                 alonewindow=5, manfix=False, changefps=None, datflip=True, fulldata=True,
+    def __init__(self, dirs, config, overview, trackedfiles, orientfrombw, overwrite, addIDs, removeoutliers,
+                 alonewindow=5, changefps=None, datflip=True, fulldata=True,
                  convert=True, nearmaskdis=20, inmaskdis=10, trajgap = 50, edgedis=25, smoothwin=10, centertype=None,
-                 centralise=False, filllentresh_com=500, filllentresh_headtail=50, man_vidresizeval=0.5, man_types=["c"], 
-                 man_customstep=100, manonly=True, mintrajlength=10, fillmissingorientdifftresh=100, headtoorientspeedtresh=1,
-                 man_frameloc=0, man_timewindow=0, man_treshold_speed=0, delcontdata=False, powermate=False):
+                 centralise=False, filllenthresh_com=500, filllenthresh_headtail=50, mintrajlength=10, fillmissingorientdiffthresh=100, headtoorientspeedthresh=1,
+                 delcontdata=False, powermate=False, force_single_traj=False):
 
         """
         Performs a number of processing steps on the data.
@@ -37,35 +36,56 @@ class Processor:
         self.addIDs = addIDs
         self.removeoutliers = removeoutliers
         self.alonewindow = alonewindow
-        self.manfix = manfix
-        self.manonly = manonly
+        # self.manfix = manfix
+        # self.manonly = manonly
         self.fulldata = fulldata
         self.changefps = changefps
         self.datflip = datflip
         self.convert = convert
         self.nearmaskdis = nearmaskdis
         self.inmaskdis = inmaskdis
-        self.removenearmask = removenearmask
         self.trajgap = trajgap
         self.edgedis = edgedis
         self.smoothwin = smoothwin
         self.centertype = centertype
         self.centralise = centralise
-        self.filllentresh_com = filllentresh_com
-        self.filllentresh_headtail = filllentresh_headtail
-        self.man_vidresizeval = man_vidresizeval
-        self.man_types = man_types
-        self.man_customstep = man_customstep
+        self.filllenthresh_com = filllenthresh_com
+        self.filllenthresh_headtail = filllenthresh_headtail
+        # self.man_vidresizeval = man_vidresizeval
+        # self.man_types = man_types
+        # self.man_customstep = man_customstep
         self.mintrajlength = mintrajlength
-        self.fillmissingorientdifftresh = fillmissingorientdifftresh
-        self.headtoorientspeedtresh = headtoorientspeedtresh
-        self.man_frameloc = man_frameloc 
-        self.man_timewindow = man_timewindow
-        self.man_treshold_speed = man_treshold_speed
+        self.fillmissingorientdiffthresh = fillmissingorientdiffthresh
+        self.headtoorientspeedthresh = headtoorientspeedthresh
+        # self.man_frameloc = man_frameloc 
+        # self.man_timewindow = man_timewindow
+        # self.man_threshold_speed = man_threshold_speed
         self.delcontdata = delcontdata
         self.powermate = powermate
+        self.force_single_traj = force_single_traj
 
 
+    def _unpack_coords(self, column, newcols):
+        """Unpack tuple column (like 'com') into two numeric float columns."""
+        if column in self.data:
+            # Ensure all empty or null entries are tuples
+            mask = pd.isnull(self.data[column])
+            self.data.loc[mask, column] = [(np.nan, np.nan)] * mask.sum()
+
+            if self.data[column].notna().sum() == 0:
+                # If no data to unpack, just fill with NaN columns
+                self.data[newcols[0]] = np.nan
+                self.data[newcols[1]] = np.nan
+            else:
+                # Unpack and convert
+                self.data[newcols[0]], self.data[newcols[1]] = zip(*self.data[column])
+                self.data[newcols[0]] = pd.to_numeric(self.data[newcols[0]], errors="coerce").astype(float)
+                self.data[newcols[1]] = pd.to_numeric(self.data[newcols[1]], errors="coerce").astype(float)
+
+            # Drop original
+            self.data = self.data.drop(columns=[column])
+
+    
     def setup(self, trackedfile, thread_id):
 
         self.trackedfile = trackedfile
@@ -103,33 +123,12 @@ class Processor:
         # Load the datafile
         self.data = pd.read_csv(self.trackedfile, header=0)
         if len(self.data) > 0 and "_E" not in self.filebase[-5:]:
-            converters = {c:lit_converter for c in self.data.columns if str(self.data[c][0])[0]=="("}
+            converters = {c: lit_converter for c in self.data.columns if str(self.data[c].iloc[0]).startswith("(")}
             self.data = pd.read_csv(self.trackedfile, header=0, converters=converters)
             self.emptydat = False
         else:
             self.emptydat = True
         print("["+self.nr+"] "+"Data loaded, "+str(len(self.data))+" rows..", end=" ", flush=True)
-
-        # Convert to value columns
-        for i in self.data.loc[pd.isnull(self.data["icom"])].index:
-            self.data.at[i,"icom"] = (np.nan,np.nan)
-        self.data["icom"] = self.data["icom"].apply(safe_literal_eval)
-        #> if there is not yet any cx,cy coordinate data, extract from icom 
-        if "cx" not in self.data:
-            self.data["cx"],self.data["cy"] = zip(*self.data["icom"]) if len(self.data)>0 else (np.nan,np.nan)
-        #> if there is a 'head' column but no corresponding coordinates yet, create those 
-        if "head" in self.data:
-            for i in self.data.loc[pd.isnull(self.data["head"])].index:
-                self.data.at[i,"head"] = (np.nan,np.nan)
-            self.data["fx"],self.data["fy"] = zip(*self.data["head"])  if len(self.data)>0 else (np.nan,np.nan)
-         #> if there is a 'tail' column but no corresponding coordinates yet, create those 
-        if "tail" in self.data:
-            for i in self.data.loc[pd.isnull(self.data["tail"])].index:
-                self.data.at[i,"tail"] = (np.nan,np.nan)
-            self.data["tx"],self.data["ty"] = zip(*self.data["tail"])  if len(self.data)>0 else (np.nan,np.nan)
-        #> if there is a angle column, which arises from using orientfrombw, then change name to orient 
-        if self.orientfrombw:
-            self.data.rename(columns={'angle': 'orient'}, inplace=True)
 
         # Remove bw contours if needed
         if self.delcontdata:
@@ -139,7 +138,7 @@ class Processor:
             if idnr > len(self.data['id'].unique()):
                 print("["+self.nr+"] "+"Removed bw contour ids..", flush=True)
 
-        # Get combinations of treshtype and identities to get unique objects
+        # Get combinations of threshtype and identities to get unique objects
         self.ids = [i for i in pd.unique(self.data.id)]
 
         # Get further file information
@@ -157,92 +156,171 @@ class Processor:
         if "ID" not in self.fileinfo or self.fileinfo.ID!=self.fileinfo.ID:
             self.IDs = self.data.id.unique()
         else:
-            if self.fileinfo.ID[0]=="(":
-                self.IDs = self.fileinfo.ID.strip('()').split(',')
+            IDval = self.fileinfo.ID
+            if isinstance(IDval, str):
+                if IDval.startswith("(") or IDval.startswith("["):
+                    try:
+                        self.IDs = list(literal_eval(IDval))
+                    except Exception:
+                        self.IDs = IDval.strip('()[]').split(',')
+                elif "," in IDval:
+                    self.IDs = [s.strip() for s in IDval.split(",")]
+                else:
+                    self.IDs = [IDval.strip()]
             else:
-                self.IDs = literal_eval(self.fileinfo.ID) if self.fileinfo.ID[0]=="[" else [self.fileinfo.ID]
+                self.IDs = list(IDval) if hasattr(IDval, "__iter__") else [str(IDval)]
         self.res = literal_eval(self.fileinfo.resolution)
         self.cover = self.fileinfo["maskimg"]==self.fileinfo["maskimg"]
         self.height = self.fileinfo.roi[1][1]-self.fileinfo.roi[0][1]
-        self.nearmaskdisf = self.nearmaskdis * self.conv
-        self.inmaskdis = self.inmaskdis * self.conv
 
         self.prep()
 
-        # Run manual tracking function
-        if self.manfix:
-            vidfile = self.trackedfile[:-6]+"_TR.mp4" if self.trackedfile.endswith(("_E.csv","_R.csv","_Z.csv")) else self.trackedfile[:-4]+"_TR.mp4"
-            TM = Tracker_man(vidfile = vidfile,
-                             data = self.data,
-                             fileaction = "append",
-                             ids = self.ids,
-                             ptypes = self.man_types,
-                             resizeval = self.man_vidresizeval,
-                             internal = True,
-                             customstep = self.man_customstep,
-                             conv = self.conv,
-                             smoothwin = self.smoothwin,
-                             frameloc = self.man_frameloc, 
-                             timewindow = self.man_timewindow, 
-                             treshold_speed = self.man_treshold_speed,
-                             powermate = self.powermate)
-            TM.track()
+        # # Run manual tracking function
+        # if self.manfix:
+        #     vidfile = self.trackedfile[:-6]+"_TR.mp4" if self.trackedfile.endswith(("_E.csv","_R.csv","_Z.csv")) else self.trackedfile[:-4]+"_TR.mp4"
+        #     TM = Tracker_man(vidfile = vidfile,
+        #                      data = self.data,
+        #                      fileaction = "append",
+        #                      ids = self.ids,
+        #                      ptypes = self.man_types,
+        #                      resizeval = self.man_vidresizeval,
+        #                      internal = True,
+        #                      customstep = self.man_customstep,
+        #                      conv = self.conv,
+        #                      smoothwin = self.smoothwin,
+        #                      frameloc = self.man_frameloc, 
+        #                      timewindow = self.man_timewindow, 
+        #                      threshold_speed = self.man_threshold_speed,
+        #                      powermate = self.powermate)
+        #     TM.track()
 
-            if self.manonly:
-                return
+        #     if self.manonly:
+        #         return
 
-        # Further preps for auto processing
-        if self.fileinfo.bgimg == self.fileinfo.bgimg:
-            self.img_bg = cv2.imread(os.path.join(self.dirs["originals"], self.fileinfo.bgimg))
+        # Load all relevant images
+        self.bg_path   = valid_img_path(self.fileinfo, "bgimg",   self.dirs["originals"])
+        self.mask_path = valid_img_path(self.fileinfo, "maskimg", self.dirs["originals"])
+        self.wall_path = valid_img_path(self.fileinfo, "wallimg", self.dirs["originals"])
+        self.zone_path = valid_img_path(self.fileinfo, "zoneimg", self.dirs["originals"])
+        if self.bg_path:
+            self.img_bg = cv2.imread(self.bg_path)
         else:
-            print("["+self.nr+"] "+"bg img does not exist..", end=" ", flush=True)
-        if self.fileinfo.maskimg == self.fileinfo.maskimg:
-            _,self.maskcoords = coordsfrommask(os.path.join(self.dirs["originals"], self.fileinfo.maskimg))
-            self.maskcoords = [(x-self.fileinfo.roi[0][0],y-self.fileinfo.roi[0][1]) for x,y in self.maskcoords]
+            print(f"[{self.nr}] bg img does not exist..", end=" ", flush=True)
+        if self.mask_path:
+            _, self.maskcoords = coordsfrommask(self.mask_path)
         else:
-            print("["+self.nr+"] "+"Maskimg does not exist..", end=" ", flush=True)
+            print(f"[{self.nr}] Maskimg does not exist..", end=" ", flush=True)
             self.maskcoords = []
-        if "wallimg" not in self.fileinfo or self.fileinfo.wallimg!=self.fileinfo.wallimg:
-            self.wallcoords = []
-            print("["+self.nr+"] "+"Wallimg does not exist..", end=" ", flush=True)
+        if self.wall_path:
+            _, self.wallcoords = coordsfrommask(self.wall_path)
         else:
-            _,self.wallcoords = coordsfrommask(os.path.join(self.dirs["originals"], self.fileinfo.wallimg))
-        #print("")
+            print(f"[{self.nr}] Wallimg does not exist..", end=" ", flush=True)
+            self.wallcoords = []
+        if self.zone_path:
+            self.zonecoords = coordsfromzones(self.zone_path)
+        else:
+            print(f"[{self.nr}] Zoneimg does not exist..", end=" ", flush=True)
+            self.zonecoords = {}
+        self.center = None
+        if self.centertype == "pt" and "pt" in self.fileinfo and pd.notna(self.fileinfo["pt"]):
+            x, y = literal_eval(self.fileinfo["pt"])
+            self.center = (x, y)
+        elif self.centertype == "walls" and self.wallcoords:
+            wall_xs, wall_ys = zip(*self.wallcoords)
+            self.center = (np.mean(wall_xs), np.mean(wall_ys))
+        elif self.centertype == "roi":
+            xmin, ymin = self.fileinfo.roi[0]
+            xmax, ymax = self.fileinfo.roi[1]
+            width = xmax - xmin
+            height = ymax - ymin
+            self.center = (width / 2, height / 2)
+        else:
+            self.center = None
         self.process()
 
 
     def prep(self):
+        # -- Coordinate cleanup and unpacking --
         
+        # Remove unnecessary columns
+        self.data = self.data.drop(columns=["com", "consmerged"], errors="ignore")
+
+        # If we have old-style packed coords, unpack them
+        self._unpack_coords("com", ["cx", "cy"])
+
+        # Handle modern hx/hy
+        if "hx" in self.data.columns and "hy" in self.data.columns:
+            # use hx,hy as head coordinates for downstream code (fx,fy)
+            self.data.rename(columns={"hx": "fx", "hy": "fy"}, inplace=True)
+
+        # Only unpack "head"/"tail" if those columns actually exist (legacy case)
+        if "head" in self.data.columns:
+            self._unpack_coords("head", ["fx", "fy"])
+        if "tail" in self.data.columns:
+            self._unpack_coords("tail", ["tx", "ty"])
+
+        # Only rename angle to orient if we really want to use angle as primary source
+        if self.orientfrombw and "angle" in self.data and "hx" not in self.data and "fx" not in self.data:
+            self.data.rename(columns={'angle': 'orient'}, inplace=True)
+
+        # Set frame index
         self.data.index = list(self.data.frame)
-        if len(self.data)==0:
+
+        # Remove frames outside the allowed start/stop window
+        valid_frames = list(range(self.minfr, self.maxfr + 1))
+        invalid_frames = self.data.index[~self.data.index.isin(valid_frames)]
+        if len(invalid_frames) > 0:
+            print(f"[{self.nr}] Removed {len(invalid_frames)} invalid frames "
+                f"(outside {self.minfr}-{self.maxfr}).", flush=True)
+            self.data = self.data[self.data.index.isin(valid_frames)]
+
+        # If no data, ensure at least ID=0
+        if len(self.data) == 0:
             self.ids = [0]
-        for idind,id in enumerate(self.ids):
+            self.data = pd.DataFrame({
+                "frame": list(range(self.minfr, self.maxfr + 1)),
+                "id": 0
+            })
+        
+        # Add core columns
+        self.data = ensure_columns(self.data, {"cx": np.nan, "cy": np.nan, "ID": np.nan, 
+                                               "traj": np.nan, "inroi": 1, "inmask": 1})
+
+        # Process each ID
+        for idind, id in enumerate(self.ids):
             
             # Remove short fragments of tracking data
             if self.removeoutliers:
-                alones = getalones(self.data[self.data.id == id], "icom", self.alonewindow)
-                if len(alones)>0:
-                    cols = ["cx", "cy"] + (["fx", "fy"] if "fx" in self.data else []) + (["tx", "ty"] if "tail" in self.data else [])
-                    self.data.loc[alones,cols] = np.nan
-                    print("["+self.nr+"] "+"Removed",len(alones),"outliers", flush=True)
+                alones = getalones(self.data[self.data.id == id], "cx", self.alonewindow)
+                if len(alones) > 0:
+                    cols = ["cx", "cy"] + (["fx", "fy"] if "fx" in self.data else []) + (["tx", "ty"] if "tx" in self.data else [])
+                    self.data.loc[alones, cols] = np.nan
+                    print("[" + self.nr + "] Removed", len(alones), "outliers", flush=True)
+                
+                # Re-check for emptiness after removing outliers
+                if self.data["cx"].isna().all() or len(self.data.dropna(subset=["cx", "cy"])) == 0:
+                    self.emptydat = True
 
-            # Add empty rows for each frame and id combination
-            newcols = [([frame, id] + list(np.repeat(np.nan,len(self.data.columns)-2))) for frame in list(range(self.minfr,self.maxfr+1))]
-            newdat = pd.DataFrame(newcols, columns = self.data.columns)
+            # Add empty rows for each frame and ID combination
+            newcols = [
+                [frame, id] + list(np.repeat(np.nan, len(self.data.columns) - 2))
+                for frame in range(self.minfr, self.maxfr + 1)
+            ]
+            newdat = pd.DataFrame(newcols, columns=self.data.columns, dtype=object)
             newdat.index = list(newdat.frame)
-            newdat.loc[self.data.index[self.data.id==id]] = self.data[self.data.id==id]
-            final = newdat if idind==0 else pd.concat([final,newdat])
+            # Reindex self.data to match newdat's frame-based index
+            self.data.index = self.data["frame"]          
 
-        # Sort the data by frame and id
-        self.data = final.sort_values(["id","frame"])
-        self.data.index = list(range(0,len(self.data)))
+            # Assign matching rows by frame
+            newdat.loc[self.data[self.data.id == id].index] = self.data[self.data.id == id]
+            final = newdat if idind == 0 else pd.concat([final, newdat])
+
+        # Finalize the dataset
+        self.data = final.sort_values(["id", "frame"])
+        self.data.index = list(range(len(self.data)))
         self.data["frame"] = self.data["frame"].astype(int)
 
-        # Add proper nans for com and icom data
-        for i in self.data.loc[pd.isnull(self.data["icom"])].index:
-            self.data.at[i,"icom"] = (np.nan,np.nan)
-
-        print("["+self.nr+"] "+"Data prepared..", end=" ", flush=True)
+        print("[" + self.nr + "] Data prepared..", end=" ", flush=True)
 
 
     def fixids(self):
@@ -286,7 +364,7 @@ class Processor:
             if key == 27:
                 break
             if key == ord('b'):
-                dat.loc[sec[0]:sec[1]+1,"icom"] = np.nan
+                dat.loc[sec[0]:sec[1]+1,"com"] = np.nan
                 print("dats removed..", end=" ")
 
         if key != 27:
@@ -309,9 +387,6 @@ class Processor:
             self.data = self.data[self.data["frame"].isin(framelist)]
             print("["+self.nr+"] "+"Data subsetted to "+self.fps+" fps..", end=" ")
 
-        # Remove unnecessary columns 
-        self.data = self.data.drop(['com', 'consmerged'], axis=1)
-
         # Assign emtpy data columns
         self.data = self.data.assign(ID = np.nan,
                                      traj = np.nan,
@@ -325,121 +400,165 @@ class Processor:
                                      turnaccel = np.nan,
                                      cumturn = np.nan,
                                      abscumturn = np.nan,
-                                     inroi = 1)
+                                     inroi = 1,
+                                     inmask=1)
 
         # Check each tracked object
         if not self.emptydat:
+            final = []
+
             for idind, id in enumerate(self.ids):
-                print("["+self.nr+"] "+"[obj "+str(id)+"]:", end=" ", flush=True)
+                print(f"[{self.nr}] [obj {id}]:", end=" ", flush=True)
 
-                # Subset data
-                sub = self.data.copy()
-                sub = sub.loc[sub.id == id,]
-                sub.index = list(range(0, sub.index.size,1))
+                # Subset and prepare data
+                sub = self.data[self.data.id == id].copy().reset_index(drop=True)
+                sub["ID"] = self.IDs[idind] if self.addIDs else id
 
-                # Add ID data
-                sub.ID = self.IDs[idind] if self.addIDs else id
+                # Interpolate all gaps, even if they pass through the mask
+                sub, nmissing = fillmissing(sub, ["cx", "cy"], None, self.fileinfo.roi,
+                                            win=5, nearmaskdis=self.nearmaskdis,
+                                            edgedis=self.edgedis,
+                                            lenthresh=self.filllenthresh_com)
+                print(f"[{self.nr}] Filled {nmissing} centroid frames..", end=" ")
+                
+                # Now that all points exist, remove ones under or near the mask
+                sub, ntraj, nremoved = process_trajectories(
+                    sub,
+                    mask=self.maskcoords,
+                    cover=self.cover,
+                    win=5,
+                    trajgap=self.trajgap,
+                    inmaskdis=self.inmaskdis,
+                    mintrajlength=self.mintrajlength,
+                    erase_coords=True,
+                    interpolate=True,
+                    force_single_traj=self.force_single_traj
+                )
+                sub["inmask"] = sub["traj"].isna().astype(int)
+                print(f"[{self.nr}] Removed {nremoved} points near cover and split into {ntraj} trajector{'ies' if ntraj != 1 else 'y'}..", end=" ")
 
-                # Check and fill in missing coordinate data and add roi status
-                sub, nmissing = fillmissing(sub, ["cx","cy"], self.maskcoords, self.fileinfo.roi,
-                                    5, self.nearmaskdisf, self.edgedis, self.filllentresh_com)
-                print("["+self.nr+"] "+"Filled in centroid data for "+str(nmissing)+" NaN frames..", end=" ", flush=True)
-
-                # Add trajectory numbers and mask status
-                addtrajsnmaskstate(sub, self.maskcoords, self.cover, win = 5,
-                                            trajgap = self.trajgap, nearmaskdis = self.nearmaskdisf)
-                if self.cover and self.inmaskdis>0 and len(self.maskcoords)>0:
-                    _,_,missing = removenearmask(sub, self.maskcoords, inmaskdis = self.inmaskdis, mintrajlength = self.mintrajlength)
-                    print("["+self.nr+"] "+"Removed "+str(missing)+" frames near cover..",end=' ', flush=True)
-                trajs = sub.loc[~np.isnan(sub.traj),"traj"].unique()
-                word = " Trajs.." if len(trajs)>1 else " Traj"
-                print("["+self.nr+"] "+str(len(trajs))+word+"..", end=" ", flush=True)
-
-                # Improve front/back allocation where possible
-                if "head" and "tail" in self.data:
+                # Fix head/tail orientation if applicable
+                if {"head", "tail"}.issubset(self.data.columns):
                     missing = 0
-                    totfixes = 0
-                    try:
-                        medarea = np.nanmedian(sub.area)
-                    except:
-                        medarea = None
-                    for i,t in enumerate(sub.traj.unique()):
-                        if t!=t:
-                            subsub = sub[sub.traj!=sub.traj].copy()
-                        else:
-                            subsub = sub[sub.traj==t].copy()
-                            subsub.index = list(range(0,len(subsub)))
+                    total_swaps = 0
+                    medarea = np.nanmedian(sub["area"]) if "area" in sub else None
+                    corrected = []
 
-                            # Remove heads and tails near roi
-                            subsub.loc[:,"orienttoexcl"] = np.nan
-                            newroi = ((1,1),(self.fileinfo.roi[1][0]-self.fileinfo.roi[0][0],self.fileinfo.roi[1][1]-self.fileinfo.roi[0][1]))
-                            borderdist = calc_borderdistvec(subsub, newroi)
-                            subsub.loc[borderdist < self.edgedis, ["orienttoexcl"]] = 1
+                    for t in sub.traj.dropna().unique():
+                        traj_df = sub[sub.traj == t].copy().reset_index(drop=True)
 
-                            # Fix heads and tails as good as possible
-                            if medarea != None:
-                                subsub, swappedinds = fixheadtail(subsub, tresharea=medarea)
-                                subsub.loc[subsub.orienttoexcl==1, ["head","fx","fy","tail","tx","ty"]] = np.nan
+                        # Exclude border regions
+                        traj_df["orienttoexcl"] = np.nan
+                        newroi = ((1, 1), (self.fileinfo.roi[1][0] - self.fileinfo.roi[0][0], self.fileinfo.roi[1][1] - self.fileinfo.roi[0][1]))
+                        borderdist = calc_borderdistdf(traj_df, newroi)
+                        traj_df.loc[borderdist < self.edgedis, "orienttoexcl"] = 1
 
-                            # Get alone frames
-                            alones = getalones(subsub, "fx", self.alonewindow)
-                            if len(alones)>0:
-                                print("["+self.nr+"] "+"Removed",len(alones),"alone head-tail frames..", end=" ", flush=True)
-                                subsub.loc[alones,["fx","fy","tx","ty"]] = np.nan
+                        # Fix head/tail swap if area allows
+                        if medarea:
+                            traj_df, swapped = fixheadtail(traj_df, thresharea=medarea)
+                            traj_df.loc[traj_df.orienttoexcl == 1, ["head", "fx", "fy", "tail", "tx", "ty"]] = np.nan
+                            total_swaps += len(swapped)
 
-                            # Fill in mising head and tail data
-                            subsub, submissing = fillmissing(subsub, ["fx","fy"], None, self.fileinfo.roi, 5, lentresh=self.filllentresh_headtail)
-                            subsub, submissing = fillmissing(subsub, ["tx","ty"], None, self.fileinfo.roi, 5, lentresh=self.filllentresh_headtail)
-                            missing += submissing
-                            totfixes += len(swappedinds)
+                        # Remove outlier head/tail frames
+                        alones = getalones(traj_df, "fx", self.alonewindow)
+                        if alones:
+                            traj_df.loc[alones, ["fx", "fy", "tx", "ty"]] = np.nan
+                            print(f"[{self.nr}] Removed {len(alones)} alone head-tail frames..", end=" ", flush=True)
 
-                        temp = subsub if i == 0 else pd.concat([temp, subsub])
+                        # Fill missing head/tail data
+                        for cols in [["fx", "fy"], ["tx", "ty"]]:
+                            traj_df, miss = fillmissing(traj_df, cols, None, self.fileinfo.roi, win=5, lenthresh=self.filllenthresh_headtail)
+                            missing += miss
 
-                    temp.index = list(range(0,len(temp)))
-                    sub = temp.copy()
-                    print("["+self.nr+"] "+"Swapped "+str(totfixes)+" head and tails..", end=" ", flush=True)
-                    print("["+self.nr+"] "+"Filled in front data for "+str(missing)+" NaN frames..", end=" ", flush=True)
+                        corrected.append(traj_df)
 
-                # Smooth positional coordinates and orientation
-                if self.smoothwin>1:
-                    sub = smooth(sub, trajs, ["cx","cy"], self.smoothwin)
-                    # Remove rows where smoothed columns are NaN
-                    sub = sub.dropna(subset=["cx", "cy"])
-                    print("["+self.nr+"] "+"Data smoothed..", end=" ", flush=True)
+                    sub = pd.concat(corrected).reset_index(drop=True)
+                    print(f"[{self.nr}] Swapped {total_swaps} head and tails..", end=" ")
+                    print(f"[{self.nr}] Filled in front data for {missing} NaN frames..", end=" ")
 
-                # Merge sub with complete dataset
-                final = sub if idind == 0 else pd.concat([final, sub])
+                # Smooth trajectory if enabled
+                if self.smoothwin > 1:
+                    sub = smooth(sub, sub.traj.dropna().unique(), ["cx", "cy"], self.smoothwin)
+                    print(f"[{self.nr}] Data smoothed..", end=" ")
+
+                # Merge with other objects
+                final.append(sub)
+
+            final = pd.concat(final).sort_values(["ID", "frame"]).reset_index(drop=True)
+
         else:
-            final = self.data
-            
-        # Re-sort dataframe before conversion operations
-        final = final.sort_values(["ID","frame"])
-        final = final.reset_index(drop=True)
+            print(f"[{self.nr}] No valid tracking data (emptydat=True) — skipping processing.")
+            final = self.data.copy()
+            final["cx_c"] = final["cx"]
+            final["cy_c"] = final["cy"]
+            final["rdist"] = np.nan
+            final["inmask"] = 1
+            final.to_csv(self.procfile, index=False)
+            print(f"[{self.nr}] Empty file written due to missing coordinates.")
+            return
 
-         # Convert positional coordinates
+        # --- Coordinate conversion ---
+        xs_global, ys_global = final["cx"].values, final["cy"].values
         if self.convert and self.fileinfo.conv == self.fileinfo.conv:
-            final["cx_c"],final["cy_c"] = convert(final.cx, final.cy, self.conv, self.height, self.datflip, None)
-            if "fx" in self.data:
-                final["fx_c"],final["fy_c"] = convert(final.fx, final.fy, self.conv, self.height, self.datflip, None)
-            print("["+self.nr+"] "+"Data converted..", end=" ", flush=True)
+            final["cx_c"], final["cy_c"] = convert(
+                final["cx"], final["cy"], self.conv, self.height, self.datflip, self.fileinfo.roi, already_relative=True
+            )
+            if {"fx", "fy"}.issubset(final.columns):
+                final["fx_c"], final["fy_c"] = convert(
+                    final["fx"], final["fy"], self.conv, self.height, self.datflip, self.fileinfo.roi, already_relative=True
+                )
+            print(f"[{self.nr}] Data converted..", end=" ", flush=True)
         else:
-            final["cx_c"],final["cy_c"]  = (final["cx"],final["cy"])
-            if "fx" in self.data:
-                final["fx_c"],final["fy_c"]  = (final["fx"],final["fy"])
+            final["cx_c"], final["cy_c"] = final["cx"], final["cy"]
+            if {"fx", "fy"}.issubset(final.columns):
+                final["fx_c"], final["fy_c"] = final["fx"], final["fy"]
 
-        # After all centroid data is corrected, calculate key movement variables 
+        # --- Movement variable calculations ---
         for ID in final.ID.unique():
-            for t in final.loc[final.ID==ID].traj.dropna().unique():
-                inds = final.loc[(final.ID==ID)&(final.traj==t)].index
-                final.loc[inds,"displ"] = calcudiff(final.loc[inds,"cx_c"], final.loc[inds,"cy_c"])
-                final.loc[inds,"speed"] = final.loc[inds,"displ"] * self.fps / 10 #cm/s
-                final.loc[inds,"accel"] = differentiate(final.loc[inds,"speed"]) * self.fps
-                final.loc[inds,"heading"] = calcudiff(final.loc[inds,"cx_c"], final.loc[inds,"cy_c"], angle=True)
-                final.loc[inds,"turnspeed"] = get_anglediff(final.loc[inds,"heading"])
-                final.loc[inds,"turnaccel"] = get_anglediff(final.loc[inds,"turnspeed"]) 
-            final.loc[final.ID==ID,"cumdispl"] = np.nancumsum(final.loc[final.ID==ID,"displ"])
+            id_mask = final.ID == ID
+            for t in final.loc[id_mask, "traj"].dropna().unique():
+                traj_mask = id_mask & (final.traj == t)
+                fx = final.loc[traj_mask, "cx_c"]
+                fy = final.loc[traj_mask, "cy_c"]
 
-        if "fx" in final.columns:
+                final.loc[traj_mask, "displ"] = calcudiff(fx, fy)
+                final.loc[traj_mask, "speed"] = final.loc[traj_mask, "displ"] * self.fps / 10  # cm/s
+                final.loc[traj_mask, "accel"] = differentiate(final.loc[traj_mask, "speed"]) * self.fps
+                final.loc[traj_mask, "heading"] = calcudiff(fx, fy, angle=True)
+                final.loc[traj_mask, "turnspeed"] = get_anglediff(final.loc[traj_mask, "heading"])
+                final.loc[traj_mask, "turnaccel"] = get_anglediff(final.loc[traj_mask, "turnspeed"])
+
+            # Cumulative displacement across all trajectories per ID
+            final.loc[id_mask, "cumdispl"] = np.nancumsum(final.loc[id_mask, "displ"])
+
+        # --- Final work for orientation data ---
+        for col in ["fx", "fy", "tx", "ty", "cx", "cy", "vx", "vy"]:
+            if col in final.columns:
+                final[col] = pd.to_numeric(final[col], errors="coerce")
+
+        if self.orientfrombw and "angle" in final.columns:
+            # Simple mode: use angle from tracking as orient
+            print(f"[{self.nr}] Using angle column as orient..", end=" ", flush=True)
+            final["orient"] = final["angle"]
+
+            # derive vx,vy from orient, smooth if you want, etc.
+            valid_inds = final["orient"].dropna().index
+            result = final.loc[valid_inds, "orient"].apply(angle_to_vec)
+            final.loc[valid_inds, ["vx","vy"]] = result.apply(pd.Series, index=["vx", "vy"])
+            final.loc[valid_inds, "vx"] = pd.to_numeric(final.loc[valid_inds, "vx"], errors="coerce")
+            final.loc[valid_inds, "vy"] = pd.to_numeric(final.loc[valid_inds, "vy"], errors="coerce")
+
+            # (optional) smooth vx,vy here
+            # final = smooth(...)
+
+            # recompute turnspeed/turnaccel if needed
+            final["turnspeed"] = get_anglediff(final["orient"])
+            final["turnaccel"] = get_anglediff(final["turnspeed"])
+
+            # if in this mode you don't care about head coords, you can safely drop them
+            final.drop(columns=["fx", "fy", "fx_c", "fy_c"], inplace=True, errors='ignore')
+    
+        elif "fx" in final.columns:
             print("["+self.nr+"] "+"Improving orient..", end=" ", flush=True)
             final["orient"] = None
 
@@ -449,14 +568,13 @@ class Processor:
                     inds = final.loc[(final.ID == ID) & (final.traj == t)].index
 
                     # Compute orient from head coordinates (fx, fy)
-                    final.loc[inds,"orient"] = points_to_angle(
-                        (final.loc[inds,"cx"], final.loc[inds,"cy"]),
-                        (final.loc[inds,"fx"], final.loc[inds,"fy"]), 
-                        flip=True)
+                    pt1 = series_to_point_tuple(final.loc[inds], ["cx", "cy"])
+                    pt2 = series_to_point_tuple(final.loc[inds], ["fx", "fy"])
+                    final.loc[inds, "orient"] = points_to_angle(pt1, pt2, flip=True)
 
                     # Add heading values to empty orient cells if speed >= threshold
                     final.loc[inds, "orient"] = final.loc[inds].apply(
-                        lambda row: row['heading'] if pd.isnull(row['orient']) and row['speed'] >= self.headtoorientspeedtresh else row['orient'],
+                        lambda row: row['heading'] if pd.isnull(row['orient']) and row['speed'] >= self.headtoorientspeedthresh else row['orient'],
                         axis=1)
 
                     # Ensure 'orient' is numeric and handle NaN values
@@ -469,9 +587,11 @@ class Processor:
                     # Apply your 'angle_to_vec' formula for valid rows only
                     result = final.loc[valid_inds, "orient"].apply(angle_to_vec)
                     final.loc[valid_inds, ["vx","vy"]] = result.apply(pd.Series, index=["vx", "vy"])
+                    final["vx"] = pd.to_numeric(final["vx"], errors="coerce")
+                    final["vy"] = pd.to_numeric(final["vy"], errors="coerce")
 
                     # Fill in missing values as needed
-                    final.loc[inds], missing = fillmissing(final.loc[inds], ["vx", "vy"], None, None, lentresh=self.fillmissingorientdifftresh)
+                    final.loc[inds], missing = fillmissing(final.loc[inds], ["vx", "vy"], None, None, lenthresh=self.fillmissingorientdiffthresh)
 
                     # Smooth the data (if the smoothing window is large enough)
                     final.loc[inds] = smooth(final.loc[inds], [t], ["vx", "vy"], self.smoothwin)
@@ -490,112 +610,130 @@ class Processor:
             final.loc[final.ID==ID,"cumturn"] = np.nancumsum(final.loc[final.ID==ID,"turnspeed"])
             final.loc[final.ID==ID,"abscumturn"] = np.nancumsum(abs(final.loc[final.ID==ID,"turnspeed"]))
 
-        # # Fix any remaining issues with orientation by setting those rows to NA
-        # if "fx" in self.data:
-        #     indstona = final.index.values[abs(final.turnspeed)>450]
-        #     for ind in indstona:
-        #         final.loc[ind-3:ind+3,["orient","turnspeed","fx","fy","tx","ty"]] = np.nan
-        #     print(str(len(indstona))+" rows with too high turning speeds set to NA..", end=" ")
+        # --- Prepare coordinates ---
+        final["cx_c"] = pd.to_numeric(final["cx_c"], errors='coerce')
+        final["cy_c"] = pd.to_numeric(final["cy_c"], errors='coerce')
+        if "fx_c" in final:
+            final["fx_c"] = pd.to_numeric(final["fx_c"], errors='coerce')
+            final["fy_c"] = pd.to_numeric(final["fy_c"], errors='coerce')
 
-        # Add structural distance measures
-        ## To region of interest
-        roi = tuple([(pt[0]*self.conv,pt[1]*self.conv) for pt in self.fileinfo.roi])
-        final["rdist"] = [calc_borderdist((x,y),roi) for (x,y) in zip(final.cx_c,final.cy_c)]
-        final.loc[final.inroi==0,"rdist"] = 0
+        # --- DISTANCE MEASURES ---
+        xmin, ymin = self.fileinfo.roi[0]
+        xmax, ymax = self.fileinfo.roi[1]
+        xs_full = xs_global + xmin
+        ys_full = ys_global + ymin
 
-        ## To mask
-        if self.maskcoords not in (None,[]):
-            if self.convert:
-                self.mask_c = [convert(x,y,self.conv,self.height,self.datflip,None) for x,y in self.maskcoords]
-            else:
-                self.mask_c = self.maskcoords
-            self.maskcoords = [convert(x,y,1,self.height,False,None) for x,y in self.maskcoords]
-            if len(final.cx_c[~np.isnan(final.cx_c)])==0:
-                final["mdist"] = 0
-                final["mx"],final["my"] = np.nan, np.nan
-            else:
-                final["mdist"], pixid = KDTree(self.mask_c).query(list(zip(final.cx_c,final.cy_c)))
-                final.loc[final["mdist"]==np.Inf,"mdist"] = np.nan
-                final["mx"],final["my"] = zip(*[self.maskcoords[i] if i<len(self.maskcoords) else (np.nan,np.nan) for i in pixid])
-                if self.cover:
-                    final.loc[final.inmask==1,"mdist"] = 0
-            print("["+self.nr+"] "+"Mask distances computed..", end=" ", flush=True)
+        # Distances to full-image features
+        final["rdist"] = dist_to_rect(xs_full, ys_full, xmin, xmax, ymin, ymax) * self.conv * -1
+        if self.maskcoords:
+            final["mdist"] = dist_to_poly(xs_full, ys_full, self.maskcoords) * self.conv
+        if self.wallcoords:
+            final["wdist"] = dist_to_poly(xs_full, ys_full, self.wallcoords) * self.conv
+        if self.center is not None:
+            final["cdist"] = dist_to_point(xs_full, ys_full, *self.center) * self.conv
+        if self.zonecoords:
+            for zidx, coords in self.zonecoords.items():
+                if not coords:
+                    continue
+                if len(coords) == 1:
+                    dists = dist_to_point(xs_full, ys_full, coords[0][0], coords[0][1]) * self.conv
+                elif len(coords) == 4 and is_axis_aligned_rectangle(coords):
+                    coords_arr = np.asarray(coords)
+                    xmin_z, xmax_z = coords_arr[:, 0].min(), coords_arr[:, 0].max()
+                    ymin_z, ymax_z = coords_arr[:, 1].min(), coords_arr[:, 1].max()
+                    dists = dist_to_rect(xs_full, ys_full, xmin_z, xmax_z, ymin_z, ymax_z) * self.conv
+                elif len(coords) >= 3:
+                    dists = dist_to_poly(xs_full, ys_full, coords) * self.conv
+                else:
+                    dists = np.nan
+                final[f"z{zidx}dist"] = dists
+        ptcols = [col for col in self.overview.columns if re.match(r"pt\d+$", col)]
+        ptcols = [col for col in ptcols if pd.notna(self.fileinfo.get(col))]
+        if ptcols:
+            print(f"[{self.nr}] Distance computed to points:", end=" ", flush=True)
+            for ptcol in ptcols:
+                ptstr = self.fileinfo.get(ptcol)
+                try:
+                    pt = literal_eval(ptstr)
+                    if isinstance(pt, tuple) and len(pt) == 2:
+                        pt_cm = convert(pt[0], pt[1], self.conv, self.height, self.datflip, roi=None, already_relative=False) if self.convert else pt
+                        distname = f"{ptcol}dist"
+                        final[distname] = [ptsToDist((x, y), pt_cm) for x, y in zip(final.cx_c, final.cy_c)]
+                        print(f"{ptcol[2:]}", end=" ", flush=True)
+                except Exception as e:
+                    print(f"\n[{self.nr}] Warning: Could not parse {ptcol} → {ptstr}: {e}", flush=True)
 
-        ## To walls
-        if self.wallcoords not in (None,[]):
-            if self.convert:
-                self.wall_c = [convert(x,y,self.conv,self.height,self.datflip,self.fileinfo.roi) for x,y in self.wallcoords]
-            else:
-                self.wall_c = self.wallcoords
-            self.wallcoords = [convert(x,y,1,self.height,False,self.fileinfo.roi) for x,y in self.wallcoords]
-            invalid_rows = final[
-                final.cx_c.isna() | final.cy_c.isna() | np.isinf(final.cx_c) | np.isinf(final.cy_c)
-            ]
-            # # Print detailed information about the invalid rows
-            # if not invalid_rows.empty:
-            #     print("["+self.nr+"] "+"Invalid rows detected:", flush=True)
-            #     print("["+self.nr+"] ", invalid_rows[["frame", "cx_c", "cy_c"]], flush=True)  # Include relevant columns
-            valid_rows = ~final.cx_c.isna() & ~final.cy_c.isna() & ~np.isinf(final.cx_c) & ~np.isinf(final.cy_c)
-            filtered_points = list(zip(final.cx_c[valid_rows], final.cy_c[valid_rows]))
-            if len(filtered_points) == 0:
-                final["wdist"] = 0
-                final["wx"],final["wy"] = np.nan, np.nan
-            else:
-                final["wdist"], pixid = KDTree(self.wall_c).query(filtered_points)
-                final.loc[final["wdist"] == np.Inf,"wdist"] = np.nan
-                final["wx"],final["wy"] = zip(*[self.wallcoords[i] if i<len(self.wallcoords) else (np.nan,np.nan) for i in pixid])
-            print("["+self.nr+"] "+"Wall distances computed..", end=" ", flush=True)
-
-        ## To center (either based on roi or walls)
-        if self.centertype is not None:
-            center = None
-            try:
-                x,y = literal_eval(self.fileinfo.pt)
-                center = convert(x, y, self.conv, self.fileinfo.roi[1][1]-self.fileinfo.roi[0][1], True, self.fileinfo.roi)
-            except:
-                if self.centertype == "roi":
-                    center = ((roi[1][0]-roi[0][0])/2,(roi[1][1]-roi[0][1])/2)
-                if hasattr(self,"wall_c"):
-                    center = (np.average(list(zip(*self.wall_c))[0]), np.average(list(zip(*self.wall_c))[1]))
-            if center is not None:
-                final["cdist"] = [ptsToDist((x,y),center) for x,y in zip(final.cx_c,final.cy_c)]
-                print("["+self.nr+"] "+"Center distances computed..", end=" ", flush=True)
-            else:
-                print("["+self.nr+"] "+"Center/pt distance computation could not be performed..", end=" ", flush=True)
-
-        # Centralise data
-        if self.centralise and center is not None:
-            final.cx_c = final.cx_c - center[0]
-            final.cy_c = final.cy_c - center[1]
+        # --- Centralise data ---
+        if self.centralise and self.center is not None:
+            cx0, cy0 = convert(self.center[0], self.center[1], self.conv, self.height, self.datflip, self.fileinfo.roi)
+            final["cx_c"] -= float(cx0)
+            final["cy_c"] -= float(cy0)
             if "fx_c" in final:
-                final.fx_c = final.fx_c - center[0]
-                final.fy_c = final.fy_c - center[1]
-            print("["+self.nr+"] "+"Data centralised..", end=" ", flush=True)
+                final["fx_c"] -= float(cx0)
+                final["fy_c"] -= float(cy0)
+            print(f"[{self.nr}] Data centralised..", end=" ", flush=True)
 
-        # Eye positions and visual field information
-        ## todo
+        # --- Final data cleanup ---
+        # Define columns to blank when inmask == 1 (only those that exist)
+        positional_cols = ["cx", "cy", "fx", "fy", "fx_c", "fy_c", "tx", "ty", "tx_c", "ty_c"]
+        cols_to_nan = [col for col in positional_cols if col in final.columns]
+        final.loc[final["inmask"] == 1, cols_to_nan] = np.nan
 
-        # Final data organisation
+        # Drop converted coordinates if not needed
         if not (self.convert and self.fileinfo.conv == self.fileinfo.conv):
-            final = final.drop(columns=["cx_c","cy_c","fx_c","fy_c"], errors='ignore')
+            final.drop(columns=["cx_c", "cy_c", "fx_c", "fy_c"], inplace=True, errors='ignore')
+
+        # Drop inroi as rdist and mdist can be used
+        final.drop(columns=["inroi"], inplace=True, errors='ignore')
+
+        # Drop head coords if orientation was estimated from binary image
         if self.orientfrombw:
-            final = final.drop(columns=["fx","fy","fx_c","fy_c"])
+            final.drop(columns=["fx", "fy", "fx_c", "fy_c"], inplace=True, errors='ignore')
 
-        # Reorganise colums
-        datacols = ["frame","time","ID","traj","inroi","inmask","cx","cy","cx_c",
-                    "cy_c","fx","fy","fx_c","fy_c","displ","speed","cumdispl","accel",
-                    "heading","orient","turnspeed","turnaccel","cumturn","abscumturn",
-                    "rdist","mdist","wdist","cdist","mx","my","wx","wy"]
-        final = final[[col for col in datacols if col in final.columns]]
+        # Define static part of column order
+        column_order = [
+            "frame", "time", "ID", "traj", "inmask",
+            "cx", "cy", "cx_c", "cy_c",
+            "fx", "fy", "fx_c", "fy_c",
+            "displ", "speed", "accel", "cumdispl",
+            "heading", "orient", "turnspeed", "turnaccel", "cumturn", "abscumturn",
+            "rdist", "mdist", "wdist", "cdist"
+        ]
 
-        ## Round data columns
-        cols = ["turnspeed","turnaccel"]
-        final = final.round({i:3 for i in cols if i in final.columns})
-        cols = ["time","cx","cy","fx","fy","mx","my","wx","wy","cx_c","cy_c","fx_c","fy_c","displ","speed","accel","turnspeed","turnaccel"]
-        final = final.round({i:2 for i in cols if i in final.columns})
-        cols = ["cumdispl","cumturn","abscumturn","heading","orient","dist","mdist","wdist","cdist","rdist"]
-        final = final.round({i:1 for i in cols if i in final.columns})
+        # --- Final column ordering ---
+        # Start with static base columns
+        full_order = [col for col in column_order if col in final.columns]
+        # Find all zone*_dist columns and sort numerically
+        zone_dis_cols = sorted(
+            [col for col in final.columns if re.match(r"z\d+dist", col)],
+            key=lambda c: int(re.findall(r"z(\d+)dist", c)[0])
+        )
+        # Find all pt*_dist columns and sort numerically
+        pt_dis_cols = sorted(
+            [col for col in final.columns if re.match(r"pt\d+dist", col)],
+            key=lambda c: int(re.findall(r"pt(\d+)dist", c)[0])
+        )
+        # Append zone and point distance columns in order
+        full_order += zone_dis_cols + pt_dis_cols
 
-        ## Write data to file
+        # Apply the final column order (only keep those that exist)
+        final = final[[col for col in full_order if col in final.columns]]
+
+        # Rounding: define by decimal level
+        round_by = {
+            3: ["turnspeed", "turnaccel"],
+            2: ["time", "cx", "cy", "fx", "fy", "mx", "my", "wx", "wy", "cx_c", "cy_c", "fx_c", "fy_c", "displ", "speed", "accel", "turnspeed", "turnaccel"],
+            1: ["cumdispl", "cumturn", "abscumturn", "heading", "orient", "dist", "mdist", "wdist", "cdist", "rdist"]
+        }
+        for decimals, cols in round_by.items():
+            cols_in_df = [c for c in cols if c in final.columns]
+            final[cols_in_df] = final[cols_in_df].round(decimals)
+        zone_dis_cols = [col for col in final.columns if re.match(r"z\d+dist", col)]
+        if zone_dis_cols:
+            final[zone_dis_cols] = final[zone_dis_cols].round(1)
+        if pt_dis_cols:
+            final[pt_dis_cols] = final[pt_dis_cols].round(1)
+
+        # Save
         final.to_csv(self.procfile, index=False)
-        print("["+self.nr+"] "+"File written..", flush=True)
+        print(f"[{self.nr}] File written..", end=" ", flush=True)

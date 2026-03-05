@@ -1,7 +1,5 @@
 #! /usr/bin/env python
 
-from __future__ import print_function
-
 import os
 import cv2
 import yaml
@@ -19,17 +17,15 @@ import threading
 import multiprocessing
 from concurrent.futures import ThreadPoolExecutor
 
-from pirecorder.convert import Convert
+from atracker.utils import convert_h264_to_mp4
 from pythutils.fileutils import listfiles
 from pythutils.sysutils import lineprint
-from pythutils.drawutils import namedcols, uniqcols
-from pythutils.mediautils import get_vid_params, check_media, crop
+from pythutils.drawutils import namedcols
+from pythutils.mediautils import get_vid_params, check_media
 from pythutils.datutils import to_query
-from pythutils.mathutils import ptsToDist
 
 from atracker.__version__ import __version__
-from atracker.bg_extract import bg_extract
-from atracker.ivideo import ivideo
+from atracker.visual_editor import annotation_gui
 from atracker.tracker import Tracker
 from atracker.processor import Processor
 from atracker.utils import *
@@ -56,13 +52,23 @@ class ATracker:
         lineprint("ATracker "+__version__+" started!")
         lineprint("="*50, False)
 
+        # Use the working directory of the notebook if filedir is "."
+        if filedir == ".":
+            filedir = os.getcwd()
+
+        # Normalize the path for any OS and input format
+        filedir = os.path.abspath(os.path.normpath(filedir.strip('"')))
+
         if not os.path.exists(filedir):
             raise OSError("Directory does not exist..")
+    
         AT.dir = filedir.rstrip(os.path.sep)
 
+        # Set up subdirectories
         dirs = ["originals","todo","temp","tracked","processed"]
         dpaths = [os.path.join(AT.dir, str(i)+d) for i,d in enumerate(dirs)]
         AT.dirs = dict(zip(dirs, dpaths))
+        
         if os.path.exists(AT.dirs["todo"]):
             lineprint("Tracking folder loaded |", newline=False)
         else:
@@ -70,11 +76,14 @@ class ATracker:
                 os.makedirs(AT.dirs[i])
             lineprint("Set up tracking folder |", newline=False)
 
+        # Move video files
         for file in listfiles(AT.dir, (".h264",".mp4",".MP4",".mov",".m4v")):
             shutil.move(os.path.join(AT.dir, file), AT.dirs["originals"])
 
-        cfiles = ["overview.xlsx","config.conf","treshinfo.yml"]
-        fpaths = [os.path.join(AT.dir, f"{os.path.basename(AT.dir)}_{f}") for f in cfiles]
+        # Set up config file paths
+        basename = os.path.basename(AT.dir.rstrip(os.path.sep)) or "tracking"
+        cfiles = ["overview.xlsx", "config.conf", "threshinfo.yml"]
+        fpaths = [os.path.join(AT.dir, f"{basename}_{f}") for f in cfiles]
         AT.cfiles = dict(zip([os.path.splitext(f)[0] for f in cfiles], fpaths))
 
         if os.path.exists(AT.cfiles["overview"]):
@@ -83,7 +92,7 @@ class ATracker:
         else:
             cols = ["video","fps","fcount","resolution","frame_start",
                     "frame_stop","roi","conv","exp","date","trial","session",
-                    "setup","ID","bgimg","maskimg","tresh_types",
+                    "setup","ID","bgimg","maskimg","thresh_types",
                     "wallimg","zoneimg","skip","objects","exclude"]
             AT.overview = pd.DataFrame(columns=cols)
             AT.save()
@@ -109,25 +118,24 @@ class ATracker:
                           traj_opacity=0.5, mask_opacity=0.15, box_opacity=0.7,
                           draw_contournrs=False, trajs_below=False, strict=False,
                           create_vid=True, create_dat=True, overwrite=True,
-                          internal="", linkdistreshold=100)
+                          internal="", linkdisthreshold=100)
             print("Config settings stored", end=" | ")
         else:
             print("Config settings loaded", end=" | ")
 
-        if os.path.exists(AT.cfiles["treshinfo"]):
-            with open(AT.cfiles["treshinfo"]) as file:
-                AT.treshinfo = yaml.load(file, Loader=yaml.FullLoader)
-            print("Treshinfo file loaded")
+        if os.path.exists(AT.cfiles["threshinfo"]):
+            with open(AT.cfiles["threshinfo"]) as file:
+                AT.threshinfo = yaml.load(file, Loader=yaml.FullLoader)
+            print("Threshinfo file loaded")
         else:
-            AT.treshinfo = {}
-            with open(AT.cfiles["treshinfo"], "w") as file:
-                yaml.dump(AT.treshinfo, file, default_flow_style=False)
-            print("Treshinfo file created")
+            AT.threshinfo = {}
+            with open(AT.cfiles["threshinfo"], "w") as file:
+                yaml.dump(AT.threshinfo, file, default_flow_style=False)
+            print("Threshinfo file created")
 
         os.chdir(AT.dir)
         odir = os.path.join(AT.dirs["originals"], "")
         AT.vids = [os.path.join(odir, str(v) + ".mp4") for v in AT.overview.video]
-
 
     def _name_and_index(AT, vid):
 
@@ -142,7 +150,6 @@ class ATracker:
 
         return name, ind
 
-
     def _get_all_inds(AT, query, cats, ind):
 
         if cats is None:
@@ -156,74 +163,151 @@ class ATracker:
 
         return inds
 
-
     def save(AT):
-        # saves the overview file to disk
         AT.overview.to_excel(AT.cfiles["overview"], index=False)
         lineprint("Overview stored..")
 
-
     def reload(AT):
-        # loads the overview file from disk
         AT.conv = {col: str for col in [0]+list(range(8,17))}
         AT.overview = pd.read_excel(AT.cfiles["overview"], converters=AT.conv, engine='openpyxl')
+        AT.overview["date"] = AT.overview["date"].astype(str).str[:10]
+        AT.config = LocalConfig(AT.cfiles["config"], compact_form=True)
 
-
-    def showinfo(AT, files=[], zones=False):
-            files = [files] if type(files) == str else files
-            if zones:
-                inds = [list(AT.overview[(AT.overview.video==f[:-3])&(AT.overview.region==int(f[-1:]))].index.values)[0] for f in files]
-            else:
-                inds = AT.overview.loc[AT.overview["video"].isin(files)]
-            return inds
-
+    def showinfo(AT, files=None, inds=None, return_inds=False):
+        ov = AT.overview
+        if inds is not None:
+            out = ov.loc[inds]
+        elif files is not None:
+            if isinstance(files, str):
+                files = [files]
+            names = [os.path.splitext(os.path.basename(f))[0] for f in files]
+            vids = ov["video"].astype(str).apply(lambda v: os.path.splitext(os.path.basename(v))[0])
+            out = ov[vids.isin(names)]
+        else:
+            raise ValueError("Provide either files or inds.")
+        
+        inds_list = list(out.index)
+        if return_inds:
+            return out, inds_list
+        else:
+            return out
 
     def get_inds(self, namelist):
-
-        if isinstance(namelist, str):  # If a single string is passed, convert to list
+        if isinstance(namelist, str):
             namelist = [namelist]
 
-        # Get indices for all videos in namelist
         indices = []
+
         for name in namelist:
-            matches = self.overview.index[self.overview["video"] == name].tolist()
-            if not matches:  # If a name is not found, return an empty list
+            region = None
+
+            # --- Detect region notation video_R2 ---
+            if "_R" in name and name.split("_R")[-1].isdigit():
+                base, reg = name.rsplit("_R", 1)
+                region = int(reg)
+                video_name = base
+            else:
+                video_name = name
+
+            # --- Select rows for this video ---
+            df = self.overview[self.overview["video"] == video_name]
+
+            if df.empty:
                 return []
-            indices.extend(matches)
+
+            if region is None:
+                # Default = region 1 if it exists
+                if "region" in df.columns:
+                    reg_index = df.index[df["region"] == 1]
+                    if len(reg_index) == 0:
+                        raise ValueError(f"No region 1 for {video_name}")
+                    indices.extend(reg_index.tolist())
+                else:
+                    indices.extend(df.index.tolist())
+
+            else:
+                # Select explicit region
+                if "region" not in df.columns:
+                    raise ValueError(f"{video_name} has no region column")
+                reg_index = df.index[df["region"] == region]
+                if len(reg_index) == 0:
+                    raise ValueError(f"No region {region} for {video_name}")
+                indices.extend(reg_index.tolist())
 
         return indices
 
-
-    def get_files(AT, cdir="originals", inds=None, query=None, cats=None, filetype=".mp4", existonly=False):
-
+    def get_files(
+        AT, 
+        cdir="originals", 
+        inds=None, 
+        query=None, 
+        cats=None, 
+        filetype=".mp4", 
+        existonly=False, 
+        full=True, 
+        show_extension=True
+    ):
         overview = AT.overview
 
-        # Exclude rows where the "exclude" column is 1
-        if "exclude" in overview.columns:
-            overview = overview[overview["exclude"] != 1]
+        # # Exclude rows where the "exclude" column is 1
+        # if "exclude" in overview.columns:
+        #     overview = overview[overview["exclude"] != 1]
 
+        # Select indices
         if inds is not None:
-            inds = [i for i in inds if i <= (len(overview)-1)]
-            pass
+            inds = [i for i in inds if i <= (len(overview) - 1)]
         else:
             if query is not None:
                 overview = overview.query(query)
             if cats is not None:
-                cats = [cats] if type(cats) is not list else cats
+                cats = [cats] if not isinstance(cats, list) else cats
                 for cat in cats:
                     if cat not in AT.overview:
-                        raise ValueError(cat+" variable does not exist")
+                        raise ValueError(cat + " variable does not exist")
                 overview = overview.drop_duplicates(subset=cats)
             inds = overview.index.tolist()
-        files = [os.path.join(AT.dirs[cdir], str(v) + filetype) for v in AT.overview.loc[inds].video]
+        
+        # Get filenames (with or without extension)
+        videos = AT.overview.loc[inds].video
+        if show_extension:
+            filenames = [str(v) + filetype for v in videos]
+        else:
+            filenames = [str(v) for v in videos]
+
+        if full:
+            files = [os.path.join(AT.dirs[cdir], f) for f in filenames]
+        else:
+            files = filenames
 
         if existonly:
-            output = list(zip(*[(i,f) for i,f in enumerate(files) if os.path.exists(f)]))
-            inds, files = ([],[]) if len(output)==0 else map(list,output)
+            output = list(zip(*[(i, f) for i, f in zip(inds, files) if os.path.exists(f)]))
+            inds, files = ([], []) if len(output) == 0 else map(list, output)
 
         return inds, files
 
-
+    def update_overview(AT, column, value, video=None, inds=None, save=True):
+        """
+        Inline replacement for overview DataFrame, by video name(s) or indices.
+        """
+        if (video is None) and (inds is None):
+            raise ValueError("Provide at least one of 'video' or 'inds'")
+        
+        if video is not None:
+            if isinstance(video, str):
+                row_selector = AT.overview["video"] == video
+            elif isinstance(video, (list, tuple)):
+                row_selector = AT.overview["video"].isin(video)
+            else:
+                raise TypeError("'video' must be str or list/tuple of str")
+        elif inds is not None:
+            row_selector = AT.overview.index.isin(inds)
+        else:
+            raise ValueError("No valid selection method.")
+        
+        AT.overview.loc[row_selector, column] = value
+        if save:
+            AT.save()
+            
     def set_regions(AT, inds, nr):
 
         for ind in inds:
@@ -232,14 +316,17 @@ class ATracker:
         AT.save()
         lineprint("Region information added..")
 
-
-    def set_objects(AT, inds, objects):
-        for ind, obj in zip(inds, objects):
-            AT.overview.loc[ind, "objects"] = obj
+    def set_objects(AT, inds=None, objects=None):
+        if objects is None:
+            raise ValueError("The 'objects' parameter cannot be None.")
+        if inds is None:
+            AT.overview["objects"] = objects
+        else:
+            for ind, obj in zip(inds, objects):
+                AT.overview.loc[ind, "objects"] = obj
         AT.save()
         lineprint("Objects information added..")
 
-    
     def set_config(AT, **kwargs):
 
         """
@@ -291,7 +378,7 @@ class ATracker:
         mergedmindist : int, default = None
             Minimal distance that previous contours should be to a potential
             merged contour as condition for being a merged contour
-        linkdistreshold : int, default = 100
+        linkdisthreshold : int, default = 100
             Maximum distance in converted pixels per frame to be used to link
             two IDs during tracking
         show_tracking : boolean, default = True
@@ -375,8 +462,8 @@ class ATracker:
             AT.config.track.orientfrombw = kwargs["orientfrombw"]
         if "mergedmindist" in kwargs:
             AT.config.track.mergedmindist = kwargs["mergedmindist"]
-        if "linkdistreshold" in kwargs:
-            AT.config.track.linkdistreshold = kwargs["linkdistreshold"]
+        if "linkdisthreshold" in kwargs:
+            AT.config.track.linkdisthreshold = kwargs["linkdisthreshold"]
 
         if "bg_frames" in kwargs:
             AT.config.bgextract.bg_frames = kwargs["bg_frames"]
@@ -441,297 +528,492 @@ class ATracker:
         if "internal" not in kwargs:
             print("Config settings stored and loaded..")
 
-
-    def setup_files(AT, fname_extract=True, fname_vars=("date","exp","trial", "session","setup","ID"), fname_sep="-", skip=False, autoconvert=True):
-
-        """Extracts file and video information for tracking"""
-
+    def setup_files(AT, fname_extract=True, fname_vars=("date", "exp", "trial", "session", "setup", "ID"),
+                    fname_sep="-", skip=False, autoconvert=True):
+        """
+        Prepares video files for tracking by converting, extracting metadata, 
+        and updating the overview.
+        """
         lineprint("Preparing video files for tracking..", end=" ")
 
-        # First check if there are any files that need converting
-        convlist = listfiles(AT.dirs["originals"], type=".h264", keepdir=False, keepext=False)
-        convedlistcap = listfiles(AT.dirs["originals"], type=".MP4", keepdir=True, keepext=True)
-        convedlistcap = convedlistcap+listfiles(AT.dirs["originals"], type=".m4v", keepdir=True, keepext=True)
-        if len(convedlistcap)>0:
-            for file in convedlistcap:
-                os.rename(file, os.path.splitext(file)[0]+".mp4")
-        convedlist = listfiles(AT.dirs["originals"], type=".mp4", keepdir=False, keepext=False)
-        convlist = [f for f in convlist if f not in convedlist]
+        originals_dir = AT.dirs["originals"]
+
+        # Detect which .h264 files still need to be converted
+        convlist = []
+        for file in listfiles(originals_dir, type=".h264", keepdir=False, keepext=True):
+            base = os.path.splitext(file)[0]
+            if not os.path.exists(os.path.join(originals_dir, base + ".mp4")):
+                convlist.append(file)
+
         if autoconvert:
-            if len(convlist)==0:
-                lineprint("No files to convert..", end=" ")
+            if convlist:
+                lineprint(f"Converting {len(convlist)} files...", newline=False)
+                convert_h264_to_mp4(originals_dir, fps=AT.config.exp.fps)
             else:
-                Convert(indir=AT.dirs["originals"], outdir=AT.dirs["originals"],
-                        fps=AT.config.exp.fps, overwrite=False)
+                lineprint("No files to convert..")
 
-        # Now check if there are any files that need processing
-        todovids = listfiles(AT.dirs["originals"], type=".mp4", keepdir=True)
+        # Build list of all video files, preferring .mp4 over .h264 if both exist
+        mp4_files = {os.path.splitext(os.path.basename(f))[0]: f
+                    for f in listfiles(originals_dir, type=".mp4", keepdir=True)}
+        h264_files = {os.path.splitext(os.path.basename(f))[0]: f
+                    for f in listfiles(originals_dir, type=".h264", keepdir=True)}
+        # Merge: .mp4 preferred
+        all_vids = dict(h264_files)
+        all_vids.update(mp4_files)  # mp4 overwrites h264 with same base name
+        todovids = list(all_vids.values())
+        totalvids = len(todovids)
+
         if skip:
-            checklist = listfiles(AT.dirs["originals"], type=".mp4", keepdir=False, keepext=False)
-            checklist = [f[0] for f in enumerate(checklist) if f[1] not in list(AT.overview["video"])]
-            todovids = [todovids[i] for i in checklist]
-        if len(todovids)==0:
+            existing = set(os.path.splitext(v)[0] for v in AT.overview["video"].dropna())
+            todovids = [v for v in todovids if os.path.splitext(os.path.basename(v))[0] not in existing]
+
+        if not todovids:
             print("No files to prepare..", end=" ")
-        else:
-            for i,vid in enumerate(todovids):
-                name, ind = AT._name_and_index(vid)
-                lineprint("Video "+str(i+1)+"|"+str(len(todovids))+" "+name, True, False)
-                AT.overview.loc[ind,"video"] = name
-
-                if fname_extract:
-                    namevals = name.split(fname_sep)
-                    if len(namevals)!=len(fname_vars):
-                        raise ValueError("Check fname_vars input or set fname_extract to False..")
-                    for j,nameval in enumerate(namevals):
-                        AT.overview.loc[ind,fname_vars[j]] = nameval
-                    print("Filename vars extracted", end=" ")
-
-                flag = check_media(vid)
-                if not flag:
-                    continue
-
-                fps, width, height, fcount = get_vid_params(vid)
-                AT.overview.loc[ind,"fps"] = fps
-                AT.overview.loc[ind,"resolution"] = str((width,height))
-                AT.overview.loc[ind,"roi"] = str(((0,0),(width,height)))
-                max_pyframe = find_max_working_pyframe(cv2.VideoCapture(vid))
-                AT.overview.loc[ind,"fcount"] = max_pyframe+1
-                print("Video info extracted")
-
-            AT.save()
-
-  
-    def get_bgfiles(AT, inds=[], starts=[], stops=[]):
-
-        """Extracts background file from video"""
-
-        lineprint("Extracting background files..")
-
-        #! Need to improve this code..
-        if len(inds)==0:
-            checklist = listfiles(AT.dirs["originals"], type=".mp4", keepdir=False, keepext=False)
-            vidstocheck = [i for i in checklist if i in list(AT.overview.video[AT.overview["skip"]!=1])]
-            bglisttocheck = [list(AT.overview[AT.overview["video"]==v]["bgimg"]) for v in vidstocheck]
-            bgidstodo = [len([j for j in i if type(j) is not str]) for i in bglisttocheck]
-            todolist = [os.path.join(AT.dirs["originals"], f"{j[1]}.mp4") for j in enumerate(vidstocheck) if bgidstodo[j[0]] >= 1]
-        else:
-            todolist = [os.path.join(AT.dirs["originals"], f"{AT.overview.video[j]}.mp4") for j in inds]
-
-        if len(todolist)==0:
-            print("All files done..", end=" ")
-        else:
-            for i,vid in enumerate(todolist):
-                name, ind = AT._name_and_index(vid)
-                lineprint("Video "+str(i+1)+"|"+str(len(todolist))+" "+name, True, False)
-                bgname = name+"_bg.jpg"
-                start, stop = AT.overview.loc[ind,["frame_start","frame_stop"]]
-                start = int(start) if not np.isnan(start) else None
-                stop = int(stop) if not np.isnan(stop) else None
-                if len(starts)>0:
-                    start = starts[0] if len(starts)==1 else starts[i]
-                if len(stops)>0:
-                    stop = stops[0] if len(stops)==1 else stops[i]
-                framenr = AT.config.bgextract.bg_frames
-                img_bg = bg_extract(vid, start, stop, framenr)
-                cv2.imwrite(os.path.join(AT.dirs["originals"], bgname), img_bg)
-                AT.overview.loc[ind, "bgimg"] = bgname
-
-            AT.save()
-
-
-    def set_interactive(AT, inds=None, framelimits=None, roi=None, mask=None, maskzone=None, zones=None, walls=None, conv=None, getpts=None, conv_mm=None, treshtypes=None, query=None, cats=None, ptcolnames=[], treshfile=None):
-
-        inputs = [framelimits,roi,mask,walls,conv,treshtypes]
-        if len(inputs) - inputs.count(None)>1:
-            raise ValueError("Choose one input setting..")
-        if treshtypes is not None:
-            if type(treshtypes) is not list:
-                raise valueError("treshtypes should be list..")
-        showHelperlines = False
-        drawLine = False
-        drawRect = False
-        drawPoly = False
-        drawPt = False
-        if framelimits:
-            lineprint("Interactive video mode for setting framelimits..")
-        elif roi:
-            lineprint("Interactive video mode for setting region of interest..")
-            showHelperlines = True
-            drawRect = True
-        elif mask:
-            lineprint("Interactive video mode for setting internal mask..")
-            showHelperlines = True
-            drawPoly = True
-        elif maskzone:
-            lineprint("Interactive video mode for creating mask for zone")
-            showHelperlines = True
-            drawPoly = True
-        elif zones:
-            lineprint("Interactive video mode for creating zones")
-            showHelperlines = True
-            drawPoly = True
-        elif getpts:
-            lineprint("Interactive video mode for setting pt coordinates..")
-            showHelperlines = True
-            drawPt = True
-        elif walls:
-            lineprint("Interactive video mode for setting walls mask..")
-            showHelperlines = True
-        elif conv:
-            if conv_mm == None:
-                if len(AT.config.exp.realdims)==0:
-                    print("No real measure provided..")
-                    return
-                else:
-                    conv_mm = literal_eval(AT.config.exp.realdims)
-            lineprint("Interactive video mode for setting conversion..")
-            drawLine = True
-        elif treshtypes is not None:
-            lineprint("Interactive video mode for setting tresholds..")
-        else:
-            lineprint("Nothing to set..")
             return
 
-        inds, vids = AT.get_files("originals", inds, query, cats)
+        expected_n = len(fname_vars)
 
-        for i,vid in enumerate(vids):
-            name,_ = AT._name_and_index(vid)
-            ind = inds[i]
+        for i, vid in enumerate(todovids):
+            name, ind = AT._name_and_index(vid)
+            lineprint(f"Video {i+1}|{totalvids} {name}", True, False)
+            AT.overview.loc[ind, "video"] = name
 
-            printext = "Video "+str(i+1)+"|"+str(len(vids))+" "+name
-            if "region" in AT.overview:
-                printext = printext+" region "+str(AT.overview.loc[ind].region)
-                name = name+"_R"+str(AT.overview.loc[ind].region)
-            lineprint(printext, True, False)
+            if fname_extract:
+                namevals = name.split(fname_sep)
+                version_val = ""
+                # Check if last part is a version string (_vXX)
+                if len(namevals) > expected_n and re.match(r"v\d{2}$", namevals[-1]):
+                    version_val = namevals.pop()
+                if len(namevals) != expected_n:
+                    print(f"Filename: {name} splits into {len(namevals)} parts, expected {expected_n}")
+                    raise ValueError("Check fname_vars input or set fname_extract to False..")
+                for j, nameval in enumerate(namevals):
+                    AT.overview.loc[ind, fname_vars[j]] = nameval
+                AT.overview.loc[ind, "vidseq"] = version_val  # Always adds this column
+                print("Filename vars extracted", end=" ")
 
-            if not os.path.isfile(vid):
-                print("Does not exist, continuing..")
+            # Check and extract video info
+            if not check_media(vid):
                 continue
 
-            if conv or treshtypes not in [None,[None]]:
-                roival = literal_eval(AT.overview.loc[ind]["roi"])
-            else:
-                roival = ((0,0),literal_eval(AT.overview.loc[ind,"resolution"]))
-
-            treshtypes = [None] if treshtypes is None else treshtypes
-            for treshtype in treshtypes:
-                if treshtype not in [None, "bw"]:
-                    print(treshtype, end=" ")
-                    if not treshtype.startswith("bw_"):
-                        if type(namedcols(treshtype))!=tuple:
-                            return
-                firstframe = AT.overview.loc[ind,"frame_start"]
-                firstframe = 1 if np.isnan(firstframe) else int(firstframe)
-                lastframe = AT.overview.loc[ind,"frame_stop"]
-                lastframe = None if np.isnan(lastframe) else int(lastframe)
-                fcount = AT.overview.loc[ind,"fcount"]
-                lastframe = None if np.isnan(fcount) else int(fcount)
-                
-                ivid = ivideo(vid, treshtype=treshtype, treshinfo=AT.treshinfo,
-                              firstframe=firstframe, lastframe=lastframe,
-                              fullrange=framelimits, displaysize=AT.config.vis.vid_displaysize,
-                              orientation=AT.config.orient.get,
-                              orient_minconvex=AT.config.orient.minconvex,
-                              simple=AT.config.track.simple, roi=roival,
-                              showHelperlines=showHelperlines, drawLine=drawLine,
-                              drawRect=drawRect,drawPoly=drawPoly,drawPt=drawPt)
-                ivid.pt1, ivid.pt2 = roival
-                if treshtype is not None:
-                    bgimg = AT.overview.loc[ind]["bgimg"]
-                    if type(bgimg) is float:
-                        lineprint("No background image exists, exiting..")
-                        ivid.key = 27
-                        continue
-                    else:
-                        bgimg = os.path.join(AT.dirs["originals"], bgimg)
-                    ivid.img_bg = cv2.imread(bgimg)
-                    ivid.img_bg = crop(ivid.img_bg, ivid.pt1, ivid.pt2)
-                    ivid.img_mask = None
-                    if isinstance(AT.overview.loc[ind]["maskimg"], str):
-                        img_mask = cv2.imread(os.path.join(AT.dirs["originals"], AT.overview.loc[ind]["maskimg"]), 0)
-                        kernel = np.ones((5,5),np.uint8)
-                        img_mask = cv2.erode(img_mask, kernel)
-                        ivid.img_mask = cv2.dilate(img_mask, kernel)
-                        ivid.img_mask = crop(ivid.img_mask, ivid.pt1, ivid.pt2)
-
-                ivid.show()
-
-                if chr(ivid.key) == "s":
-                    if any([query, cats]):
-                        allinds = AT._get_all_inds(query, cats, ind)
-                    else:
-                        allinds = ind
-                    if framelimits:
-                        AT.overview.loc[allinds,"frame_start"] = ivid.start_frame
-                        AT.overview.loc[allinds,"frame_stop"] = ivid.stop_frame
-                    if roi:
-                        roi=fix_roi(ivid.m.twoPoint,literal_eval(AT.overview.loc[ind,"resolution"]))
-                        AT.overview.loc[allinds,"roi"] = str(roi)
-                    if mask:
-                        maskname = name+"_mask.jpg"
-                        cv2.imwrite(os.path.join(AT.dirs["originals"], maskname), ivid.mask)
-                        AT.overview.loc[allinds,"maskimg"] = maskname
-                    if maskzone:
-                        zonename = name+"_zones.jpg"
-                        cv2.imwrite(os.path.join(AT.dirs["originals"], zonename), ivid.mask)
-                        AT.overview.loc[allinds,"zoneimg"] = zonename
-                    if zones:
-                        if len(ivid.coords)>0:
-                            AT.zoneimg = np.zeros((ivid.vidh,ivid.vidw,3), np.uint8)+255
-                            cols = uniqcols(len(ivid.coords))
-                            for i,j in enumerate(ivid.coords):
-                                cv2.fillPoly(AT.zoneimg, np.int32([ivid.coords[j]]), cols[i])
-                            zonename = name+"_zones.jpg"
-                            cv2.imwrite(os.path.join(AT.dirs["originals"], zonename), AT.zoneimg)
-                            AT.overview.loc[allinds,"zoneimg"] = zonename
-                            lineprint("Zone image stored..", end=" ")
-                        else:
-                            lineprint("No zone coordinates provided..", end=" ")
-                    if walls:
-                        maskname = name+"_walls.jpg"
-                        cv2.imwrite(os.path.join(AT.dirs["originals"], maskname), ivid.mask)
-                        AT.overview.loc[allinds,"wallimg"] = maskname
-                    if getpts:
-                        if len(ivid.m.pts)>0:
-                            if len(ptcolnames) != len(ivid.m.pts):
-                                ptcolnames = ["pt"+str(i+1) for i,j in enumerate(ivid.m.pts)]
-                            AT.overview.loc[allinds,ptcolnames] = [str(i) for i in ivid.m.pts]
-                            lineprint("Point coordinates for "+str(ptcolnames)+" stored.." , end=" ")
-                        else:
-                            lineprint("No point coordinates stored.." , end=" ")
-                    if conv:
-                        pixdis = ptsToDist(ivid.m.twoPoint[0],ivid.m.twoPoint[1])
-                        if type(conv_mm) != tuple:
-                            convdat = str(round(conv_mm/pixdis,4))
-                        else:
-                            convdat = []
-                            for i in range(len(conv_mm)):
-                                convdat.append(round(conv_mm[i]/pixdis,4))
-                                if i < len(conv_mm)-1:
-                                    ivid = ivideo(vid, treshtype=treshtype, treshinfo=AT.treshinfo,
-                                                  firstframe=firstframe, lastframe=lastframe,
-                                                  fullrange=framelimits, roi=roival,
-                                                  drawLine=drawLine)
-                                    ivid.show()
-                                    pixdis = ptsToDist(ivid.m.twoPoint[0],ivid.m.twoPoint[1])
-                            convdat = str(sum(convdat)/len(convdat))
-                        lineprint("With and height conversion: "+convdat, end=" ")
-                        AT.overview.loc[allinds,"conv"] = convdat
-                    if treshtype is not None:
-                        AT.treshinfo[treshtype] = ivid.treshinfo
-                        treshfile = treshfile if treshfile is not None else AT.cfiles["treshinfo"]
-                        treshfile = treshfile+".yml" if ".yml" not in treshfile else treshfile
-                        with open(treshfile, 'w') as f:
-                            yaml.safe_dump(AT.treshinfo, f, default_flow_style=False)
-
-                if ivid.key == 27:
-                    break
-
-            if ivid.key == 27:
-                break
+            cap = cv2.VideoCapture(vid)
+            fps, width, height, fcount = get_vid_params(cap)
+            AT.overview.loc[ind, "fps"] = fps
+            AT.overview.loc[ind, "resolution"] = str((width, height))
+            AT.overview.loc[ind, "roi"] = str(((0, 0), (width, height)))
+            max_pyframe = find_max_working_pyframe(cap)
+            AT.overview.loc[ind, "fcount"] = max_pyframe + 1
+            print("Video info extracted")
 
         AT.save()
 
+    def get_bgfiles(AT, inds=[], starts=[], stops=[], overwrite=False):
+
+        lineprint("Extracting background files..")
+
+        # 1) Determine which rows to process
+        if len(inds) == 0:
+            # All rows not skipped
+            df = AT.overview[AT.overview["skip"] != 1]
+            rows = df.index.tolist()
+        else:
+            rows = inds
+
+        # 2) Build a todo-list per row (i.e. per region)
+        todolist = []
+        for idx in rows:
+            video = AT.overview.loc[idx, "video"]
+            region = AT.overview.loc[idx].get("region", None)
+
+            # unique bg filename
+            if region is None:
+                bgname = f"{video}_bg.jpg"
+            else:
+                bgname = f"{video}_R{region}_bg.jpg"
+
+            bgpath = os.path.join(AT.dirs["originals"], bgname)
+
+            # we will extract per row
+            if overwrite or not os.path.isfile(bgpath):
+                todolist.append((idx, video, region, bgname, bgpath))
+        
+        # 3) Extract backgrounds
+        if len(todolist) == 0:
+            print("All files done..", end=" ")
+        else:
+            for k, (idx, video, region, bgname, bgpath) in enumerate(todolist):
+
+                vidpath = os.path.join(AT.dirs["originals"], f"{video}.mp4")
+                name, _ = AT._name_and_index(vidpath)
+                lineprint(f"Video {k+1}|{len(todolist)} {name}", True, False)
+
+                # --- Get region-specific start/stop ---
+                start, stop = AT.overview.loc[idx, ["frame_start", "frame_stop"]]
+                start = int(start) if not np.isnan(start) else None
+                stop = int(stop) if not np.isnan(stop) else None
+
+                # Override start/stop if provided manually
+                if starts:
+                    start = starts[0] if len(starts) == 1 else starts[k]
+                if stops:
+                    stop = stops[0] if len(stops) == 1 else stops[k]
+
+                framenr = AT.config.bgextract.bg_frames
+
+                img_bg = bg_extract(vidpath, start, stop, framenr)
+                cv2.imwrite(bgpath, img_bg)
+
+                # Update ONLY this row
+                AT.overview.loc[idx, "bgimg"] = bgname
+
+            AT.save()
+
+
+    def set_interactive(AT, inds=None, framelimits=None, roi=None, mask=None, maskzone=None, zones=None,
+                        walls=None, conv=None, getpts=None, conv_mm=None, threshtypes=None,
+                        query=None, cats=None, ptcolnames=None, threshfile=None, events=False):
+        """
+        Interactive mode for various tasks, including event annotation.
+
+        Args:
+            events (bool): If True, enables event annotation mode.
+        """
+        # Validate input
+        input_flags = [framelimits, roi, mask, maskzone, zones, walls, conv, getpts, threshtypes, events]
+        active_modes = sum(x is not None and x is not False for x in input_flags)
+
+        if active_modes == 0:
+            mode = "default"
+        elif active_modes == 1:
+            if conv: mode, true_mode = "measure", "measure"
+            elif framelimits: mode, true_mode = "framelimits", "framelimits"
+            elif roi: mode, true_mode = "roi", "roi"
+            elif mask: mode, true_mode = "mask", "mask"
+            elif walls: mode, true_mode = "mask", "walls"
+            elif maskzone: mode, true_mode = "mask", "maskzone"
+            elif zones: mode, true_mode = "zones", "zones"
+            elif getpts: mode, true_mode = "points", "points"
+            elif events: mode, true_mode = "events", "events"
+        else:
+            raise ValueError("Please specify exactly one interactive mode (e.g., framelimits=True).")
+
+        inds, vids = AT.get_files("originals", inds, query, cats)
+        fileaction = "overwrite"
+        datafile = None
+        overview_dirty = False
+
+        for i, ind in enumerate(inds):
+            allinds = AT._get_all_inds(query, cats, ind) if query or cats else ind
+            vid = os.path.join(AT.dirs["originals"], f"{AT.overview.loc[ind, 'video']}.mp4")
+            name, _ = AT._name_and_index(vid)
+
+            if "region" in AT.overview.columns and not pd.isna(AT.overview.loc[ind, "region"]):
+                region = AT.overview.loc[ind, "region"]
+                name += f"_R{int(region)}"
+
+            lineprint(f"\nVideo {i + 1} of {len(vids)} — {name}", True, False)
+
+            if not os.path.isfile(vid):
+                print("Video file does not exist, skipping..")
+                continue
+
+            # Read ROI if present, otherwise fallback later where needed
+            if "roi" in AT.overview.columns and isinstance(AT.overview.loc[ind].get("roi", None), str):
+                roival = literal_eval(AT.overview.loc[ind]["roi"])
+            else:
+                # if resolution present, use it as full-frame ROI
+                try:
+                    res = literal_eval(AT.overview.loc[ind, "resolution"])
+                    roival = ((0, 0), res)
+                except Exception:
+                    roival = None
+
+            firstframe = AT.overview.loc[ind, "frame_start"]
+            firstframe = 1 if pd.isna(firstframe) else int(firstframe)
+            lastframe = AT.overview.loc[ind, "frame_stop"]
+            lastframe = None if pd.isna(lastframe) else int(lastframe)
+
+            bgimg = AT.overview.loc[ind].get("bgimg", None)
+            bgpath = os.path.join(AT.dirs["originals"], bgimg) if isinstance(bgimg, str) else None
+
+            maskpath = None
+            mask_column = None
+            if mask: mask_column = "maskimg"
+            elif maskzone: mask_column = "zoneimg"
+            elif walls: mask_column = "wallimg"
+            elif zones: mask_column = "zoneimg"
+            elif threshtypes: mask_column = "maskimg"
+            if mask_column:
+                maskfile_entry = AT.overview.loc[ind].get(mask_column, None)
+                if isinstance(maskfile_entry, str):
+                    maskpath = os.path.join(AT.dirs["originals"], maskfile_entry)
+                    if os.path.isfile(maskpath):
+                        lineprint(f"Loaded {mask_column} file: {maskfile_entry}")
+                    else:
+                        print(f"{mask_column} file listed but not found: {maskpath}")
+
+            # ===== Handle multi-threshold interaction mode =====
+            if threshtypes:
+                print(f"Video {i + 1} of {len(vids)} — {name}", end="")
+
+                for j, ttype in enumerate(threshtypes):
+                    mode = "thresholding" if ttype.lower().startswith("bw") else "thresholding color"
+                    print(f" | Thresholding: {ttype}", end="")
+                    result = annotation_gui(
+                        media_file=vid,
+                        background_file=bgpath,
+                        mask_file=maskpath,
+                        mode=mode,
+                        threshold_dict=AT.threshinfo.get(ttype, {}),
+                        firstframe=firstframe,
+                        lastframe=lastframe,
+                        fileaction=fileaction,
+                        data_file=datafile
+                    )
+                    if result is None or result == "exit":
+                        print(" — exited")
+                        break
+                    if isinstance(result[1], dict) and len(result[1]) > 0:
+                        AT.threshinfo[ttype] = result[1]
+                        print(f" stored...", end=" ")
+                        # Save threshold info to file
+                        finalfile = threshfile
+                        if not finalfile:
+                            finalfile = AT.cfiles.get("threshinfo", "threshinfo.yml")
+                        if not finalfile.endswith(".yml"):
+                            finalfile += ".yml"
+                        with open(finalfile, "w") as f:
+                            yaml.safe_dump(AT.threshinfo, f, default_flow_style=False)
+                    else:
+                        print(f" → no values")
+                continue  # Skip all other interactive modes
+
+            # ======= Event Annotation Mode =======
+            if mode == "events":
+                events_list = []  # new value will overwrite existing
+                print(f"Video {i + 1} of {len(vids)} — {name} Event annotation mode")
+                print("Press event key (K) to record frames, L to remove last, S to finish, Esc/Q to abort.")
+                while True:
+                    result = annotation_gui(
+                        media_file=vid,
+                        background_file=bgpath,
+                        mask_file=maskpath,
+                        mode="timepoints",
+                        firstframe=firstframe,
+                        lastframe=lastframe,
+                        fileaction=None,
+                        data_file=None
+                    )
+
+                    # user requested quit from GUI
+                    if result == "exit":
+                        # Save overview if changed
+                        if overview_dirty:
+                            AT.save()
+                            print("Overview stored..")
+                        print("Exiting event annotation mode.")
+                        return
+
+                    # remove any accidental CSV the GUI may have written
+                    try:
+                        csv_path = os.path.splitext(vid)[0] + ".csv"
+                        if os.path.isfile(csv_path):
+                            os.remove(csv_path)
+                    except Exception:
+                        pass
+
+                    # Accept only explicit ("events", [frames]) from the GUI.
+                    if isinstance(result, tuple) and len(result) == 2 and result[0] == "events":
+                        frames = result[1] or []
+                        frames = sorted(set(int(f) for f in frames))
+                        if not frames:
+                            # no frames recorded -> re-open GUI
+                            continue
+
+                        # Pair frames into tuples in order: (f0,f1),(f2,f3),... last singleton if odd
+                        grouped = []
+                        for j in range(0, len(frames), 2):
+                            if j + 1 < len(frames):
+                                grouped.append((int(frames[j]), int(frames[j + 1])))
+                            else:
+                                grouped.append((int(frames[j]),))
+
+                        # Overwrite events column for these rows
+                        AT.overview.loc[allinds, "events"] = str(grouped)
+                        overview_dirty = True
+                        # single-line confirmation
+                        print("Event frames recorded: " + " ".join(str(f) for f in frames))
+                        break  # done with this video
+
+                    # otherwise ignore and re-open GUI
+                    continue
+
+                # next video
+                continue
+
+            # ======= Handle all other modes =======
+            result = annotation_gui(
+                media_file=vid,
+                background_file=bgpath,
+                mask_file=maskpath,
+                mode=mode,
+                firstframe=firstframe,
+                lastframe=lastframe,
+                fileaction=fileaction,
+                data_file=datafile
+            )
+
+            if result is None:
+                continue
+            if result == "exit":
+                break
+
+            # ----- Measure / conversion -----
+            if mode == "measure":
+                # Helper to extract pixel length from the annotation GUI result
+                def _result_pxlen(res):
+                    # Expecting either: ("line"/"polygon", px_len) or ("polygon", points, px_len, ...)
+                    if res is None:
+                        return None
+                    if isinstance(res, tuple):
+                        # common older format: ("line", px_len)
+                        if len(res) > 1 and isinstance(res[1], (int, float)):
+                            return float(res[1])
+                        # newer format seen: ("polygon", points, px_len, ...)
+                        if len(res) > 2 and isinstance(res[2], (int, float)):
+                            return float(res[2])
+                        # fallback: if second element is a sequence of two points, compute euclidean distance
+                        if len(res) > 1 and isinstance(res[1], (list, tuple)) and len(res[1]) >= 2:
+                            p0 = res[1][0]
+                            p1 = res[1][1]
+                            try:
+                                dx = float(p0[0]) - float(p1[0])
+                                dy = float(p0[1]) - float(p1[1])
+                                return float((dx*dx + dy*dy) ** 0.5)
+                            except Exception:
+                                return None
+                    # unknown shape
+                    return None
+
+                px_len = _result_pxlen(result)
+                if px_len is None:
+                    print("Could not determine pixel length from GUI result:", result)
+                    continue
+
+                if isinstance(conv_mm, (int, float)):
+                    # Single value, single interaction
+                    AT.overview.loc[allinds, "conv"] = round(conv_mm / px_len, 4)
+                    lineprint(f"Conversion set to {AT.overview.loc[ind, 'conv']} mm/pixel", end=" ")
+
+                elif isinstance(conv_mm, (list, tuple)):
+                    conv_vals = []
+
+                    for j, mm in enumerate(conv_mm):
+                        print(f"Draw conversion line {j+1} of {len(conv_mm)} ({mm} mm)")
+                        if j > 0:
+                            result = annotation_gui(
+                                media_file=vid,
+                                background_file=bgpath,
+                                mask_file=maskpath,
+                                mode=mode,
+                                firstframe=firstframe,
+                                lastframe=lastframe,
+                                fileaction=fileaction,
+                                data_file=datafile
+                            )
+                            if result is None or result == "exit":
+                                break
+                        px_len = _result_pxlen(result)
+                        if px_len is None:
+                            print("Could not determine pixel length from GUI result:", result)
+                            continue
+
+                        conv_val = mm / px_len
+                        conv_vals.append(conv_val)
+                        lineprint(f"Line {j+1}: {mm} mm over {round(px_len, 2)} px = {round(conv_val, 4)} mm/px", end=" ")
+
+                    if len(conv_vals) > 0:
+                        avg = round(sum(conv_vals) / len(conv_vals), 4)
+                        AT.overview.loc[allinds, "conv"] = avg
+                        print(f"Average conversion set to {avg} mm/pixel")
+
+            elif mode == "framelimits":
+                AT.overview.loc[allinds, "frame_start"] = result[1][0]
+                AT.overview.loc[allinds, "frame_stop"] = result[1][1]
+                print(f"Stored framelimits: start = {result[1][0]}, stop = {result[1][1]}")
+
+            elif mode == "roi":
+                AT.overview.loc[allinds, "roi"] = str(result[1])
+                print(f"Stored ROI: {result[1]}")
+
+            elif mode in ["mask", "maskzone", "zones", "walls"]:
+                if isinstance(result[1], np.ndarray):
+                    outname = f"{name}_{true_mode}.jpg"
+                    outpath = os.path.join(AT.dirs["originals"], outname)
+                    cv2.imwrite(outpath, result[1])
+
+                    # Determine column name
+                    if mask:
+                        colname = "maskimg"
+                    else:
+                        singular_map = {"zones": "zone", "walls": "wall", "maskzone": "zone"}
+                        base = singular_map.get(true_mode, true_mode)
+                        colname = f"{base}img"
+
+                    # Ensure the column exists
+                    if colname not in AT.overview.columns:
+                        AT.overview[colname] = pd.Series(dtype=object)
+
+                    # Assign output name to rows
+                    AT.overview.loc[allinds, colname] = outname
+                    print(f"Stored {colname} image: {outname}")
+
+                else:
+                    print("No changes made.")
+
+            elif mode == "points":
+                points = result[1]  # List of drawn QPoint or tuple
+                if len(points) == 0:
+                    print("No points drawn.")
+                    continue
+                if ptcolnames:
+                    if len(points) < len(ptcolnames):
+                        print(f"Only {len(points)} of {len(ptcolnames)} required points drawn. Please draw all and try again.")
+                        continue  # Skip this item and allow retry or safe exit
+                    if len(points) > len(ptcolnames):
+                        print(f"{len(points)} points drawn but only {len(ptcolnames)} labels provided. Extra points ignored.")
+                        points = points[:len(ptcolnames)]
+                    for j, col in enumerate(ptcolnames):
+                        AT.overview.loc[allinds, col] = str(points[j])
+                    print(f"Stored {len(points)} named points: {dict(zip(ptcolnames, points))}")
+                else:
+                    # fallback if no column names
+                    for j, pt in enumerate(points):
+                        AT.overview.loc[allinds, f"pt{j+1}"] = str(pt)
+                    print(f"Stored unnamed points: {[str(p) for p in points]}")
+
+            elif isinstance(result, tuple) and result[0] == "timepoints":
+                # result is ("timepoints", df)
+                df = result[1]
+                if df is None or df.shape[0] == 0:
+                    print("No valid frames obtained from GUI.")
+                    continue
+                # Save timepoints CSV adjacent to video
+                csv_out = os.path.splitext(vid)[0] + ".csv"
+                df.to_csv(csv_out, index=False)
+                print(f"Saved timepoints to: {csv_out}")
+
+            # final exit check for GUI result
+            if result == "exit":
+                break
+
+        # after processing all videos, save overview if there were changes
+        if overview_dirty:
+            AT.save()
+            print("Overview stored..")
+        else:
+            # ensure we still persist other changes (existing behavior)
+            AT.save()
 
     def drymode(AT, rand_filenr=10, rand_seqnr=5, rand_seqlen=100, suffix="dry", rerun=False):
 
@@ -763,22 +1045,22 @@ class ATracker:
         AT.set_config(overwrite=a, show_tracking=b, frame_disstep=c,
             trajs_below=d, create_vid=e, create_dat=f)
 
-
     def track(AT, inds=None, names=None, query=None, cats=None, pools=1, folder="todo", start=None,
-        stop=None, custreshtypes=None, cusobjects=None, checkconschange=False, suffix="", treshfile=None):
+        stop=None, custhreshtypes=None, cusobjects=None, checkconschange=False, suffix="", threshfile=None, 
+        max_framedist=200, overwrite=None):
        
-        if treshfile is not None:
+        if threshfile is not None:
             try:
-                with open(treshfile, "r") as f:
-                    AT.treshinfo = yaml.load(f, Loader=yaml.FullLoader)
-                    print(f"Loading custom treshfile '{treshfile}'")
+                with open(threshfile, "r") as f:
+                    AT.threshinfo = yaml.load(f, Loader=yaml.FullLoader)
+                    print(f"Loading custom threshfile '{threshfile}'")
             except FileNotFoundError:
-                raise FileNotFoundError(f"Treshfile '{treshfile}' not found.")
+                raise FileNotFoundError(f"Threshfile '{threshfile}' not found.")
             except Exception as e:
-                raise RuntimeError(f"Error loading treshfile '{treshfile}': {e}")
+                raise RuntimeError(f"Error loading threshfile '{threshfile}': {e}")
         else:
-            with open(AT.cfiles["treshinfo"], 'r') as f:
-                AT.treshinfo = yaml.load(f, Loader=yaml.FullLoader)
+            with open(AT.cfiles["threshinfo"], 'r') as f:
+                AT.threshinfo = yaml.load(f, Loader=yaml.FullLoader)
 
         if names is not None:
             inds = AT.get_inds(names)
@@ -796,10 +1078,23 @@ class ATracker:
         del AT.config
         AT.config = Box({s: {k:v for (k,v) in cbak.items(s)} for s in cbak})
 
-        # Set up Tracker instance
-        T = Tracker(pools, inds, trackfiles, AT.dirs, AT.overview,
-                    AT.config, AT.treshinfo, start, stop, custreshtypes, cusobjects, checkconschange, suffix)
-        lineprint("Tracking started of "+str(len(trackfiles))+" files..")
+        existing = [os.path.exists(f) for f in trackfiles]
+        existing_inds = [i for i, e in zip(inds, existing) if e]
+        existing_trackfiles = [f for f, e in zip(trackfiles, existing) if e]
+        missing_count = len(trackfiles) - len(existing_trackfiles)
+        if missing_count > 0:
+            missed = f"Skipped {missing_count} missing video files. "
+        else:
+            missed = ""
+        inds = existing_inds
+        trackfiles = existing_trackfiles
+
+        # Now create the Tracker with only existing files
+        T = Tracker(pools, inds, trackfiles, AT.dirs, AT.overview, 
+                    AT.config, AT.threshinfo, start, stop, custhreshtypes, 
+                    cusobjects, checkconschange, suffix,
+                    max_framedist=max_framedist, overwrite=overwrite)
+        lineprint(missed + "Tracking started of "+str(len(trackfiles))+" files..")
 
         if pools<2:
             counter = -1
@@ -844,20 +1139,64 @@ class ATracker:
                 lineprint("Pooled tracking can only be run from the terminal, exiting..")
         AT.config = cbak
 
-
     def _pworker(AT, trackedfile, config_dict):
         """Each worker creates its own Processor instance and processes the file."""
         thread_id = threading.get_ident()
         P = Processor(**config_dict)  # No pickling issues with threads
         P.setup(trackedfile, thread_id)  
     
+    def check_interactive(AT, folder="tracked", inds=None, names=None, query=None, cats=None, fileaction="overwrite"):
+        if names is not None:
+            inds = AT.get_inds(names)
+        inds, vids = AT.get_files(folder, inds, query, cats)
+        for i, ind in enumerate(inds):
+            video_name = AT.overview.loc[ind, "video"]
+            region = AT.overview.loc[ind].get("region", None)
+            if region is not None:
+                basename = f"{video_name}_R{region}"
+            else:
+                basename = video_name
+            vid = os.path.join(AT.dirs["originals"], f"{video_name}.mp4")
+            datafile = os.path.join(AT.dirs["tracked"], f"{basename}.csv")
+
+            bgimg = AT.overview.loc[ind].get("bgimg", None)
+            bgpath = os.path.join(AT.dirs["originals"], bgimg) if isinstance(bgimg, str) else None
+            maskimg = AT.overview.loc[ind].get("maskimg", None)
+            maskpath = os.path.join(AT.dirs["originals"], maskimg) if isinstance(maskimg, str) else None
+
+            # --- Read and parse ROI ---
+            if "roi" in AT.overview.columns and isinstance(AT.overview.loc[ind]["roi"], str):
+                roival = literal_eval(AT.overview.loc[ind]["roi"])
+            else:
+                res = literal_eval(AT.overview.loc[ind, "resolution"])
+                roival = ((0, 0), res)
+
+            firstframe = AT.overview.loc[ind, "frame_start"]
+            firstframe = 1 if pd.isna(firstframe) else int(firstframe)
+            lastframe = AT.overview.loc[ind, "frame_stop"]
+            lastframe = None if pd.isna(lastframe) else int(lastframe)
+
+            # Pass roi to your annotation GUI if supported
+            result = annotation_gui(
+                media_file=vid,
+                background_file=bgpath,
+                mask_file=maskpath,
+                mode="timepoints",
+                firstframe=firstframe,
+                lastframe=lastframe,
+                fileaction=fileaction,
+                data_file=datafile,
+                roi=roival
+            )
+            if result == "exit":
+                break
+
     def process(AT, pools=1, names=None, overwrite=False, fulldata=True, convert=True, 
-                removeoutliers=True, alonewindow=5, manfix=False, man_vidresizeval=0.5, man_types=["c"], 
-                man_customstep=100, manonly=True, man_frameloc=0, man_timewindow=0, man_treshold_speed=0,
-                smoothwin=10, changefps=None, addIDs=True, nearmaskdis=20, trajgap = 50, edgedis=10, 
-                filllentresh_com=500, inmaskdis=10, mintrajlength=10, filllentresh_headtail=40, 
-                headtoorientspeedtresh=1, fillmissingorientdifftresh=100, 
-                centertype = None, centralise=False, delcontdata=False, powermate=False):
+                removeoutliers=True, alonewindow=5, smoothwin=10, changefps=None, 
+                addIDs=True, nearmaskdis=20, trajgap = 50, edgedis=10, 
+                filllenthresh_com=500, inmaskdis=10, mintrajlength=10, filllenthresh_headtail=40, 
+                headtoorientspeedthresh=1, fillmissingorientdiffthresh=100, 
+                centertype = None, centralise=False, delcontdata=False, powermate=False, force_single_traj=False):
         
         """
         Runs data processing
@@ -880,31 +1219,12 @@ class ATracker:
         alonewindow : int; default = 5
             The time window in frames used for considering data to be outliers or not 
             for the "removeoutliers" function.
-
-        manfix : bool; default = False
-            If the interactive manual tracking and fixing function should be run or not.
-        man_vidresizeval : float; default = 0.5
-            A value to show a resized version of the original video, 1 being 100%
-        man_types : list of ["c","h","t"]; default = ["c"]
-            One or multiple point locations that need to be tracked, can be "c",
-            coordinate in the centre of the oject; "f", tip coordinate on the front of 
-            the oject; "b", bottom coordinate on the back of the object.
-        man_customstep : int; default = None
-            Custom (forward) step size in frames, for moving through the video with keypress.
-        manonly : bool; default = True
-            If manfix, if no additional processing should be run beyond manual fixing.
-        man_frameloc : int; default = 0
-            The pyframe that should be shown when starting mantrack.
-        man_timewindow : int; default = 0
-            The default timewindow for which tracking data should be shown when starting mantrack.
-        man_treshold_speed : int; default = 0
-            The detaulf speed treshold in mm beyond which data will be displayed differently.
         
         smoothwin : int; default = 10
             The window in frames to use for smoothing the data.
         changefps : int, default = None
             To subset the framerate of the video to a lower value, e.g. to help reduce the filesize.
-        addIDs : bool; default = None
+        addIDs : bool, default = None
             If ID information should be added from the overview file to the datafile.
         nearmaskdis : int, default = 20
             The distance from the mask in pixels. Parameter used for checking if object is under/near
@@ -915,7 +1235,7 @@ class ATracker:
         edgedis : int; default = 10
             The distance from the roi in pixels at which the object is considered to be on the edge. 
             Parameter for removing data outside of the region of interest.
-        filllentresh_com : int; default = 500
+        filllenthresh_com : int; default = 500
             Maximum distance in frames between coordinate data outside of any potential mask that
             should be filled-in by differentiating.
         inmaskdis : int; default = 10
@@ -924,12 +1244,12 @@ class ATracker:
             the frames used for interpolating.
         mintrajlength : int; default = 10
             Minimum length of frames for a trajectory. Trajectories shorted than this are deleted.  
-        filllentresh_headtail : int, default = 40
+        filllenthresh_headtail : int, default = 40
             Maximum difference in frames for missing head and tail coordinate data outside of any 
             potential mask that shoudl be filled-in y differentiating.
-        headtoorientspeedtresh : float; default = 1 
+        headtoorientspeedthresh : float; default = 1 
             The speed value in converted units above which heading should be used to set orientation.
-        fillmissingorientdifftresh : int; default = 100
+        fillmissingorientdiffthresh : int; default = 100
             Maximum difference in frames for missing orientation vector data outside of any potential
             mask that should be filled-in by differentiating.
 
@@ -986,7 +1306,6 @@ class ATracker:
             "fulldata": fulldata,
             "removeoutliers": removeoutliers,
             "alonewindow": alonewindow,
-            "manfix": manfix,
             "changefps": changefps,
             "nearmaskdis": nearmaskdis,
             "inmaskdis": inmaskdis,
@@ -996,20 +1315,14 @@ class ATracker:
             "smoothwin": smoothwin,
             "centertype": centertype,
             "centralise": centralise,
-            "filllentresh_com": filllentresh_com,
-            "filllentresh_headtail": filllentresh_headtail,
-            "man_vidresizeval": man_vidresizeval,
-            "man_types": man_types,
-            "man_customstep": man_customstep,
-            "manonly": manonly,
+            "filllenthresh_com": filllenthresh_com,
+            "filllenthresh_headtail": filllenthresh_headtail,
             "mintrajlength": mintrajlength,
-            "fillmissingorientdifftresh": fillmissingorientdifftresh,
-            "headtoorientspeedtresh": headtoorientspeedtresh,
-            "man_frameloc": man_frameloc,
-            "man_timewindow": man_timewindow,
-            "man_treshold_speed": man_treshold_speed,
+            "fillmissingorientdiffthresh": fillmissingorientdiffthresh,
+            "headtoorientspeedthresh": headtoorientspeedthresh,
             "delcontdata": delcontdata,
-            "powermate": powermate
+            "powermate": powermate,
+            "force_single_traj": force_single_traj
         }
 
         lineprint("Processing started of " + str(len(trackedfiles)) + " files..")
@@ -1024,4 +1337,4 @@ class ATracker:
                 with ThreadPoolExecutor(max_workers=pools) as executor:
                     executor.map(lambda f: AT._pworker(f, config_dict), trackedfiles)
             else:
-                lineprint("Pooled processing can only be run from the terminal, exiting..")  
+                lineprint("Pooled processing can only be run from the terminal, exiting..")

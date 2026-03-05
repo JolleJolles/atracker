@@ -13,4 +13,4 @@ After processing the video, the processed data can be visualised using the *visu
 - It is possible to just show the actual video frame, to hide the background, or to only show the tracking data on top of a white background. This can be done by setting the *img_bg* parameter to *None*, *img_bg* or to *"white"*.
 - To draw all objects as black shape set the *drawobjects* to True. For this contour data should be provided with the tracking file (!This is not yet fully implemented)
 - To draw trajectories the *drawtrajs* parameter should be true. Unique colors will be given to all tracked objects.
-- It is possible to draw the trajectories behind the objects using the *drawtrajsbehind* parameter, however, for this the tresholded image should be provided (*img_tresh*).
+- It is possible to draw the trajectories behind the objects using the *drawtrajsbehind* parameter, however, for this the thresholded image should be provided (*img_thresh*).

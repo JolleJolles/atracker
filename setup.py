@@ -1,67 +1,82 @@
 #! /usr/bin/env python
 
 from setuptools import setup, find_packages
-import sys
 
-exec(open("atracker/__version__.py").read())
+# Read version info
+version = {}
+with open("atracker/__version__.py") as f:
+    exec(f.read(), version)
 
-DESCRIPTION="""A python module for automated animal tracking"""
-DISTNAME="atracker"
-MAINTAINER="Jolle Jolles"
-MAINTAINER_EMAIL="j.w.jolles@gmail.com"
-URL="https://github.com/JolleJolles"
-DOWNLOAD_URL=""
+# Project metadata
+DESCRIPTION = "A flexible Python toolkit for animal tracking"
+DISTNAME = "atracker"
+MAINTAINER = "Jolle Jolles"
+MAINTAINER_EMAIL = "j.w.jolles@gmail.com"
+URL = "https://github.com/JolleJolles"
+DOWNLOAD_URL = ""
 
-with open("README.md") as f:
-    readme = f.read()
+# Read long description from README
+with open("README.md", encoding="utf-8") as f:
+    long_description = f.read()
 
+# Setup
 if __name__ == "__main__":
+    setup(
+        name=DISTNAME,
+        version=version["__version__"],  # fixes Pylance undefined warning
+        author=MAINTAINER,
+        author_email=MAINTAINER_EMAIL,
+        maintainer=MAINTAINER,
+        maintainer_email=MAINTAINER_EMAIL,
+        description=DESCRIPTION,
+        long_description=long_description,
+        long_description_content_type="text/markdown",
+        url=URL,
+        download_url=DOWNLOAD_URL,
+        license="Apache-2.0",
+        platforms=["Windows", "Linux", "Mac OS-X"],
+        packages=find_packages(),
+        include_package_data=True,
+        install_requires=[
+            # Core scientific stack
+            "numpy",
+            "scipy",
+            "pandas",
+            "opencv-contrib-python",
+            "imageio[ffmpeg]",
+            "shapely",
 
-    setup(name=DISTNAME,
-          author=MAINTAINER,
-          author_email=MAINTAINER_EMAIL,
-          maintainer=MAINTAINER,
-          maintainer_email=MAINTAINER_EMAIL,
-          description=DESCRIPTION,
-          long_description=readme,
-          long_description_content_type="text/markdown",
-          url=URL,
-          install_requires=["pythutils",
-                            "pyyaml",
-                            "future",
-                            "numpy",#==1.2.6"
-                            "pandas",#==1.3.5",
-                            "openpyxl",
-                            "xlrd",
-                            "xlwt",
-                            "scipy",
-                            "pathos",
-                            "PyQt5",
-                            "python_box",
-                            "screeninfo",
-                            "shapely",
-                            "Pillow==8.4.0",
-                            "scikit-learn",
-                            "opencv-contrib-python",#==3.4.11.45",
-                            "localconfig==0.4.2; python_version>='2' and python_version<'3'",
-                            "localconfig==1.1.1; python_version>='3'",
-                            "pirecorder"],
-          entry_points={"console_scripts": [],},
-          download_url=DOWNLOAD_URL,
-          version=__version__,
-          license="License :: OSI Approved :: Apache Software License",
-          platforms=["Windows", "Linux", "Mac OS-X"],
-          packages=find_packages(),
-          include_package_data=True,
-          classifiers=[
-                     "Intended Audience :: Science/Research",
-                     "Programming Language :: Python :: 3",
-                     "License :: OSI Approved :: Apache Software License",
-                     "Topic :: Scientific/Engineering :: Visualization",
-                     "Topic :: Scientific/Engineering :: Image Recognition",
-                     "Topic :: Scientific/Engineering :: Information Analysis",
-                     "Topic :: Multimedia :: Video",
-                     "Operating System :: POSIX",
-                     "Operating System :: Unix",
-                     "Operating System :: MacOS"],
-          )
+            # Machine learning utilities
+            "scikit-learn",       # needed for pairwise_distances
+
+            # Plotting
+            "matplotlib",         # needed for barcode visualization
+            
+            # File handling
+            "openpyxl",      # read/write .xlsx files
+            "screeninfo",    # screen resolution detection
+
+            # UI
+            "PyQt5",
+
+            # Utility packages
+            "python_box",    # dot-access for dict-like configs
+            "localconfig>=1.1.4,<2",  # INI-style config support
+            "pythutils",     # Jolle's utility library
+        ],
+        entry_points={
+            "console_scripts": [],
+        },
+        classifiers=[
+            "Intended Audience :: Science/Research",
+            "Programming Language :: Python :: 3",
+            "License :: OSI Approved :: Apache Software License",
+            "Topic :: Scientific/Engineering :: Visualization",
+            "Topic :: Scientific/Engineering :: Image Recognition",
+            "Topic :: Scientific/Engineering :: Information Analysis",
+            "Topic :: Multimedia :: Video",
+            "Operating System :: POSIX",
+            "Operating System :: Unix",
+            "Operating System :: MacOS",
+        ],
+    )

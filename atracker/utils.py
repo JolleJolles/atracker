@@ -1,37 +1,517 @@
 #! /usr/bin/env python
 
-import re 
+import re
+import os 
 import cv2
 import sys
+import glob
+import math
+import shutil
+import colorsys
+
 import signal
+import imageio
 
 import subprocess
 from screeninfo import get_monitors
 
 import numpy as np
 import pandas as pd
+from pandas.api.types import is_float_dtype
 from ast import literal_eval
+from collections import defaultdict
 from scipy.spatial import KDTree
 from scipy.spatial.distance import cdist
 from scipy.signal import savgol_filter
+from shapely.geometry import Point, Polygon
+
+from PyQt5.QtGui import QImage, QColor
+from PyQt5.QtCore import QPoint
 
 from pythutils.datutils import contour_to_tuple
 from pythutils.drawutils import namedcols
-from pythutils.mathutils import points_to_angle, angle_to_vec, get_weights, ptsToDist
+from pythutils.fileutils import listfiles
+from pythutils.mathutils import points_to_angle, angle_to_vec, get_weights, ptsToDist, seqcount
 
 import threading
 from typing import Callable
 
 
-def qimage_to_numpy(qimg):
-    """Convert a QImage (Grayscale8) to a NumPy array."""
-    qimg = qimg.convertToFormat(QImage.Format_Grayscale8)
+def get_filepart(dir, sep="_", part=2, remove_ext=True, ext=None):
+    """Extract a specific part of filenames in a directory"""
+    files = listfiles(dir)
+    out = []
+
+    for f in files:
+        if ext is not None:
+            if isinstance(ext, str):
+                if not f.endswith(ext):
+                    continue
+            else:
+                if not f.endswith(tuple(ext)):
+                    continue
+
+        name = os.path.splitext(f)[0] if remove_ext else f
+        parts = name.split(sep)
+        if len(parts) >= part:
+            out.append(parts[part - 1])  # 1-based index to 0-based
+        else:
+            out.append(None)
+
+    return out
+
+
+def qimg_to_grayscale(qimg):
+    """Convert a QImage to grayscale using OpenCV."""
+    qimg = qimg.convertToFormat(QImage.Format_RGBA8888)
     width = qimg.width()
     height = qimg.height()
     ptr = qimg.bits()
     ptr.setsize(qimg.byteCount())
-    arr = np.array(ptr).reshape(height, width)
-    return arr
+    arr = np.array(ptr).reshape(height, width, 4)
+    bgr = cv2.cvtColor(arr, cv2.COLOR_RGBA2BGR)
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    bgr2 = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+    rgba2 = cv2.cvtColor(bgr2, cv2.COLOR_BGR2RGBA)
+    return QImage(rgba2.data, width, height, qimg.bytesPerLine(), QImage.Format_RGBA8888).copy()
+
+
+def dist_to_target(xs, ys, target, method="point", **kwargs):
+    if method == "point":
+        return dist_to_point(xs, ys, *target)
+    elif method == "rect":
+        return dist_to_rect(xs, ys, *target)
+    elif method == "poly":
+        return dist_to_poly(xs, ys, target)
+    elif method == "mask":
+        return dist_to_mask(xs, ys, target, kwargs.get("conv", 1.0))
+    else:
+        raise ValueError("Unknown method")
+    
+def dist_to_point(xs, ys, cx, cy):
+    return np.hypot(xs - cx, ys - cy)
+
+def calc_borderdist(pt, roi):
+    x, y = pt
+    xmin, ymin = roi[0]
+    xmax, ymax = roi[1]
+    return dist_to_rect(np.array([x]), np.array([y]), xmin, xmax, ymin, ymax)[0]
+
+def calc_borderdistdf(df, roi):
+    cx = df['cx'].to_numpy()
+    cy = df['cy'].to_numpy()
+    xmin, ymin = roi[0]
+    xmax, ymax = roi[1]
+    return dist_to_rect(cx, cy, xmin, xmax, ymin, ymax)
+
+def dist_to_rect(xs, ys, xmin, xmax, ymin, ymax):
+    # positive outside, negative inside
+    dx = np.maximum(np.maximum(xmin - xs, 0), xs - xmax)
+    dy = np.maximum(np.maximum(ymin - ys, 0), ys - ymax)
+
+    outside_dist = np.hypot(dx, dy)
+
+    inside = (xs >= xmin) & (xs <= xmax) & (ys >= ymin) & (ys <= ymax)
+
+    if np.any(inside):
+        min_dist_inside = np.minimum.reduce([
+            xs[inside] - xmin,
+            xmax - xs[inside],
+            ys[inside] - ymin,
+            ymax - ys[inside]
+        ])
+        outside_dist[inside] = -min_dist_inside
+
+    return outside_dist
+
+def dist_to_poly(xs, ys, poly_coords):
+    poly = Polygon(poly_coords)
+    pts = [Point(x, y) for x, y in zip(xs, ys)]
+    dists = np.array([poly.exterior.distance(pt) for pt in pts])
+    inside = np.array([poly.contains(pt) for pt in pts])
+    dists[inside] = -dists[inside]
+    return dists
+
+def dist_to_mask(xs, ys, mask, conv=1.0):
+    """
+    Signed distance to mask: negative if inside, positive if outside, 0 on edge.
+    xs, ys: coordinates in mask pixel space!
+    mask: binary (uint8) mask
+    conv: pixel to mm conversion
+    """
+    h, w = mask.shape
+    xs_ = np.round(xs).astype(int)
+    ys_ = np.round(ys).astype(int)
+    valid = (xs_ >= 0) & (xs_ < w) & (ys_ >= 0) & (ys_ < h)
+    dists = np.full(xs.shape, np.nan)
+    inside = np.zeros(xs.shape, dtype=bool)
+    inside[valid] = mask[ys_[valid], xs_[valid]] > 0
+
+    # 1. Find mask edge points using OpenCV
+    contours, _ = cv2.findContours((mask > 0).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    if contours and len(contours[0]) > 0:
+        edge_pts = np.vstack(contours).squeeze()  # shape (N, 2)
+        # edge_pts in (x, y) order
+        tree = KDTree(edge_pts)
+    else:
+        edge_pts = None
+        tree = None
+
+    # 2. Outside: distance to nearest mask pixel
+    outside_idx = np.where(~inside & valid)[0]
+    if len(outside_idx):
+        ys_mask, xs_mask = np.where(mask > 0)
+        if len(xs_mask):
+            tree_mask = KDTree(np.column_stack([xs_mask, ys_mask]))
+            for idx in outside_idx:
+                pt = [xs_[idx], ys_[idx]]
+                dists[idx] = tree_mask.query(pt)[0] * conv
+
+    # 3. Inside: negative distance to nearest edge point
+    inside_idx = np.where(inside & valid)[0]
+    if len(inside_idx) and edge_pts is not None:
+        for idx in inside_idx:
+            pt = [xs_[idx], ys_[idx]]
+            dists[idx] = -tree.query(pt)[0] * conv
+    elif len(inside_idx):
+        dists[inside_idx] = 0  # fallback if no edge found
+
+    return dists
+
+def is_axis_aligned_rectangle(coords):
+    coords = np.asarray(coords)
+    if coords.shape[0] != 4:
+        return False
+    xs, ys = coords[:,0], coords[:,1]
+    # Check for two unique x's and two unique y's (axis-aligned)
+    return (len(np.unique(xs)) == 2 and len(np.unique(ys)) == 2)
+
+def valid_img_path(fileinfo, key, originals_dir):
+    """
+    Returns full image path if column exists, is not nan/empty, and file exists, else None.
+    """
+    # column exists, value is not nan, not empty string, not whitespace
+    val = getattr(fileinfo, key, None)
+    if val is not None and isinstance(val, str) and val.strip() and val.strip().lower() != "nan":
+        fpath = os.path.join(originals_dir, val)
+        if os.path.isfile(fpath):
+            return fpath
+    return None
+
+def generate_distinct_colors(n):
+    colors = []
+    for i in range(n):
+        hue = i / n
+        rgb = colorsys.hsv_to_rgb(hue, 0.8, 0.95)
+        colors.append(QColor(int(rgb[0]*255), int(rgb[1]*255), int(rgb[2]*255)))
+    return colors
+
+def load_and_convert_tracking_dataframe(data_file, firstframe=None, lastframe=None):
+    """
+    Loads a tracking data CSV file, converts old formats to new, filters frames,
+    and returns a standardized DataFrame with columns:
+    frame, id, IDstr, cx, cy, hx, hy, tx, ty, angle
+
+    id: integer (starting from 1)
+    IDstr: original ID as string
+    """
+    import pandas as pd
+    import numpy as np
+    from ast import literal_eval
+
+    df = pd.read_csv(data_file)
+    df.columns = [c.lower() for c in df.columns]
+
+    # --- Convert to new format if needed
+    new_cols = {'frame', 'id', 'cx', 'cy', 'hx', 'hy', 'tx', 'ty', 'angle'}
+    if not new_cols.issubset(df.columns):
+        if {'com', 'angle'}.issubset(df.columns):
+            # --- Old format (com + angle)
+            def parse_point(s):
+                try:
+                    return literal_eval(str(s))
+                except Exception:
+                    return (np.nan, np.nan)
+            new_df = pd.DataFrame()
+            new_df['frame'] = df['frame']
+            new_df['IDstr'] = df['id'].astype(str)
+            new_df[['cx', 'cy']] = df['com'].apply(parse_point).apply(pd.Series)
+            new_df['hx'] = np.nan
+            new_df['hy'] = np.nan
+            new_df['tx'] = np.nan
+            new_df['ty'] = np.nan
+            new_df['angle'] = pd.to_numeric(df['angle'], errors='coerce')
+            df = new_df
+
+        elif {'cx', 'cy'}.issubset(df.columns):
+            # --- Simple format (cx, cy only)
+            new_df = pd.DataFrame()
+            new_df['frame'] = df['frame']
+            new_df['IDstr'] = df['id'].astype(str)
+            new_df['cx'] = df['cx']
+            new_df['cy'] = df['cy']
+            new_df['hx'] = np.nan
+            new_df['hy'] = np.nan
+            new_df['tx'] = np.nan
+            new_df['ty'] = np.nan
+            new_df['angle'] = np.nan
+            df = new_df
+
+        else:
+            raise ValueError(f"Unrecognized tracking file format: {data_file}")
+    else:
+        # --- Already new format
+        df['IDstr'] = df['id'].astype(str)
+
+    # --- Filter frames if requested
+    if firstframe is not None:
+        df = df[df['frame'] >= firstframe]
+    if lastframe is not None:
+        df = df[df['frame'] <= lastframe]
+
+    # Assign numeric IDs
+    unique_ids = sorted(df['IDstr'].unique(), key=str)
+    id_map = {name: i+1 for i, name in enumerate(unique_ids)}
+    df['ID'] = df['IDstr'].map(id_map)
+
+    if 'id' in df.columns:
+        df = df.drop(columns=['id'])
+
+    return df.reset_index(drop=True)
+    
+
+def build_points_by_frame(df):
+    """
+    Converts standardized tracking DataFrame into points_by_frame dict:
+    {id: {'c': {frame: QPoint}, 'h': {...}, ...}}
+    Always uses df['ID'] as the ID key (int, 0-based).
+    """
+    frame_data = defaultdict(lambda: {'c': {}, 'h': {}, 't': {}, 'a': {}})
+    for _, row in df.iterrows():
+        id_val = int(row['ID'])
+        frame = int(row['frame'])
+        if pd.notnull(row.get('cx')) and pd.notnull(row.get('cy')):
+            frame_data[id_val]['c'][frame] = QPoint(int(row['cx']), int(row['cy']))
+        if pd.notnull(row.get('hx')) and pd.notnull(row.get('hy')):
+            frame_data[id_val]['h'][frame] = QPoint(int(row['hx']), int(row['hy']))
+        if pd.notnull(row.get('tx')) and pd.notnull(row.get('ty')):
+            frame_data[id_val]['t'][frame] = QPoint(int(row['tx']), int(row['ty']))
+        if pd.notnull(row.get('angle')):
+            frame_data[id_val]['a'][frame] = float(row['angle'])
+    return frame_data
+
+
+def draw_arrow_head(painter, tip, size=10, angle_rad=0.0, angle_offset=math.pi / 8):
+    # Draw two lines from 'tip' at ±angle_offset from 'angle_rad'
+    for offset in [+angle_offset, -angle_offset]:
+        x = tip.x() - int(size * math.cos(angle_rad + offset))
+        y = tip.y() - int(size * math.sin(angle_rad + offset))
+        painter.drawLine(tip, QPoint(x, y))
+
+
+def get_media_type(source):
+    ext = os.path.splitext(str(source))[1].lower()
+    if ext in [".mov",".mp4",".avi"]:
+        return "vid"
+    if ext in [".jpg", ".png", ".jpeg", ".bmp"]:
+        return "img"
+    if isinstance(source, int):
+        return "stream"
+    return None
+
+def ensure_columns(df, columns_with_defaults):
+    for col, default in columns_with_defaults.items():
+        if col not in df.columns:
+            df[col] = default
+    return df
+
+def make_even(x): return x if x % 2 == 0 else x + 1
+
+def videowriter(filein, w, h, fps):
+    """Compact and safe video writer using imageio + ffmpeg."""
+    fileout = filein if filein.endswith(".mp4") else filein + ".mp4"
+    w, h = make_even(w), make_even(h)
+
+    try:
+        return imageio.get_writer(
+            fileout,
+            fps=fps,
+            codec='libx264',
+            macro_block_size=None,
+            quality=8,
+            ffmpeg_params=['-crf', '23', '-preset', 'fast']
+        )
+    except Exception as e:
+        print(f"[ERROR] Could not create video writer for {fileout}: {e}")
+        return None
+
+def convert_h264_to_mp4(indir, outdir=None, fps=24, overwrite=False):
+    """
+    Convert all .h264 files in a folder to .mp4.
+    Supports fps as int, list (parallel with file list), or dict {basename: fps}.
+    Tries fast system ffmpeg remuxing first; falls back to portable imageio if needed.
+    """
+
+    outdir = outdir or indir
+    os.makedirs(outdir, exist_ok=True)
+
+    files = glob.glob(os.path.join(indir, "*.h264"))
+    
+    # If fps is a list or Series, convert to dict using basenames
+    if isinstance(fps, (list, pd.Series)):
+        fps_dict = {os.path.splitext(os.path.basename(f))[0]: fval for f, fval in zip(files, fps)}
+    elif isinstance(fps, dict):
+        fps_dict = fps
+    else:
+        fps_dict = {}
+
+    for filein in files:
+        basename = os.path.splitext(os.path.basename(filein))[0]
+        outfile = os.path.join(outdir, basename + ".mp4")
+
+        if not overwrite and os.path.exists(outfile):
+            print(f"[SKIP] Already exists: {basename}.mp4")
+            continue
+
+        # Get fps for this file, default to input fps if not specified
+        this_fps = fps_dict.get(basename, fps)
+
+        # Try system ffmpeg
+        if shutil.which("ffmpeg"):
+            cmd = [
+                "ffmpeg",
+                "-r", str(this_fps),
+                "-i", filein,
+                "-vcodec", "copy",
+                outfile,
+                "-y",
+                "-nostats",
+                "-loglevel", "0"
+            ]
+            try:
+                subprocess.run(cmd, check=True)
+                print(f"Converted: {basename}.h264 to .mp4 at {this_fps} fps")
+                continue
+            except subprocess.CalledProcessError:
+                print(f"Failed to convert {basename}. Falling back to imageio...")
+
+        # Fallback: imageio re-encode
+        try:
+            reader = imageio.get_reader(filein, format='ffmpeg', fps=this_fps)
+            writer = imageio.get_writer(
+                outfile,
+                format='ffmpeg',
+                fps=this_fps,
+                codec='libx264',
+                macro_block_size=None,
+                ffmpeg_params=['-crf', '23', '-preset', 'fast']
+            )
+
+            for frame in reader:
+                writer.append_data(frame)
+
+            reader.close()
+            writer.close()
+            print(f"[IMAGEIO] Converted: {basename}.h264 to .mp4 at {this_fps} fps")
+
+        except Exception as e:
+            print(f"[ERROR] Could not convert {basename}.h264: {e}")
+
+
+def bg_extract(vidfile, start=None, stop=None, framenr=25):
+
+    """Extracts a background image of a video"""
+
+    if not os.path.splitext(vidfile)[1] == ".mp4":
+        print("Video needs to be .mp4")
+        return
+    cap = cv2.VideoCapture(vidfile)
+    if not cap.isOpened():
+        print("Video source failed to open..")
+        return
+    flag, frame = cap.read()
+    if not flag:
+        print("Video source opened but failed to read any images..")
+        return
+
+    start = 1 if start is None else start
+    stop = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) if stop is None else stop
+    framelist = seqcount(start, stop, framenr)
+    frames = []
+
+    print("Extracting bg image..", end=" ")
+    print(start, stop, framenr, end=" ")
+    for frameloc in framelist:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frameloc)
+        flag, frame = cap.read()
+        if flag:
+            frames.append(frame)
+
+    if len([f for f in frames if f is not None]) < framenr:
+        frnr = str(len(frames))
+        print("Lost frames encountered, bgfile created from "+frnr+" files..")
+    else:
+        print("Done")
+
+    img_bg = np.median(frames, axis=0).astype(dtype=np.uint8)
+
+    return img_bg
+
+
+def cvMatToQImage(frame):
+    """Convert a BGR or grayscale OpenCV image to QImage (RGBA)."""
+    if len(frame.shape) == 2:  # Grayscale
+        h, w = frame.shape
+        frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGBA)
+    elif len(frame.shape) == 3:
+        h, w, ch = frame.shape
+        if ch == 3:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGBA)
+        elif ch == 4:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2RGBA)
+    else:
+        raise ValueError("Unsupported frame format for QImage conversion.")
+    return QImage(frame.data, w, h, 4 * w, QImage.Format_RGBA8888).copy()
+
+def qimage_to_numpy(qimg, format=QImage.Format_RGBA8888, to_bgr=True):
+    """Convert a QImage to a NumPy array. Supports grayscale and RGBA."""
+    qimg = qimg.convertToFormat(format)
+    width = qimg.width()
+    height = qimg.height()
+    ptr = qimg.bits()
+    ptr.setsize(qimg.byteCount())
+
+    if format == QImage.Format_Grayscale8:
+        # Grayscale image: one channel
+        arr = np.array(ptr).reshape(height, width)
+        return arr
+    else:
+        # 4 channels (RGBA)
+        arr = np.array(ptr).reshape(height, width, 4)
+        if to_bgr:
+            return cv2.cvtColor(arr, cv2.COLOR_RGBA2BGR)
+        return arr
+
+def numpy_to_qimage(arr, force_grayscale=False):
+    """Convert a NumPy array (grayscale or BGR) to QImage."""
+    if force_grayscale:
+        if len(arr.shape) == 3 and arr.shape[2] == 3:
+            arr = cv2.cvtColor(arr, cv2.COLOR_BGR2GRAY)
+        if len(arr.shape) != 2:
+            raise ValueError("Expected a 2D array for grayscale.")
+        h, w = arr.shape
+        return QImage(arr.data, w, h, w, QImage.Format_Grayscale8).copy()
+    
+    if len(arr.shape) == 2:  # Grayscale
+        h, w = arr.shape
+        return QImage(arr.data, w, h, w, QImage.Format_Grayscale8).copy()
+    elif len(arr.shape) == 3 and arr.shape[2] == 3:  # BGR
+        arr_rgb = cv2.cvtColor(arr, cv2.COLOR_BGR2RGB)
+        h, w, ch = arr_rgb.shape
+        return QImage(arr_rgb.data, w, h, ch * w, QImage.Format_RGB888).copy()
+    else:
+        raise ValueError("Unsupported array shape for QImage conversion.")
+
 
 def start_powermate_listener(
     vendor_id: int = 1917,
@@ -227,8 +707,8 @@ def consplit(prevarrays, mergedarray):
         connrs = [1,2] if distlist[i][1] < distlist[i][3] else [2,1]
         if connrs[0]==2:
             prevratio=1-prevratio
-        lentresh = int(prevratio*len(mergedarray))
-        conids += [connrs[0] if conids.count(connrs[0])<=lentresh else connrs[1]]
+        lenthresh = int(prevratio*len(mergedarray))
+        conids += [connrs[0] if conids.count(connrs[0])<=lenthresh else connrs[1]]
 
     newcon1 = [[list(mergedarray[distlist[i][0]]),distlist[i][0]] for i,j in enumerate(conids) if j==1]
     newcon1.sort(key=lambda x: int(x[1]))
@@ -326,11 +806,12 @@ def loadmask(maskfile):
     return img_mask
 
 
-def coordsfrommask(maskfile):
+def coordsfrommask(maskfile, epsilon=4.0):
     """
-    Given a mask file (filename or numpy array), process it and return:
+    Given a mask file (filename or numpy array), return:
       - maskconts: the contours found,
-      - maskcoords: a list of (x, y) coordinates from the contours.
+      - maskcoords: a list of (x, y) coordinates from simplified contours.
+    epsilon: how much to simplify (in pixels) — increase for simpler shapes.
     """
     if isinstance(maskfile, str):
         img_mask = cv2.imread(maskfile, 0)
@@ -345,13 +826,45 @@ def coordsfrommask(maskfile):
         img_maskinv = cv2.erode(img_mask, np.ones((5,5), np.uint8))
         img_maskinv = cv2.threshold(img_maskinv, 10, 255, cv2.THRESH_BINARY_INV)[1]
         maskconts, _ = cv2.findContours(img_maskinv, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
-        maskcoords = [tuple(pt[0]) for cnt in maskconts for pt in cnt]
+        # Simplify contours:
+        maskcoords = []
+        for cnt in maskconts:
+            approx = cv2.approxPolyDP(cnt, epsilon, True)
+            maskcoords.extend([tuple(pt[0]) for pt in approx])
     except Exception as e:
         print("Mask error:", e)
         maskconts = None
         maskcoords = None
     return maskconts, maskcoords
 
+
+def coordsfromzones(imgfile, palette_hues=None, tol=20, min_sat=200, min_val=200, epsilon=2.0):
+    """
+    For each zone (color) in the image, return a simplified polygon as a list of (x, y) tuples.
+    """
+    if palette_hues is None:
+        palette_hues = list(range(0, 360, 36))
+    img = cv2.imread(imgfile)
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img_hsv = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2HSV)
+    zone_coords = {}
+    for i, h in enumerate(palette_hues):
+        lower = np.array([(h - tol)//2, min_sat, min_val])
+        upper = np.array([(h + tol)//2, 255, 255])
+        mask = cv2.inRange(img_hsv, lower, upper)
+        # Find contours for this mask
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        if contours:
+            # Use the largest contour (in case there are small artifacts)
+            cnt = max(contours, key=cv2.contourArea)
+            approx = cv2.approxPolyDP(cnt, epsilon, True)
+            coords = [tuple(pt[0]) for pt in approx]
+            # Remove duplicate endpoint if present
+            if len(coords) > 2 and coords[0] == coords[-1]:
+                coords = coords[:-1]
+            if len(coords) >= 3:  # Only polygons with at least 3 points
+                zone_coords[i+1] = coords
+    return zone_coords
 
 
 def framechecks(cap, frameOK, framelist=None, stopframe=999999, displaystep=100, identifier=""):
@@ -375,7 +888,15 @@ def framechecks(cap, frameOK, framelist=None, stopframe=999999, displaystep=100,
 
 
 def lit_converter(val):
-    return (np.nan,np.nan) if val=="" else literal_eval(val)
+    if pd.isnull(val):
+        return (np.nan, np.nan)
+    if isinstance(val, (tuple, list)):
+        return val
+    try:
+        return literal_eval(val)
+    except Exception:
+        return (np.nan, np.nan)
+
 
 def safe_literal_eval(val):
     try:
@@ -448,16 +969,16 @@ def adjpt(pt, xypad, add=True):
     return pt
 
 
-def check_treshtypes(tresh_types):
-    if isinstance(tresh_types, (np.floating, float)):
-        tresh_types = ["bw"]
-    if tresh_types[0] == "(":
-        tresh_types = tresh_types[1:len(tresh_types)-1]
-    if "," in tresh_types:
-        tresh_types = tresh_types.split(',')
-    if not isinstance(tresh_types, list):
-        tresh_types = [tresh_types]
-    return tresh_types
+def check_threshtypes(thresh_types):
+    if isinstance(thresh_types, (np.floating, float)):
+        thresh_types = ["bw"]
+    if thresh_types[0] == "(":
+        thresh_types = thresh_types[1:len(thresh_types)-1]
+    if "," in thresh_types:
+        thresh_types = thresh_types.split(',')
+    if not isinstance(thresh_types, list):
+        thresh_types = [thresh_types]
+    return thresh_types
 
 
 def eval_func_tuple(f_args):
@@ -486,15 +1007,26 @@ def get_coord(x, y, angle, length, astuple = False):
         return x2,y2
 
 
-def convert(x, y, conv, height, flip=True, roi=None):
-    x = x if roi is None else x-roi[0][0]
-    x = round(x*conv,3)
-    if flip:
-        y = height-y if roi is None else roi[1][1]-y
+def convert(x, y, conv, height, flip=True, roi=None, already_relative=False, decimals=3):
+    x = np.asarray(x, dtype="float64")
+    y = np.asarray(y, dtype="float64")
+    conv = float(conv)
+
+    if roi is not None:
+        x0, y0 = roi[0]
+        x1, y1 = roi[1]
+        if not already_relative:
+            x = x - float(x0)
+            y = y - float(y0)
+        if flip:
+            y = (float(y1) - float(y0)) - y
     else:
-        y = y if roi is None else y-roi[0][1]
-    y = round(y*conv,3)
-    return x,y
+        if flip:
+            y = float(height) - y
+
+    x = np.round(x * conv, decimals)
+    y = np.round(y * conv, decimals)
+    return x, y
 
 
 def hflipangle(angle):
@@ -534,51 +1066,42 @@ def compare_angle(angle, angle2):
     return angle
 
 
-def calc_borderdist(pt, roi):
-    wle = np.abs(pt[0])
-    wri = np.abs((roi[1][0]-roi[0][0]) - pt[0])
-    wto = np.abs(pt[1])
-    wbo = np.abs((roi[1][1]-roi[0][1]) - pt[1])
-    return min([wle, wri, wto, wbo])
-
-import numpy as np
-import pandas as pd
-
-def calc_borderdistvec(df, roi):
+def series_to_point_tuple(df, cols):
     """
-    Calculate border distances for all points in a DataFrame
+    Returns a tuple of NumPy arrays (x, y) from a DataFrame's specified columns.
+    
+    Parameters:
+    - df: pandas DataFrame
+    - cols: list or tuple of two strings, e.g., ["cx", "cy"]
+
+    Returns:
+    - (x_array, y_array): tuple of NumPy arrays
     """
-    # Extract cx and cy as numpy arrays
-    cx = df['cx'].to_numpy()
-    cy = df['cy'].to_numpy()
+    if len(cols) != 2:
+        raise ValueError("cols must be a list or tuple of exactly two column names")
+    x = pd.to_numeric(df[cols[0]], errors='coerce').to_numpy()
+    y = pd.to_numeric(df[cols[1]], errors='coerce').to_numpy()
+    return (x, y)
 
-    # Calculate distances to each border
-    wle = np.abs(cx)
-    wri = np.abs((roi[1][0] - roi[0][0]) - cx)
-    wto = np.abs(cy)
-    wbo = np.abs((roi[1][1] - roi[0][1]) - cy)
-
-    # Find the minimum distance for each point
-    borderdist = np.minimum.reduce([wle, wri, wto, wbo])
-
-    # Return boolean array where True means the distance is below the threshold
-    return borderdist
 
 def differentiate(val, period=1):
-    val2 = val.shift(periods=period)
-    newval = val-val2
-    return newval
-
+    val = np.asarray(val, dtype=np.float64)
+    diff = np.full_like(val, np.nan)
+    if len(val) > period:
+        diff[period:] = val[period:] - val[:-period]
+    return diff
 
 def calcudiff(x, y, period=1, angle=False):
+    x = pd.to_numeric(x, errors='coerce').to_numpy()
+    y = pd.to_numeric(y, errors='coerce').to_numpy()
+
     xdiff = differentiate(x, period)
     ydiff = differentiate(y, period)
+
     if angle:
-        head = np.arctan2((xdiff),(ydiff)) * 180 / np.pi
-        return head
+        return np.arctan2(xdiff, ydiff) * 180 / np.pi
     else:
-        displ = np.sqrt(xdiff**2 + ydiff**2)
-        return displ
+        return np.sqrt(xdiff**2 + ydiff**2)
 
 
 def get_anglediff(angle):
@@ -595,7 +1118,7 @@ def anglediff(angle1, angle2):
 
 
 def orientchecker(curr_frame, start_frame, prev_frame, delay, centre_coord, con_angle,
-                  extdists, convexity, prev_angle, avg_vel, vel_tresh, prev_coord,
+                  extdists, convexity, prev_angle, avg_vel, vel_thresh, prev_coord,
                   min_convex = 0.7, min_extdist_ratio = 0.1, max_anglechange = 30):
 
     # The object will have gotten an angle based on an ellipse of the
@@ -607,7 +1130,7 @@ def orientchecker(curr_frame, start_frame, prev_frame, delay, centre_coord, con_
     # We can be certain the movement angle is right (in terms of +/-) if the
     # object is moving at some speed that is not possible sideways or backwards.
     # We an be certain the tip-to-tip angle is correct when the ratio between
-    # the two distances is large enough. A treshold of 10% seems good.
+    # the two distances is large enough. A threshold of 10% seems good.
 
     # First, if the object is very convex, i.e. when the centroid lies towards
     # the edge or even outside an object, calculating the orientation on its
@@ -637,7 +1160,7 @@ def orientchecker(curr_frame, start_frame, prev_frame, delay, centre_coord, con_
                 vel_ok = False
             else:
                 vel = ptsToDist(centre_coord,prev_coord)/(curr_frame-prev_frame)
-                vel_ok = avg_vel >= vel_tresh and vel >= vel_tresh
+                vel_ok = avg_vel >= vel_thresh and vel >= vel_thresh
                 move_angle = points_to_angle(prev_coord, centre_coord, flip=True)
 
     # Scenario 1: shape is convex and front-back ratio is distinct
@@ -650,7 +1173,7 @@ def orientchecker(curr_frame, start_frame, prev_frame, delay, centre_coord, con_
             new_angle = hvflipangle(con_angle)
 
     # Scenario 2: there is no distinct front-back ratio but the object passed
-    # the speed treshold (convexity is irrelevant here)
+    # the speed threshold (convexity is irrelevant here)
     # >>> contour angle can be flipped if needed based on movement angle
     elif not distratio_ok and vel_ok:
         move_angle = points_to_angle(prev_coord, centre_coord, flip=True)
@@ -660,7 +1183,7 @@ def orientchecker(curr_frame, start_frame, prev_frame, delay, centre_coord, con_
             new_angle = hvflipangle(new_angle)
 
     # Scenario 3: the shape is convex, but there is no distinct front-back ratio,
-    # the object did not pass the speed treshold, and we can use the previous angle
+    # the object did not pass the speed threshold, and we can use the previous angle
     # >>> Now we can use the previous stored angle if not too far back in time
     # and not nan to adjust the contour angle
     elif convex_ok and not distratio_ok and not vel_ok and delay_ok and not np.isnan(prev_angle):
@@ -670,7 +1193,7 @@ def orientchecker(curr_frame, start_frame, prev_frame, delay, centre_coord, con_
             new_angle = hvflipangle(new_angle)
 
     # Scenario 4: the shape is convex, but there is no distinct front-back ratio,
-    # and the object did not pass the speed treshold, and we cannot use the previous angle
+    # and the object did not pass the speed threshold, and we cannot use the previous angle
     # >>> We cannot be certain enough of the angle, so it will be stored as nan
     # elif convex_ok and not distratio_ok and not vel_ok and delay_ok and np.isnan(prev_angle):
     else:
@@ -683,12 +1206,12 @@ def orientchecker(curr_frame, start_frame, prev_frame, delay, centre_coord, con_
 
 
 def fixheadtail(series, areamultiplier = 1.75, distmultiplier = 10,
-                seqlentreshold = 40, tresharea=None):
+                seqlenthreshold = 40, thresharea=None):
 
     data = series.copy()
     swappedinds = []
-    if tresharea is None:
-        tresharea = np.nanmedian(data.area)
+    if thresharea is None:
+        thresharea = np.nanmedian(data.area)
 
     # Calculate additional variables
     data["headdiff"] = round(calcudiff(data.fx, data.fy, period=1))
@@ -703,7 +1226,7 @@ def fixheadtail(series, areamultiplier = 1.75, distmultiplier = 10,
     data["anglediff"] = get_anglediff(data.orient)
 
     # We are interested in head position, so create list of all
-    # head indices where time step is more than treshold
+    # head indices where time step is more than threshold
     indstocheck = data.index[(data["headdiff"] > data["swapdiff"]) | (data["taildiff"] > data["swapdiff"])]
     # There are potentially wrong head positions
     if len(indstocheck)>0:
@@ -721,7 +1244,7 @@ def fixheadtail(series, areamultiplier = 1.75, distmultiplier = 10,
                     pass
 #                    if ind - min(data.index) < 10:
 #                        data.loc[range(min(data.index),ind+1),["head","fx","fy","tail","tx","ty"]] = np.nan
-                elif (max(data.index) - ind) < seqlentreshold:
+                elif (max(data.index) - ind) < seqlenthreshold:
                     data.loc[range(ind,max(data.index)+1),["head","fx","fy","tail","tx","ty"]] = np.nan
                 else:
                     data.loc[range(max(ind-10,0),ind+10),["head","fx","fy","tail","tx","ty"]] = np.nan
@@ -748,7 +1271,7 @@ def fixheadtail(series, areamultiplier = 1.75, distmultiplier = 10,
             # Sequence is abnormally long, therefore likely next point missing
             # therefore make frame and net 10 frames NA
             seqlen = indstocheck[i+1]-indstocheck[i]
-            if(seqlen) > seqlentreshold:
+            if(seqlen) > seqlenthreshold:
                 data.loc[range(ind,ind+10),["head","fx","fy","tail","tx","ty"]] = np.nan
                 continue
 
@@ -773,10 +1296,10 @@ def fixheadtail(series, areamultiplier = 1.75, distmultiplier = 10,
     # # Head and tail positions are not reliable when the object area
     # # is considerably different from normal
     # if not np.all(data.area!=data.area):
-    #     print("area1",len(data.loc[data.area<(tresharea/areamultiplier),["head","fx","fy","tail","tx","ty"]]))
-    #     print("area2",len(data.loc[data.area>(tresharea*areamultiplier),["head","fx","fy","tail","tx","ty"]]))
-    #     data.loc[data.area<(tresharea/areamultiplier),["head","fx","fy","tail","tx","ty"]] = np.nan
-    #     data.loc[data.area>(tresharea*areamultiplier),["head","fx","fy","tail","tx","ty"]] = np.nan
+    #     print("area1",len(data.loc[data.area<(thresharea/areamultiplier),["head","fx","fy","tail","tx","ty"]]))
+    #     print("area2",len(data.loc[data.area>(thresharea*areamultiplier),["head","fx","fy","tail","tx","ty"]]))
+    #     data.loc[data.area<(thresharea/areamultiplier),["head","fx","fy","tail","tx","ty"]] = np.nan
+    #     data.loc[data.area>(thresharea*areamultiplier),["head","fx","fy","tail","tx","ty"]] = np.nan
     return data, swappedinds
 
 
@@ -843,232 +1366,292 @@ def findmissinginds(series, col, checkzero = False):
     return missinds
 
 
-def checknearmask(series, coordcols, mask, indsecs, masksecs, win = 5, nearmaskdis = 50):
-
+def checknearmask(series, coordcols, mask, indsecs, masksecs, win=5, nearmaskdis=50):
     nearlist = []
     awaylist = []
-    for i,indsec in enumerate(indsecs):
-        if (min(series.index.values)+1) >= indsec[0]:
+
+    for i, indsec in enumerate(indsecs):
+        if (min(series.index.values) + 1) >= indsec[0]:
             beflen = win
         else:
-            subset = series.loc[masksecs[i][0]:indsecs[i][0]-1,coordcols]
-            valid_subset = subset.dropna()
-            valid_subset = valid_subset[~np.isinf(valid_subset.to_numpy()).any(axis=1)]
-            befdis,_ = KDTree(mask).query(valid_subset)
-            beflen = len([n for n in befdis if n<nearmaskdis or n == np.Inf])
+            subset = series.loc[masksecs[i][0]:indsecs[i][0]-1, coordcols].dropna()
+            array = np.stack((
+                pd.to_numeric(subset[coordcols[0]], errors='coerce'),
+                pd.to_numeric(subset[coordcols[1]], errors='coerce')
+            ), axis=1)
+            array = array[~np.isinf(array).any(axis=1)]
+            befdis, _ = KDTree(mask).query(array)
+            beflen = len([n for n in befdis if n < nearmaskdis or n == np.inf])
+
         if max(series.index.values) == indsec[1]:
             aftlen = win
         else:
-            subset = series.loc[indsecs[i][1]+1:masksecs[i][1], coordcols]
-            valid_subset = subset.dropna()
-            valid_subset = valid_subset[~np.isinf(valid_subset.to_numpy()).any(axis=1)]
-            aftdis,_ = KDTree(mask).query(valid_subset)
-            aftlen = len([n for n in aftdis if n<nearmaskdis or n == np.Inf])
-        nearlist = nearlist+[i] if (beflen>0 and aftlen>0) else nearlist
-        awaylist = awaylist if (beflen>0 and aftlen>0) else awaylist+[i]
-        #nearlist = nearlist+[i] if (beflen==win and aftlen==win) else nearlist
-        #awaylist = awaylist if (beflen==win and aftlen==win) else awaylist+[i]
+            subset = series.loc[indsecs[i][1]+1:masksecs[i][1], coordcols].dropna()
+            array = np.stack((
+                pd.to_numeric(subset[coordcols[0]], errors='coerce'),
+                pd.to_numeric(subset[coordcols[1]], errors='coerce')
+            ), axis=1)
+            array = array[~np.isinf(array).any(axis=1)]
+            aftdis, _ = KDTree(mask).query(array)
+            aftlen = len([n for n in aftdis if n < nearmaskdis or n == np.inf])
+
+        if beflen > 0 and aftlen > 0:
+            nearlist.append(i)
+        else:
+            awaylist.append(i)
 
     return nearlist, awaylist
 
 
-def fillmissing(series, colpair, mask, roi, win = 5, nearmaskdis = 25, edgedis = 10,
-                lentresh = 100):
-
+def fillmissing(series, colpair, mask, roi, win=5, nearmaskdis=25, edgedis=10, lenthresh=100):
     """
     Fill-in missing data for specific numeric columns in a dataset
 
     First, missing data is ignored when at the start or end of the data series
     as cannot be filled. Second, sections with missing data near a mask are
     ignored as presumed object is missing because it is (partly) behind the
-    mask. Third, missing data is ignored when caused by objects dissappearing
+    mask. Third, missing data is ignored when caused by objects disappearing
     from view. Finally, missing values are calculated by differentiating.
     """
 
     # Fix new roi
     if roi is not None: 
-        roi = ((1,1),(roi[1][0]-roi[0][0],roi[1][1]-roi[0][1]))
+        roi = ((1, 1), (roi[1][0] - roi[0][0], roi[1][1] - roi[0][1]))
 
     # Get missing indices
-    missinds = findmissinginds(series, colpair[0], checkzero = False)
+    missinds = findmissinginds(series, colpair[0], checkzero=False)
     missing = len(missinds)
     if missing > 0:
         indsecs = getindsections(missinds)
 
-        # Remove starts and stops (with fix if first frame has data but beyond it doesn't)
+        # Remove starts and stops
         indsecs = [ind for ind in indsecs if ind[0] >= (min(series.index.values)+1) and ind[1] != max(series.index.values)]
-        missinds = [item for i in indsecs for item in list(range(i[0],i[0]+i[2]))]
+        missinds = [item for i in indsecs for item in list(range(i[0], i[0] + i[2]))]
         missing = len(missinds)
 
-        # Create diffsecs
-        if missing>0:
-            diffsecs = getindsections(missinds, win = 1)
+        if missing > 0:
+            diffsecs = getindsections(missinds, win=1)
 
             # Subset ind sections to only those not caused by blobs near a mask
-            if missing > 0 and mask not in (None,[]):
-                masksecs = getindsections(missinds, win = win)
-                nearlist, awaylist = checknearmask(series, colpair, mask, indsecs, masksecs, nearmaskdis = nearmaskdis)
-                indsecs = [indsec for i,indsec in enumerate(indsecs) if (indsec[2]<5 and i in nearlist) or i in awaylist]
-                diffsecs = [diffsec for i,diffsec in enumerate(diffsecs) if (diffsec[2]<(5+2) and i in nearlist) or i in awaylist]
-                missing = sum([item[2] for i,item in enumerate(indsecs)])
+            if mask not in (None, []):
+                masksecs = getindsections(missinds, win=win)
+                nearlist, awaylist = checknearmask(series, colpair, mask, indsecs, masksecs, nearmaskdis=nearmaskdis)
+                indsecs = [indsec for i, indsec in enumerate(indsecs) if (indsec[2] < 5 and i in nearlist) or i in awaylist]
+                diffsecs = [diffsec for i, diffsec in enumerate(diffsecs) if (diffsec[2] < (5 + 2) and i in nearlist) or i in awaylist]
+                missing = sum([item[2] for item in indsecs])
 
-        # Check if nans are not caused by fish moving out of view and if so label accordingly
+        # Label "inroi" as 0 when fish is near the border both before and after
         if missing > 0 and "cx" in colpair and roi is not None:
             dellist = []
-            for i,indsec in enumerate(indsecs):
-                befout = calc_borderdist(series.icom[indsec[0]-1], roi)
-                aftout = calc_borderdist(series.icom[indsec[1]+1], roi)
+            for i, indsec in enumerate(indsecs):
+                befxy = (series.at[indsec[0] - 1, colpair[0]], series.at[indsec[0] - 1, colpair[1]])
+                aftxy = (series.at[indsec[1] + 1, colpair[0]], series.at[indsec[1] + 1, colpair[1]])
+                befout = calc_borderdist(befxy, roi)
+                aftout = calc_borderdist(aftxy, roi)
                 if befout < edgedis and aftout < edgedis:
-                    series.loc[indsec[0]:indsec[1],"inroi"] = 0
-                    dellist += [i]
-            indsecs = [ind for i,ind in enumerate(indsecs) if i not in dellist]
-            diffsecs = [ind for i,ind in enumerate(diffsecs) if i not in dellist]
-            missing = sum([item[2] for i,item in enumerate(indsecs)])
+                    series.loc[indsec[0]:indsec[1], "inroi"] = 0
+                    dellist.append(i)
+            indsecs = [ind for i, ind in enumerate(indsecs) if i not in dellist]
+            diffsecs = [ind for i, ind in enumerate(diffsecs) if i not in dellist]
+            missing = sum([item[2] for item in indsecs])
 
-    # Now calculate missing values by differentiating for each column
+    # Now calculate missing values by interpolation
     if missing > 0:
-        for i,indsec in enumerate(indsecs):
-            if indsec[2]>lentresh:
-                missing = missing-indsec[2]
+        for i, indsec in enumerate(indsecs):
+            if indsec[2] > lenthresh:
+                missing -= indsec[2]
             else:
                 for col in colpair:
                     diffsec = diffsecs[i]
-                    newvals = np.around(np.linspace(series[col][diffsec[0]], series[col][diffsec[1]], diffsec[2]),3)[1:diffsec[2]-1]
-                    series.loc[indsec[0]:indsec[1],col] = newvals
-
-    # Reorder and reindex
-    #series = series.sort_values(["frame"])
-    #series.index = list(range(0,len(series)))
+                    newvals = np.around(np.linspace(series[col][diffsec[0]], series[col][diffsec[1]], diffsec[2]), 3)[1:diffsec[2]-1]
+                    series.loc[indsec[0]:indsec[1], col] = newvals
 
     return series, missing
 
-
-def addtrajsnmaskstate(series, mask, cover, win = 5, nearmaskdis = 20, trajgap=50, framebased = False):
-
+def process_trajectories(series, mask=None, cover=True, win=5,
+                         trajgap=50, inmaskdis=10, mintrajlength=10,
+                         erase_coords=True, interpolate=True, force_single_traj=False):
     """
-    Add trajectories and mask state
+    Process trajectories: detects mask-covered segments, removes data near mask,
+    assigns trajectory IDs, interpolates gaps, and removes short trajectories.
 
-    mask : tuple of coordinates
-    win : int, default = 5
-        The number of frames that should be considered as a buffer on each side
-        of key frame indices.
-    nearmaskdis : int, default = 50
-        The distance from cover in pixels that should be considered to count as
-        being near cover. For example, a distance of 50 would mean that any
-        coordinate data after a sequence of missing coordinate data that is less
-        than 50 pixels away from the nearest mask coordinate would then indicate
-        the previous data sequence is in cover.
+    Parameters
+    ----------
+    series : pd.DataFrame
+        Tracking data with at least 'cx', 'cy', and 'frame' columns.
+    mask : list of (x, y)
+        Polygon points of the mask (optional).
+    cover : bool
+        Whether to use mask to detect cover state.
+    win : int
+        Buffer window around missing data when testing mask proximity.
+    trajgap : int
+        Max frame gap to join points into the same trajectory.
+    inmaskdis : int
+        Distance threshold to count as "near mask".
+    mintrajlength : int
+        Minimum number of points to keep a trajectory.
+    erase_coords : bool
+        Whether to blank coordinates under the mask.
+    interpolate : bool
+        Whether to fill small gaps within trajectories.
+
+    Returns
+    -------
+    series : pd.DataFrame
+        Modified tracking data with 'traj' and 'inmask' columns.
+    ntraj : int
+        Number of valid trajectories.
+    nremoved : int
+        Number of rows removed due to being near/in the mask.
     """
+    import numpy as np
+    import pandas as pd
+    from scipy.spatial import KDTree
+    from shapely.geometry import Point, Polygon
 
-    if cover:
-        series["inmask"] = 0
-    nonmissinds = series.index.values
+    series["inmask"] = 0
+    series["traj"] = np.nan
 
-    if framebased:
-        frdiff = series.frame - series.frame.shift(periods=1)
-        fullinds = [0]+list(frdiff.index[(frdiff>1)]) + [frdiff.index[-1]+1]
-        series["traj"] = sum([[trajnr]*(fullinds[trajnr]-fullinds[trajnr-1]) for trajnr in list(range(1,len(fullinds)))],[])
+    # Ensure cx/cy are numeric
+    series["cx"] = pd.to_numeric(series["cx"], errors="coerce")
+    series["cy"] = pd.to_numeric(series["cy"], errors="coerce")
 
-    else:
-        missinds = findmissinginds(series, "cx", checkzero = True)
-        if len(missinds)>0:
-            indsecs = getindsections(missinds)
-            if cover and len(mask)>0:
-                fullinmaskinds = []
-                masksecs = getindsections(missinds, win = win)
-                nearlist,awaylist = checknearmask(series, ["cx","cy"], mask, indsecs, masksecs, nearmaskdis = nearmaskdis)
-                nearsecs = [indsec for i,indsec in enumerate(indsecs) if i in nearlist]
-                for i,nearsec in enumerate(nearsecs):
-                    fullinmaskinds += list(range(nearsec[0],nearsec[1]+1))
-                series.loc[fullinmaskinds,"inmask"] = 1
-                nonmissinds = [i for i in series.index.values if i not in fullinmaskinds]
+    ## 1. Detect which rows are "in mask" and optionally remove coordinates
+    removed_mask = np.zeros(len(series), dtype=bool)
+    if cover and mask and len(mask) > 0:
+        polygon = Polygon(mask)
+        valid = series[["cx", "cy"]].dropna().copy()
+        points = list(valid.itertuples(index=True, name=None))
+        locs = [(x[1], x[2]) for x in points]
+        indices = [x[0] for x in points]
 
-        outdat = series.index.values[series.inroi==0]
-        nonmissinds = [i for i in nonmissinds if i not in outdat]
-        if len(nonmissinds)>0:
-            trajinds = getindsections(nonmissinds, gap=trajgap)
-            for i,trajind in enumerate(trajinds):
-                series.loc[trajind[0]:trajind[1],"traj"] = int(i+1)
-                missinds = findmissinginds(series.loc[trajind[0]:trajind[1]],"cx")
-                if len(missinds)>0:
-                    diffsecs = getindsections(missinds, win = 1)
-                    for diffsec in diffsecs:
-                        if diffsec[1]!= max(series.index.values)+1:
-                            for col in ["cx","cy"]:
-                                newvals = np.around(np.linspace(series[col][diffsec[0]], series[col][diffsec[1]], diffsec[2]),3)[1:diffsec[2]-1]
-                                series.loc[diffsec[0]+1:diffsec[1]-1,col] = newvals
+        distances, _ = KDTree(mask).query(locs)
+        inside = [polygon.contains(Point(x, y)) for x, y in locs]
+        removed_mask[indices] = (np.array(inside) | (distances < inmaskdis))
+        series.loc[removed_mask, "inmask"] = 1
 
-        trajs = np.unique(series.traj[~np.isnan(series.traj)])
-        ntraj = max(trajs) if len(trajs)>0 else 0
+        if erase_coords:
+            series.loc[removed_mask, ["cx", "cy"]] = np.nan
 
-    return ntraj
+    ## 2. Determine "non-masked" points
+    nonmiss = series.index[series["cx"].notna() & (series["inroi"] != 0)]
 
+    ## 3. Group into trajectory segments
+    def getindsections(idxs, gap=1):
+        """Split sorted indices into continuous segments with max gap."""
+        if not len(idxs): return []
+        idxs = sorted(idxs)
+        breaks = [0] + [i+1 for i in range(len(idxs)-1) if idxs[i+1] - idxs[i] > gap] + [len(idxs)]
+        return [(idxs[start], idxs[end-1]) for start, end in zip(breaks[:-1], breaks[1:])]
 
-def removenearmask(series, mask, inmaskdis = 10, mintrajlength = 10):
+    sections = getindsections(nonmiss, gap=trajgap)
+    # --- FORCE SINGLE TRAJECTORY MODE ---
+    if force_single_traj:
+        if len(nonmiss) > 0:
+            start, end = nonmiss[0], nonmiss[-1]
+            sections = [(start, end)]
+        else:
+            sections = []
+            
+    for i, (start, end) in enumerate(sections, start=1):
+        series.loc[start:end, "traj"] = i
 
-    """Removes data where object is within certain distance of the mask and handles short trajectories."""
+        if interpolate:
+            inds = series.loc[start:end].index
+            for col in ["cx", "cy"]:
+                y = series.loc[inds, col]
+                if y.isna().any():
+                    x = y.index
+                    filled = y.interpolate(method='linear', limit_direction='both')
+                    series.loc[x, col] = filled
 
-    # Step 1: Identify and remove rows where the object is within a certain distance of the mask
-    locs = [(np.nan, np.nan) if np.isnan(a) else (int(a), int(b)) for a, b in zip(series.cx, series.cy)]
-    distances, maskids = KDTree(mask).query(locs)
+    ## 4. Remove short trajectories
+    nremoved = 0
+    for trajid, group in series.groupby("traj"):
+        if pd.isna(trajid):
+            continue
+        if len(group) < mintrajlength:
+            series.loc[group.index, ["cx", "cy", "traj"]] = np.nan
+            nremoved += len(group)
 
-    # Identify columns to set to NaN when near the mask
-    cols = [i for i in list(series.loc[:, "area":].columns.values) if i not in ["frame", "time", "inroi", "ID"]]
-    
-    # Remove data where object is near the mask
-    series.loc[distances < inmaskdis, cols] = np.nan
-    missing = len(distances[distances < inmaskdis])
+    ## 5. Reindex trajectories
+    valid_trajids = [i for i in series.traj.unique() if not pd.isna(i)]
+    for new_id, old_id in enumerate(valid_trajids, start=1):
+        series.loc[series.traj == old_id, "traj"] = new_id
 
-    # Step 2: Fill missing trajectory IDs between the first and last frame of each trajectory
-    trajids = [i for i in series.traj.unique() if not np.isnan(i)]
-    for trajid in trajids:
-        traj_inds = series.loc[series.traj == trajid].index
-        if len(traj_inds) > 0:
-            # Fill missing trajectory IDs between the first and last index
-            series.loc[traj_inds[0]:traj_inds[-1], "traj"] = trajid
-   
-    # Step 3: Remove short trajectories
-    for trajid in trajids:
-        traj_length = len(series.loc[series.traj == trajid])
-        if traj_length < mintrajlength:
-            # Remove all coordinates and relevant data for this short trajectory
-            series.loc[series.traj == trajid, cols] = np.nan
-    
-    # Step 4: Re-index trajectories to ensure continuous numbering
-    valid_trajids = [i for i in series.traj.unique() if not np.isnan(i)]
-    for new_traj_id, trajid in enumerate(valid_trajids, start=1):
-        series.loc[series.traj == trajid, "traj"] = new_traj_id
-
-    # Step 5: Add missing mask status for `inmask`
-    series.loc[series.inmask.isnull(), "inmask"] = 1
-
-    return distances, maskids, missing
+    ntraj = len(valid_trajids)
+    return series, ntraj, int(removed_mask.sum())
 
 
-def smooth(series, trajs = None, columns = ["cx","cy"], smoothwin = 5):
-    
-    if trajs is None: 
-        if len(series)>6:
+def smooth(series, trajs=None, columns=("cx","cy"), smoothwin=5, polyorder=3):
+    for col in columns:
+        if col in series.columns and not is_float_dtype(series[col].dtype):
+            series[col] = pd.to_numeric(series[col], errors="coerce").astype("float64")
+
+    if trajs is None:
+        if len(series) > 6:
             for column in columns:
-                nonanlen = series.loc[:,column].dropna().shape[0]
-                win = smoothwin if nonanlen>smoothwin else nonanlen
-                if win>6:
-                    win = win-1 if win % 2 == 0 else win # make odd
-                    startind = next(i for i,j in enumerate(series.loc[:,column]) if j==j)
-                    inds = list(series.loc[:][startind:].index)
-                    series.loc[inds,column] = savgol_filter(x = series.loc[inds,column], polyorder = 3, window_length = win)
-    
+                if column not in series.columns:
+                    continue
+                nonan = series[column].dropna()
+                nonanlen = len(nonan)
+                win = smoothwin if nonanlen > smoothwin else nonanlen
+                if win > 6:
+                    win = win - 1 if win % 2 == 0 else win  # make odd
+                    # Also ensure win > polyorder
+                    if win <= polyorder:
+                        win = polyorder + 2 + ((polyorder + 2) % 2)
+                        if win > nonanlen:
+                            continue
+                    # Filter only valid (non-NaN) positions, then write back
+                    filt = savgol_filter(nonan.to_numpy(dtype=float), polyorder=polyorder, window_length=win)
+                    series.loc[nonan.index, column] = filt
     else:
         for t in trajs:
-            if len(series[series.traj==t])>6:
+            sub = series.loc[series.traj == t]
+            if len(sub) > 6:
                 for column in columns:
-                    nonanlen = series.loc[series.traj==t,column].dropna().shape[0]
-                    win = smoothwin if nonanlen>smoothwin else nonanlen
-                    if win>6:
-                        win = win-1 if win % 2 == 0 else win # make odd
-                        startind = next(i for i,j in enumerate(series.loc[series.traj==t,column]) if j==j)
-                        inds = list(series.loc[series.traj==t][startind:].index)
-                        series.loc[inds,column] = savgol_filter(x = series.loc[inds,column], polyorder = 3, window_length = win)
-    
+                    if column not in series.columns:
+                        continue
+                    nonan = sub[column].dropna()
+                    nonanlen = len(nonan)
+                    win = smoothwin if nonanlen > smoothwin else nonanlen
+                    if win > 6:
+                        win = win - 1 if win % 2 == 0 else win  # make odd
+                        if win <= polyorder:
+                            win = polyorder + 2 + ((polyorder + 2) % 2)
+                            if win > nonanlen:
+                                continue
+                        filt = savgol_filter(nonan.to_numpy(dtype=float), polyorder=polyorder, window_length=win)
+                        series.loc[nonan.index, column] = filt
+
     return series
 
+def filter_tracking_jumps(ids, coms, frame_nr, last_valid, max_framedist=200, max_gap=10, pr_comm=""):
+    """
+    Accept point only if (1) within max_gap frames from last_valid and (2) within max_framedist * gap.
+    After max_gap, only accept points within max_framedist (i.e., don't keep growing allowed jump forever).
+    """
+    filtered_coms = []
+    for idx, id in enumerate(ids):
+        c = coms[idx]
+        if c is None or not isinstance(c, (tuple, list)) or any([ci != ci for ci in c]):
+            filtered_coms.append((np.nan, np.nan))
+            continue
+        if id in last_valid:
+            prev_x, prev_y, prev_frame = last_valid[id]
+            gap = frame_nr - prev_frame
+            if gap <= max_gap:
+                allowed_jump = max_framedist * gap
+            else:
+                allowed_jump = max_framedist  # after max_gap, only allow within fixed distance
+            dist = np.linalg.norm([c[0] - prev_x, c[1] - prev_y])
+            #print(f"[{pr_comm}] Frame {frame_nr}, ID {id}: jump {dist:.1f} > {allowed_jump}")
+            if dist > allowed_jump:
+                filtered_coms.append((np.nan, np.nan))
+                # Crucially: do NOT update last_valid here!
+                continue
+        filtered_coms.append((c[0], c[1]))
+        last_valid[id] = (c[0], c[1], frame_nr)
+    return filtered_coms, last_valid

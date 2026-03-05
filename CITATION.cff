@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+title: "ATracker"
+message: "If you use ATracker in your research, please cite it as below."
+type: software
+authors:
+  - family-names: Jolles
+    given-names: Jolle
+    orcid: https://orcid.org/0000-0002-2343-6799
+doi: 10.5281/zenodo.xxxxx
+repository-code: https://github.com/JolleJolles/atracker
+license: Apache-2.0
