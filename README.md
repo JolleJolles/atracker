@@ -10,9 +10,8 @@
 
 If you use ATracker in your research, please cite:
 
-```
 Jolles JW (2026). *ATracker: A flexible Python toolkit for animal tracking*. Zenodo. https://doi.org/10.5281/zenodo.18889019
-```
+
 
 ## Overview
 
