@@ -1,14 +1,24 @@
-# ATracker Readme
+# ATracker
 
-[![DOI](https://zenodo.org/badge/XXXX.svg)](https://doi.org/XXXX)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18889019.svg)](https://doi.org/10.5281/zenodo.18889019)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.9-blue.svg)]()
 
-**ATracker** is a flexible Python toolkit for animal tracking.
+**A flexible Python toolkit for animal tracking.**
 
-It provides tools for the full workflow of behavioural tracking experiments, from preparing videos and defining tracking regions to running automated or manual tracking and generating trajectory data for analysis.
+## Citation
 
-ATracker is particularly well suited for behavioural experiments where flexible annotation, quality control, and integration with custom analysis pipelines are essential. Built on top of `opencv`, it is optimized for cross-platform use and runs on **macOS**, **Windows**, and **Linux**.
+If you use ATracker in your research, please cite:
+
+```
+Jolles JW (2026). *ATracker: A flexible Python toolkit for animal tracking*. Zenodo. https://doi.org/10.5281/zenodo.18889019
+```
+
+## Overview
+
+**Atracker** provides tools for the full workflow of behavioural tracking experiments, from preparing videos and defining tracking regions to running automated or manual tracking and generating trajectory data for analysis.
+
+ATracker is particularly well suited for behavioural experiments where flexible annotation, quality control, and integration with custom analysis pipelines are essential. Relying on `opencv`, it is optimized for cross-platform use and runs on **macOS**, **Windows**, and **Linux**.
 
 ATracker is developed and actively maintained by **Dr Jolle Jolles**, senior researcher at **CEAB-CSIC**.
 
@@ -47,15 +57,13 @@ ATracker is developed and actively maintained by **Dr Jolle Jolles**, senior res
   - Setting thresholding parameters  
   - Running tracking in various modes  
 
-## Compatibility
-
-ATracker relies on a stable set of packages and is designed to work out of the box with **Python 3.9**. Due to the ongoing updates in upstream libraries (e.g., `opencv`, `PyQt5`, etc.), we recommend using the versions specified in `setup.py`.
-
 ## Installation
 
 ATracker can be installed directly from the repository:
 
 `pip install git+https://github.com/JolleJolles/atracker.git`
+
+and then be run with:
 
 ```
 import atracker as AT
@@ -63,8 +71,6 @@ import atracker as AT
 AT.set_interactive(...)
 ```
 
-## Citation
+## Compatibility
 
-If you use ATracker in your research, please cite:
-
-Jolles JW (2026). ATracker: A flexible Python toolkit for animal tracking. Zenodo. https://doi.org/XXXX
+ATracker relies on a stable set of packages and is designed to work out of the box with **Python 3.9**. Due to the ongoing updates in upstream libraries (e.g., `opencv`, `PyQt5`, etc.), we recommend using the versions specified in `setup.py`.
