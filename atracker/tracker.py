@@ -774,3 +774,6 @@ class Tracker:
 
         except KeyboardInterrupt:
             raise KeyboardInterruptError()
+        except Exception as e:
+            lineprint(f"Error on [{self.ind}] {self.filename}: {type(e).__name__}: {e}")
+            raise

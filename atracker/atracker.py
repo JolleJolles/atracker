@@ -1148,6 +1148,10 @@ class ATracker:
                 lineprint("Tracking finished..")
             except KeyboardInterrupt:
                 lineprint("\nUser terminated tracking..")
+            except Exception as e:
+                video = AT.overview.loc[ind]["video"] if ind is not None else "unknown"
+                lineprint(f"Error on row {ind} ({video}): {type(e).__name__}: {e}")
+                raise
         else:
             AT.config.vis.show_tracking = False
             AT.config.vis.waitkey = 1
@@ -1155,12 +1159,15 @@ class ATracker:
             if not notebook():
                 pool = multiprocessing.Pool(min(pools, len(trackfiles)))
                 counter = -1
+                last_ind, last_video = None, "unknown"
                 try:
                     while len(T.inds)>0:
                         counter += 1
                         ind = T.inds[0]
                         T.inds = T.inds[1:]
-                        trackfile = os.path.join(AT.dirs[folder], AT.overview.loc[ind]["video"] + ".mp4")
+                        last_ind = ind
+                        last_video = AT.overview.loc[ind]["video"]
+                        trackfile = os.path.join(AT.dirs[folder], last_video + ".mp4")
                         tempool = [pool.apply_async(T.setuptracking,
                                                     (ind,trackfile),
                                                     callback=callback_function)]
@@ -1171,7 +1178,7 @@ class ATracker:
                     lineprint("\nUser terminated tracking pool..")
                     pool.terminate()
                 except Exception as e:
-                    lineprint("Got exception: %r, terminating pool" % (e,))
+                    lineprint(f"Error on row {last_ind} ({last_video}): {type(e).__name__}: {e}, terminating pool")
                     pool.terminate()
                     lineprint("pool is terminated")
                 finally:
