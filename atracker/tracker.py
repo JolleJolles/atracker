@@ -146,7 +146,7 @@ class Tracker:
 
         # Skip if already tracked and overwrite is off
         if not self.overwrite:
-            tracked_path = os.path.join(self.dirs["tracked"], self.filename + self.suffix + "_TR.mp4")
+            tracked_path = os.path.join(self.dirs["tracked"], self.filename + self.suffix + ".csv")
             if os.path.exists(tracked_path):
                 lineprint(self.pr_comm + " already tracked, skipping..")
                 return self.inds
