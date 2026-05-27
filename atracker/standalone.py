@@ -216,11 +216,8 @@ def track_video(
     output_dir = os.path.abspath(output) if output else video_dir
 
     # --- Video parameters ---
-    vid_params = get_vid_params(video_path)
-    vid_fps = fps or vid_params.get("fps", 25)
-    fcount = vid_params.get("fcount", 99999)
-    width = vid_params.get("width", 0)
-    height = vid_params.get("height", 0)
+    _fps, width, height, fcount = get_vid_params(video_path)
+    vid_fps = fps or _fps
     fs = frame_start or 1
     fe = frame_stop or int(fcount)
 
@@ -275,7 +272,7 @@ def track_video(
             lineprint("Draw exclusion mask in the GUI.")
             result = annotation_gui(
                 media_file=video_path, background_file=bg_path,
-                mode="mask", firstframe=fs, lastframe=fe, roi=roi_str,
+                mode="mask", firstframe=fs, lastframe=fe, roi=(pt1, pt2),
             )
             if result is not None and result != "exit" and isinstance(result[1], np.ndarray):
                 img_mask = result[1]
@@ -291,9 +288,12 @@ def track_video(
         # --- Thresholds (in memory) ---
         threshinfo = loaded.get("threshinfo") or {}
         thresh_types = [method] if method != "bw" else ["bw"]
+        # Tracker always inserts "bw" at index 0 when not present, so we must
+        # calibrate it even for colour-only methods or tracking will KeyError.
+        calibrate_types = (["bw"] + thresh_types) if method != "bw" else thresh_types
 
         if set_threshold:
-            for ttype in thresh_types:
+            for ttype in calibrate_types:
                 mode = "thresholding" if ttype.startswith("bw") else "thresholding color"
                 lineprint(f"Calibrate threshold for '{ttype}' — close window when done.")
                 result = annotation_gui(
@@ -337,8 +337,7 @@ def track_video(
             "thresh_types": ",".join(thresh_types),
             "objects": n_objects,
             "exclude": np.nan,
-        }])
-        overview.index = [0]
+        }], index=[0])
 
         # --- Config ---
         config = _make_config(

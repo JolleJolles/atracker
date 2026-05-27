@@ -1244,9 +1244,10 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         self.sliders_bw_widgets = []
         self.sliders_color_widgets = []
         # B/W Sliders
+        _frame_px = self.orig_width * self.orig_height
         for label_text, max_val in [
-            ("Blur:", 39), ("Erode:", 39), ("Blur2:", 39), ("Threshold:", 255), 
-            ("Min Area:", 20000), ("Max Area:", 20000)
+            ("Blur:", 39), ("Erode:", 39), ("Blur2:", 39), ("Threshold:", 255),
+            ("Min Area:", _frame_px), ("Max Area:", _frame_px)
         ]:
             slider = QSlider(Qt.Horizontal)
             slider.setRange(1, max_val)
