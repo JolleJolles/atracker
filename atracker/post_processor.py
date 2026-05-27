@@ -11,7 +11,6 @@ import multiprocessing
 from pythutils.mathutils import points_to_angle, angle_to_vec, ptsToDist
 
 from .utils import *
-#from .tracker_man import Tracker_man
 
 class Processor:
 
