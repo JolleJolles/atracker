@@ -1068,13 +1068,13 @@ class ATracker:
                 AT.dryframes = list(zip(startframes,[i+rand_seqlen for i in startframes]))
             for i,seq in enumerate(AT.dryframes):
                 suffixi = suffix+str(i+1).zfill(len(str(len(AT.dryframes))))
-                AT.track(folder="originals", inds=[ind], start=seq[0], stop=seq[1], suffix=suffixi)
+                AT.track(folder="originals", inds=[ind], frame_start=seq[0], frame_stop=seq[1], suffix=suffixi)
 
         AT.set_config(overwrite=a, show_tracking=b, frame_disstep=c,
             trajs_below=d, create_vid=e, create_dat=f)
 
-    def track(AT, inds=None, names=None, query=None, cats=None, pools=1, folder="todo", start=None,
-        stop=None, custhreshtypes=None, cusobjects=None, checkconschange=False, suffix="", threshfile=None, 
+    def track(AT, inds=None, names=None, query=None, cats=None, pools=1, folder="todo", frame_start=None,
+        frame_stop=None, custhreshtypes=None, cusobjects=None, checkconschange=False, suffix="", threshfile=None,
         max_framedist=200, overwrite=None, check_flicker=False, skip_frames=0):
        
         if threshfile is not None:
@@ -1119,7 +1119,7 @@ class ATracker:
 
         # Now create the Tracker with only existing files
         T = Tracker(pools, inds, trackfiles, AT.dirs, AT.overview, 
-                    AT.config, AT.threshinfo, start, stop, custhreshtypes, 
+                    AT.config, AT.threshinfo, frame_start, frame_stop, custhreshtypes,
                     cusobjects, checkconschange, suffix,
                     max_framedist=max_framedist, overwrite=overwrite, 
                     check_flicker=check_flicker, skip_frames=skip_frames)
