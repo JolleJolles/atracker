@@ -13,11 +13,11 @@ from box import Box
 from random import sample
 from ast import literal_eval
 from localconfig import LocalConfig
+import subprocess
 import threading
 import multiprocessing
 from concurrent.futures import ThreadPoolExecutor
 
-from atracker.utils import convert_h264_to_mp4
 from pythutils.fileutils import listfiles
 from pythutils.sysutils import lineprint
 from pythutils.drawutils import namedcols
@@ -27,10 +27,28 @@ from pythutils.datutils import to_query
 from atracker.__version__ import __version__
 from atracker.visual_editor import annotation_gui
 from atracker.tracker import Tracker
-from atracker.processor import Processor
+from atracker.post_processor import Processor
+from atracker.media import convert_h264_to_mp4
 from atracker.utils import *
 
 warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
+
+
+def _git_version_info():
+    """Return short git hash and commit date, or None if not in a git repo."""
+    try:
+        pkg_dir = os.path.dirname(__file__)
+        result = subprocess.run(
+            ["git", "log", "-1", "--format=%h %cd", "--date=short"],
+            capture_output=True, text=True, timeout=2, cwd=pkg_dir
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            parts = result.stdout.strip().split()
+            return f"{parts[1]} ({parts[0]})"
+    except Exception:
+        pass
+    return None
+
 
 class ATracker:
 
@@ -49,7 +67,9 @@ class ATracker:
 
     def __init__(AT, filedir = "."):
 
-        lineprint("ATracker "+__version__+" started!")
+        git_info = _git_version_info()
+        version_str = f"ATracker {__version__}" + (f" — {git_info}" if git_info else "")
+        lineprint(version_str + " started!")
         lineprint("="*50, False)
 
         # Use the working directory of the notebook if filedir is "."
@@ -93,7 +113,7 @@ class ATracker:
             cols = ["video","fps","fcount","resolution","frame_start",
                     "frame_stop","roi","conv","exp","date","trial","session",
                     "setup","ID","bgimg","maskimg","thresh_types",
-                    "wallimg","zoneimg","skip","objects","exclude"]
+                    "wallimg","zoneimg","objects","exclude"]
             AT.overview = pd.DataFrame(columns=cols)
             AT.save()
             print("", sep="", end=" | ")
@@ -106,11 +126,8 @@ class ATracker:
                     AT.config.add_section(section)
             AT.set_config(fps=25, real_dims=None, startframe=1,
                           stopframe=99999, keep_frames=10, bg_frames=25,
-                          orient_get=False, orient_delwindow=1,
-                          orient_minvel=4, orient_minconvex=0.25,
-                          orient_minextdistratio=1.1, show_tracking=True,
-                          vid_displaysize=1, frame_disstep=100, userwait=False,
-                          idcol=True, simple=True, orientfrombw=False,
+                          show_tracking=True, vid_displaysize=1, frame_disstep=100,
+                          userwait=False, idcol=True, simple=True, orientfrombw=False,
                           contour_col="blue", centre_col="white", front_col="black",
                           orient_col="black", traj_col="yellow", centre_lwidth=13,
                           orient_lwidth=2, orient_tip=0.15, orient_length=15,
@@ -118,7 +135,7 @@ class ATracker:
                           traj_opacity=0.5, mask_opacity=0.15, box_opacity=0.7,
                           draw_contournrs=False, trajs_below=False, strict=False,
                           create_vid=True, create_dat=True, overwrite=True,
-                          internal="", linkdisthreshold=100)
+                          shape_area_tol=0.25, shape_history_len=500, linkdisthreshold=100, internal="")
             print("Config settings stored", end=" | ")
         else:
             print("Config settings loaded", end=" | ")
@@ -172,6 +189,18 @@ class ATracker:
         AT.overview = pd.read_excel(AT.cfiles["overview"], converters=AT.conv, engine='openpyxl')
         AT.overview["date"] = AT.overview["date"].astype(str).str[:10]
         AT.config = LocalConfig(AT.cfiles["config"], compact_form=True)
+
+        # Normalise column names: merge legacy "Exclude" and "skip" into "exclude"
+        ov = AT.overview
+        if "exclude" not in ov.columns:
+            ov["exclude"] = np.nan
+        if "Exclude" in ov.columns:
+            ov.loc[ov["Exclude"] == 1, "exclude"] = 1
+            ov.drop(columns=["Exclude"], inplace=True)
+        if "skip" in ov.columns:
+            ov.loc[ov["skip"] == 1, "exclude"] = 1
+            ov.drop(columns=["skip"], inplace=True)
+        AT.overview = ov
 
     def showinfo(AT, files=None, inds=None, return_inds=False):
         ov = AT.overview
@@ -359,28 +388,31 @@ class ATracker:
         simple : bool, default = True
             If only simple contour data or complex contour data (skeleton,
             head, tail, orientation, curvature etc) should be extracted
+        contour_mode : str, default = "static"
+            Contour consistency mode. "static" uses only the global area/aspect
+            thresholds set in the threshold file (current behaviour). "dynamic"
+            additionally applies a per-ID rolling area check: once an ID has 10
+            accepted frames of history, detections whose area falls below 25% or
+            above 400% of that ID's rolling median are rejected as noise.
         orientfrombw : bool, default = False
             If orientation data should be acquired from the difference in 
             centroid and other contour (such as color or barcode) 
         bg_frames : int, default = 25
             The number of frames that should be used to create a background
             image between the start and stopframe
-        orient_delwindow : int, default = 4
-            The timewindow in seconds in which the orientation angle should
-            be checked >>> ! Currently not implemented
-        orient_minvel : int, default = 4
-            Minimal velocity to update orientation with heading >>> ! Currently not implemented
-        orient_minextdistratio : float, default = 1.1
-            Minimum ratio between distances from centroid to extreme points to
-            use for checking orientation >>> ! Currently not implemented
-        orient_minconvex : float, default = 0.25
-            Minimal convexity to update orientation >>> ! Currently not implemented
         mergedmindist : int, default = None
             Minimal distance that previous contours should be to a potential
             merged contour as condition for being a merged contour
         linkdisthreshold : int, default = 100
             Maximum distance in converted pixels per frame to be used to link
             two IDs during tracking
+        shape_area_tol : float, default = 0.25
+            Ratio threshold for the dynamic per-ID area consistency filter (contour_mode="dynamic").
+            A detection is accepted if its area is within [tol × median, (1/tol) × median].
+            E.g. 0.25 accepts areas between 25% and 400% of the rolling median.
+        shape_history_len : int, default = 500
+            Number of accepted frames used to compute the rolling median area per ID.
+            500 frames at 25fps = 20 seconds of history, giving a stable baseline.
         show_tracking : boolean, default = True
             If tracking should be shown live
         vid_displaysize : int, default = 1
@@ -458,26 +490,21 @@ class ATracker:
             AT.config.track.create_dat = kwargs["create_dat"]
         if "simple" in kwargs:
             AT.config.track.simple = kwargs["simple"]
+        if "contour_mode" in kwargs:
+            AT.config.track.contour_mode = kwargs["contour_mode"]
         if "orientfrombw" in kwargs:
             AT.config.track.orientfrombw = kwargs["orientfrombw"]
         if "mergedmindist" in kwargs:
             AT.config.track.mergedmindist = kwargs["mergedmindist"]
         if "linkdisthreshold" in kwargs:
             AT.config.track.linkdisthreshold = kwargs["linkdisthreshold"]
+        if "shape_area_tol" in kwargs:
+            AT.config.track.shape_area_tol = kwargs["shape_area_tol"]
+        if "shape_history_len" in kwargs:
+            AT.config.track.shape_history_len = kwargs["shape_history_len"]
 
         if "bg_frames" in kwargs:
             AT.config.bgextract.bg_frames = kwargs["bg_frames"]
-
-        if "orient_get" in kwargs:
-            AT.config.orient.get = kwargs["orient_get"]
-        if "orient_delwindow" in kwargs:
-            AT.config.orient.delwindow = kwargs["orient_delwindow"]
-        if "orient_minvel" in kwargs:
-            AT.config.orient.minvel = kwargs["orient_minvel"]
-        if "minextdistratio" in kwargs:
-            AT.config.orient.minextdistratio = kwargs["minextdistratio"]
-        if "minconvex" in kwargs:
-            AT.config.orient.minconvex = kwargs["minconvex"]
 
         if "show_tracking" in kwargs:
             AT.config.vis.show_tracking = kwargs["show_tracking"]
@@ -529,7 +556,7 @@ class ATracker:
             print("Config settings stored and loaded..")
 
     def setup_files(AT, fname_extract=True, fname_vars=("date", "exp", "trial", "session", "setup", "ID"),
-                    fname_sep="-", skip=False, autoconvert=True):
+                    fname_sep="-", skip=False, autoconvert=True, fps=None):
         """
         Prepares video files for tracking by converting, extracting metadata, 
         and updating the overview.
@@ -548,7 +575,8 @@ class ATracker:
         if autoconvert:
             if convlist:
                 lineprint(f"Converting {len(convlist)} files...", newline=False)
-                convert_h264_to_mp4(originals_dir, fps=AT.config.exp.fps)
+                conversion_fps = fps if fps is not None else AT.config.exp.fps
+                convert_h264_to_mp4(originals_dir, fps=conversion_fps)
             else:
                 lineprint("No files to convert..")
 
@@ -613,8 +641,8 @@ class ATracker:
 
         # 1) Determine which rows to process
         if len(inds) == 0:
-            # All rows not skipped
-            df = AT.overview[AT.overview["skip"] != 1]
+            # All rows not excluded
+            df = AT.overview[AT.overview.get("exclude", pd.Series(dtype=object)) != 1]
             rows = df.index.tolist()
         else:
             rows = inds
@@ -729,9 +757,9 @@ class ATracker:
                     roival = None
 
             firstframe = AT.overview.loc[ind, "frame_start"]
-            firstframe = 1 if pd.isna(firstframe) else int(firstframe)
+            firstframe = 1 if pd.isna(firstframe)or str(firstframe).strip() == "" else int(firstframe)
             lastframe = AT.overview.loc[ind, "frame_stop"]
-            lastframe = None if pd.isna(lastframe) else int(lastframe)
+            lastframe = None if pd.isna(lastframe) or str(lastframe).strip() == "" else int(lastframe)
 
             bgimg = AT.overview.loc[ind].get("bgimg", None)
             bgpath = os.path.join(AT.dirs["originals"], bgimg) if isinstance(bgimg, str) else None
@@ -1028,7 +1056,7 @@ class ATracker:
             trajs_below=False, create_vid=True, create_dat=False)
 
         if not rerun or not hasattr(AT, 'dryinds'):
-            fullinds = list(AT.overview.index[AT.overview["skip"]!=1])
+            fullinds = list(AT.overview.index[AT.overview.get("exclude", pd.Series(dtype=object))!=1])
             AT.dryinds = sample(fullinds, min(rand_filenr,len(fullinds)-1))
 
         for ind in AT.dryinds:
@@ -1047,7 +1075,7 @@ class ATracker:
 
     def track(AT, inds=None, names=None, query=None, cats=None, pools=1, folder="todo", start=None,
         stop=None, custhreshtypes=None, cusobjects=None, checkconschange=False, suffix="", threshfile=None, 
-        max_framedist=200, overwrite=None):
+        max_framedist=200, overwrite=None, check_flicker=False, skip_frames=0):
        
         if threshfile is not None:
             try:
@@ -1093,8 +1121,21 @@ class ATracker:
         T = Tracker(pools, inds, trackfiles, AT.dirs, AT.overview, 
                     AT.config, AT.threshinfo, start, stop, custhreshtypes, 
                     cusobjects, checkconschange, suffix,
-                    max_framedist=max_framedist, overwrite=overwrite)
-        lineprint(missed + "Tracking started of "+str(len(trackfiles))+" files..")
+                    max_framedist=max_framedist, overwrite=overwrite, 
+                    check_flicker=check_flicker, skip_frames=skip_frames)
+        
+        # Filter to only untracked files before starting pool
+        if not overwrite:
+            untracked_inds = []
+            for ind in T.inds:
+                filename = os.path.splitext(os.path.basename(trackfiles[T.inds.index(ind)]))[0]
+                tracked_path = os.path.join(AT.dirs["tracked"], filename + suffix + "_TR.mp4")
+                if not os.path.exists(tracked_path):
+                    untracked_inds.append(ind)
+            T.inds = untracked_inds
+            lineprint(f"Tracking started of {len(T.inds)} files (skipping {len(trackfiles) - len(T.inds)} already tracked)..")
+        else:
+            lineprint(f"Tracking started of {len(T.inds)} files..")
 
         if pools<2:
             counter = -1
@@ -1118,6 +1159,7 @@ class ATracker:
                     while len(T.inds)>0:
                         counter += 1
                         ind = T.inds[0]
+                        T.inds = T.inds[1:]
                         trackfile = os.path.join(AT.dirs[folder], AT.overview.loc[ind]["video"] + ".mp4")
                         tempool = [pool.apply_async(T.setuptracking,
                                                     (ind,trackfile),
