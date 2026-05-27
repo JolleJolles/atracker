@@ -1,5 +1,6 @@
 from .__version__ import __version__
 from .atracker import ATracker
+from .standalone import track_video
 from .visual_editor import manual_tracker
 from .batch_measure import batch_measure
 from .post_processor import Processor
