@@ -278,9 +278,8 @@ class ATracker:
     ):
         overview = AT.overview
 
-        # # Exclude rows where the "exclude" column is 1
-        # if "exclude" in overview.columns:
-        #     overview = overview[overview["exclude"] != 1]
+        if "exclude" in overview.columns:
+            overview = overview[overview["exclude"] != 1]
 
         # Select indices
         if inds is not None:
@@ -1139,19 +1138,23 @@ class ATracker:
 
         if pools<2:
             counter = -1
-            try:
-                while len(T.inds)>0:
-                    counter += 1
-                    ind = T.inds[0]
-                    trackfile = os.path.join(AT.dirs[folder], AT.overview.loc[ind]["video"] + ".mp4")
+            stop = False
+            while len(T.inds)>0 and not stop:
+                counter += 1
+                ind = T.inds[0]
+                trackfile = os.path.join(AT.dirs[folder], AT.overview.loc[ind]["video"] + ".mp4")
+                try:
                     T.setuptracking(ind, trackfile)
+                except KeyboardInterrupt:
+                    lineprint("\nUser terminated tracking..")
+                    stop = True
+                except Exception as e:
+                    video = AT.overview.loc[ind]["video"]
+                    lineprint(f"Error on row {ind} ({video}): {type(e).__name__}: {e} — skipping")
+                    if ind in T.inds:
+                        T.inds.remove(ind)
+            if not stop:
                 lineprint("Tracking finished..")
-            except KeyboardInterrupt:
-                lineprint("\nUser terminated tracking..")
-            except Exception as e:
-                video = AT.overview.loc[ind]["video"] if ind is not None else "unknown"
-                lineprint(f"Error on row {ind} ({video}): {type(e).__name__}: {e}")
-                raise
         else:
             AT.config.vis.show_tracking = False
             AT.config.vis.waitkey = 1
