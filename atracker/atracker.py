@@ -1074,122 +1074,158 @@ class ATracker:
 
     def track(AT, inds=None, names=None, query=None, cats=None, pools=1, folder="todo", frame_start=None,
         frame_stop=None, threshtype=None, objects=None, checkconschange=False, suffix="", threshfile=None,
-        max_framedist=200, overwrite=None, check_flicker=False, skip_frames=0):
-       
-        if threshfile is not None:
-            try:
-                with open(threshfile, "r") as f:
-                    AT.threshinfo = yaml.load(f, Loader=yaml.FullLoader)
-                    print(f"Loading custom threshfile '{threshfile}'")
-            except FileNotFoundError:
-                raise FileNotFoundError(f"Threshfile '{threshfile}' not found.")
-            except Exception as e:
-                raise RuntimeError(f"Error loading threshfile '{threshfile}': {e}")
-        else:
-            with open(AT.cfiles["threshinfo"], 'r') as f:
-                AT.threshinfo = yaml.load(f, Loader=yaml.FullLoader)
+        max_framedist=200, overwrite=None, check_flicker=False, skip_frames=0, watch=False, watch_interval=60):
 
-        if names is not None:
-            inds = AT.get_inds(names)
-        
-        if inds is not None:
-            if "exclude" in AT.overview.columns:
-                inds = [i for i in inds if AT.overview.loc[i, "exclude"] != 1]
-            trackfiles = [os.path.join(AT.dirs[folder], f"{video}.mp4") 
-                          for video in AT.overview.loc[inds, "video"]]
-        else:
-            inds, trackfiles = AT.get_files(folder, inds, query, cats, existonly=False)
+        if watch:
+            lineprint(f"Watch mode enabled — checking every {watch_interval}s (Ctrl+C to stop)..")
 
-        # Fix Localconfig messing up the class variables
-        cbak = AT.config
-        del AT.config
-        AT.config = Box({s: {k:v for (k,v) in cbak.items(s)} for s in cbak})
+        _stop = False
+        while not _stop:
 
-        existing = [os.path.exists(f) for f in trackfiles]
-        existing_inds = [i for i, e in zip(inds, existing) if e]
-        existing_trackfiles = [f for f, e in zip(trackfiles, existing) if e]
-        missing_count = len(trackfiles) - len(existing_trackfiles)
-        if missing_count > 0:
-            missed = f"Skipped {missing_count} missing video files. "
-        else:
-            missed = ""
-        inds = existing_inds
-        trackfiles = existing_trackfiles
+            # In watch mode reload overview and threshinfo from disk each pass
+            if watch:
+                AT.reload()
 
-        # Now create the Tracker with only existing files
-        T = Tracker(pools, inds, trackfiles, AT.dirs, AT.overview, 
-                    AT.config, AT.threshinfo, frame_start, frame_stop, threshtype,
-                    objects, checkconschange, suffix,
-                    max_framedist=max_framedist, overwrite=overwrite, 
-                    check_flicker=check_flicker, skip_frames=skip_frames)
-        
-        # Filter to only untracked files before starting pool
-        if not overwrite:
-            untracked_inds = []
-            for ind in T.inds:
-                filename = os.path.splitext(os.path.basename(trackfiles[T.inds.index(ind)]))[0]
-                tracked_path = os.path.join(AT.dirs["tracked"], filename + suffix + "_TR.mp4")
-                if not os.path.exists(tracked_path):
-                    untracked_inds.append(ind)
-            T.inds = untracked_inds
-            lineprint(f"Tracking started of {len(T.inds)} files (skipping {len(trackfiles) - len(T.inds)} already tracked)..")
-        else:
-            lineprint(f"Tracking started of {len(T.inds)} files..")
-
-        if pools<2:
-            counter = -1
-            stop = False
-            while len(T.inds)>0 and not stop:
-                counter += 1
-                ind = T.inds[0]
-                trackfile = os.path.join(AT.dirs[folder], AT.overview.loc[ind]["video"] + ".mp4")
+            if threshfile is not None:
                 try:
-                    T.setuptracking(ind, trackfile)
-                except KeyboardInterrupt:
-                    lineprint("\nUser terminated tracking..")
-                    stop = True
+                    with open(threshfile, "r") as f:
+                        AT.threshinfo = yaml.load(f, Loader=yaml.FullLoader)
+                        if not watch:
+                            print(f"Loading custom threshfile '{threshfile}'")
+                except FileNotFoundError:
+                    raise FileNotFoundError(f"Threshfile '{threshfile}' not found.")
                 except Exception as e:
-                    video = AT.overview.loc[ind]["video"]
-                    lineprint(f"Error on row {ind} ({video}): {type(e).__name__}: {e} — skipping")
-                    if ind in T.inds:
-                        T.inds.remove(ind)
-            if not stop:
-                lineprint("Tracking finished..")
-        else:
-            AT.config.vis.show_tracking = False
-            AT.config.vis.waitkey = 1
-            def callback_function(output): T.inds = output
-            if not notebook():
-                pool = multiprocessing.Pool(min(pools, len(trackfiles)))
-                counter = -1
-                last_ind, last_video = None, "unknown"
-                try:
-                    while len(T.inds)>0:
-                        counter += 1
-                        ind = T.inds[0]
-                        T.inds = T.inds[1:]
-                        last_ind = ind
-                        last_video = AT.overview.loc[ind]["video"]
-                        trackfile = os.path.join(AT.dirs[folder], last_video + ".mp4")
-                        tempool = [pool.apply_async(T.setuptracking,
-                                                    (ind,trackfile),
-                                                    callback=callback_function)]
-                        time.sleep(0.2)  #rather than sleep try the tempool.wait() function
-                    [i.get() for i in tempool]
-                    pool.close()
-                except KeyboardInterrupt:
-                    lineprint("\nUser terminated tracking pool..")
-                    pool.terminate()
-                except Exception as e:
-                    lineprint(f"Error on row {last_ind} ({last_video}): {type(e).__name__}: {e}, terminating pool")
-                    pool.terminate()
-                    lineprint("pool is terminated")
-                finally:
-                    pool.join()
-                    print("Tracking completed..")
+                    raise RuntimeError(f"Error loading threshfile '{threshfile}': {e}")
             else:
-                lineprint("Pooled tracking can only be run from the terminal, exiting..")
-        AT.config = cbak
+                with open(AT.cfiles["threshinfo"], 'r') as f:
+                    AT.threshinfo = yaml.load(f, Loader=yaml.FullLoader)
+
+            _inds = inds
+            if names is not None:
+                _inds = AT.get_inds(names)
+
+            if _inds is not None:
+                if "exclude" in AT.overview.columns:
+                    _inds = [i for i in _inds if AT.overview.loc[i, "exclude"] != 1]
+                trackfiles = [os.path.join(AT.dirs[folder], f"{video}.mp4")
+                              for video in AT.overview.loc[_inds, "video"]]
+            else:
+                _inds, trackfiles = AT.get_files(folder, _inds, query, cats, existonly=False)
+
+            # Fix Localconfig messing up the class variables
+            cbak = AT.config
+            del AT.config
+            AT.config = Box({s: {k:v for (k,v) in cbak.items(s)} for s in cbak})
+
+            existing = [os.path.exists(f) for f in trackfiles]
+            existing_inds = [i for i, e in zip(_inds, existing) if e]
+            existing_trackfiles = [f for f, e in zip(trackfiles, existing) if e]
+            missing_count = len(trackfiles) - len(existing_trackfiles)
+            if missing_count > 0:
+                missed = f"Skipped {missing_count} missing video files. "
+            else:
+                missed = ""
+            _inds = existing_inds
+            trackfiles = existing_trackfiles
+
+            # Now create the Tracker with only existing files
+            T = Tracker(pools, _inds, trackfiles, AT.dirs, AT.overview,
+                        AT.config, AT.threshinfo, frame_start, frame_stop, threshtype,
+                        objects, checkconschange, suffix,
+                        max_framedist=max_framedist, overwrite=overwrite,
+                        check_flicker=check_flicker, skip_frames=skip_frames)
+
+            # Filter to only untracked files
+            _eff_overwrite = overwrite if overwrite is not None else AT.config.track.overwrite
+            if not _eff_overwrite:
+                untracked_inds = []
+                for ind in T.inds:
+                    filename = os.path.splitext(os.path.basename(trackfiles[T.inds.index(ind)]))[0]
+                    tracked_path = os.path.join(AT.dirs["tracked"], filename + suffix + ".csv")
+                    if not os.path.exists(tracked_path):
+                        untracked_inds.append(ind)
+                T.inds = untracked_inds
+                lineprint(f"Tracking started of {len(T.inds)} files (skipping {len(trackfiles) - len(T.inds)} already tracked)..")
+            else:
+                lineprint(f"Tracking started of {len(T.inds)} files..")
+
+            if len(T.inds) == 0:
+                AT.config = cbak
+                if not watch:
+                    _stop = True
+                else:
+                    lineprint(f"Watch: nothing to track, sleeping {watch_interval}s..")
+                    try:
+                        time.sleep(watch_interval)
+                    except KeyboardInterrupt:
+                        lineprint("Watch mode stopped.")
+                        _stop = True
+                continue
+
+            if pools < 2:
+                stop = False
+                while len(T.inds) > 0 and not stop:
+                    ind = T.inds[0]
+                    trackfile = os.path.join(AT.dirs[folder], AT.overview.loc[ind]["video"] + ".mp4")
+                    try:
+                        T.setuptracking(ind, trackfile)
+                    except KeyboardInterrupt:
+                        lineprint("\nUser terminated tracking..")
+                        stop = True
+                        _stop = True
+                    except Exception as e:
+                        video = AT.overview.loc[ind]["video"]
+                        lineprint(f"Error on row {ind} ({video}): {type(e).__name__}: {e} — skipping")
+                        if ind in T.inds:
+                            T.inds.remove(ind)
+                if not _stop:
+                    lineprint("Tracking finished..")
+            else:
+                AT.config.vis.show_tracking = False
+                AT.config.vis.waitkey = 1
+                def callback_function(output): T.inds = output
+                if not notebook():
+                    pool = multiprocessing.Pool(min(pools, len(trackfiles)))
+                    last_ind, last_video = None, "unknown"
+                    try:
+                        while len(T.inds) > 0:
+                            ind = T.inds[0]
+                            T.inds = T.inds[1:]
+                            last_ind = ind
+                            last_video = AT.overview.loc[ind]["video"]
+                            trackfile = os.path.join(AT.dirs[folder], last_video + ".mp4")
+                            tempool = [pool.apply_async(T.setuptracking,
+                                                        (ind, trackfile),
+                                                        callback=callback_function)]
+                            time.sleep(0.2)
+                        [i.get() for i in tempool]
+                        pool.close()
+                    except KeyboardInterrupt:
+                        lineprint("\nUser terminated tracking pool..")
+                        pool.terminate()
+                        _stop = True
+                    except Exception as e:
+                        lineprint(f"Error on row {last_ind} ({last_video}): {type(e).__name__}: {e}, terminating pool")
+                        pool.terminate()
+                        lineprint("pool is terminated")
+                    finally:
+                        pool.join()
+                        if not _stop:
+                            lineprint("Tracking completed..")
+                else:
+                    lineprint("Pooled tracking can only be run from the terminal, exiting..")
+
+            AT.config = cbak
+
+            if not watch or _stop:
+                _stop = True
+            else:
+                lineprint(f"Watch: pass complete, sleeping {watch_interval}s..")
+                try:
+                    time.sleep(watch_interval)
+                except KeyboardInterrupt:
+                    lineprint("Watch mode stopped.")
+                    _stop = True
 
     def _pworker(AT, trackedfile, config_dict):
         """Each worker creates its own Processor instance and processes the file."""
