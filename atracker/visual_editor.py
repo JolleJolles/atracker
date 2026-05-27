@@ -1953,7 +1953,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
                 dx = w.end_point_orig.x() - w.start_point_orig.x()
                 dy = w.end_point_orig.y() - w.start_point_orig.y()
                 if w.drawing_mode == "rectangle":
-                    metric = f"Rect width : {abs(dx)}, height : {abs(dy)}"
+                    metric = f"Rect width : {abs(dx)}, height : {abs(dy)}, area : {abs(dx) * abs(dy)}"
                 elif w.drawing_mode == "line":
                     length = int(math.hypot(dx, dy))
                     metric = f"Line length : {length}"

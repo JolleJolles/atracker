@@ -481,12 +481,30 @@ def draw_frame(img, framedat, img_bg = None, img_mask = None, img_thresh = None,
 
         # 20) Draw framenr
         #--------------------
-        if drawframenr:
+        if drawframenr and not drawinfobox:
             draw_text(img_draw, str(list(framedat["frame"])[0]), (0,0), parframesize*resizeimg, margin=5, bgcol="white")
 
         # 21) Draw infobox
         #--------------------
-        # TO ADD
+        if drawinfobox:
+            _info_lines = [f"frame {list(framedat['frame'])[0]}"]
+            for i, id in enumerate(framedat.get("ID", [])):
+                line = f"ID{id}"
+                if "area" in framedat and i < len(framedat["area"]) and framedat["area"][i] == framedat["area"][i]:
+                    line += f" area={int(framedat['area'][i])}"
+                if "aspect_ratio" in framedat and i < len(framedat["aspect_ratio"]) and framedat["aspect_ratio"][i] == framedat["aspect_ratio"][i]:
+                    line += f" ar={framedat['aspect_ratio'][i]:.2f}"
+                _info_lines.append(line)
+            _font = cv2.FONT_HERSHEY_SIMPLEX
+            _fsize, _pad = 0.38, 4
+            _dims = [cv2.getTextSize(l, _font, _fsize, 1)[0] for l in _info_lines]
+            _box_w = max(w for w, h in _dims) + 2 * _pad
+            _box_h = sum(h + _pad for w, h in _dims) + _pad
+            cv2.rectangle(img_draw, (0, 0), (_box_w, _box_h), (255, 255, 255), -1)
+            y = _pad
+            for line, (_, th) in zip(_info_lines, _dims):
+                cv2.putText(img_draw, line, (_pad, y + th), _font, _fsize, (0, 0, 0), 1, cv2.LINE_AA)
+                y += th + _pad
 
         # Return to normal size when resizing for smoothing
         if resizetosmooth and resizeimg != 1:
