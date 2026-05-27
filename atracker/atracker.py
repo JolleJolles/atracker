@@ -1074,7 +1074,7 @@ class ATracker:
             trajs_below=d, create_vid=e, create_dat=f)
 
     def track(AT, inds=None, names=None, query=None, cats=None, pools=1, folder="todo", frame_start=None,
-        frame_stop=None, custhreshtypes=None, cusobjects=None, checkconschange=False, suffix="", threshfile=None,
+        frame_stop=None, threshtype=None, objects=None, checkconschange=False, suffix="", threshfile=None,
         max_framedist=200, overwrite=None, check_flicker=False, skip_frames=0):
        
         if threshfile is not None:
@@ -1119,8 +1119,8 @@ class ATracker:
 
         # Now create the Tracker with only existing files
         T = Tracker(pools, inds, trackfiles, AT.dirs, AT.overview, 
-                    AT.config, AT.threshinfo, frame_start, frame_stop, custhreshtypes,
-                    cusobjects, checkconschange, suffix,
+                    AT.config, AT.threshinfo, frame_start, frame_stop, threshtype,
+                    objects, checkconschange, suffix,
                     max_framedist=max_framedist, overwrite=overwrite, 
                     check_flicker=check_flicker, skip_frames=skip_frames)
         

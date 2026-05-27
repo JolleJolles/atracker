@@ -60,7 +60,7 @@ class AsyncVideoWriter:
 class Tracker:
 
     def __init__(self, pools, inds, trackfiles, dirs, overview, config,
-                 threshinfo, start, stop, custhreshtypes, cusobjects,
+                 threshinfo, start, stop, threshtype, objects,
                  checkconschange, suffix, max_framedist=200, overwrite=None, check_flicker=False,
                  skip_frames=0):
 
@@ -80,8 +80,8 @@ class Tracker:
         self.mergedmindist = 20 if "mergedmindist" not in self.config.track else self.config.track.mergedmindist
         self.contour_mode = self.config.track.contour_mode if "contour_mode" in self.config.track else "static"
         self.tracked = 0
-        self.custhreshtypes = custhreshtypes
-        self.cusobjects = cusobjects
+        self.threshtype_override = threshtype
+        self.objects_override = objects
         self.checkconschange = checkconschange
         self.max_framedist = max_framedist
         self.overwrite = overwrite if overwrite is not None else self.config.track.overwrite
@@ -135,8 +135,8 @@ class Tracker:
         # Check if all threshtypes are in threshinfo
         ## check_threshtypes turns empty cells (which are nan) into "bw" threshtype
         nopass = False
-        if self.custhreshtypes is not None:
-            self.thresh_types = check_threshtypes(self.custhreshtypes)
+        if self.threshtype_override is not None:
+            self.thresh_types = check_threshtypes(self.threshtype_override)
         else:
             self.thresh_types = check_threshtypes(self.thresh_types)
         for t in self.thresh_types:
@@ -220,8 +220,8 @@ class Tracker:
         self.traj_length = int(self.fps * self.config.vis.traj_length)
         self.orcheckwindow = self.fps * self.config.orient.delwindow
 
-        if self.cusobjects is not None:
-            self.objects = self.cusobjects
+        if self.objects_override is not None:
+            self.objects = self.objects_override
         else:
             self.objects = self.overview.loc[self.overview.video == self.filebasezero, "objects"].iloc[0] if "objects" in self.overview else 1
 
