@@ -1,17 +1,40 @@
 # Changelog
 
 ## TODO
+- Make atracker also work standalone without folder initiation etc, such that say you have a single video, you can run some function with the video, the main tracking settings, such as background substraction, bw treshtypes or nr of objects, if mask should be drawn or not, and then show some random frames to set the treshold, using default blur and erode values that should work for most videos.
 - If working in fullscreen with set_interactive then stay in fullscreen and no need to press s key twice and then go fullscreen manually again.
-- Integrate more advanced threshold parameters already implemented in non-simple tracking.
-- For Tracking, check for all potential files if they are already tracked or not and subset trackfile list for that so they dont each go into the loop and then much more slowly it shows they are already tracked..
-- Fix query for creating masks (are combined now..)
 - integrate the maskzone in processing similar as the mask
 - Way to store key parameters used in set_interactive so next video it uses the same.
 
 ## Unreleased
+- Video frames are now written in a separate thread via AsyncVideoWriter, preventing video writing from blocking the tracking loop.
+- Fixed race condition where shared Tracker instance attributes were overwritten by concurrent workers, causing missing or misplaced output files and CSVs.
+- Added skip_frames parameter to track(). Set to 0 (default) to process every frame, or higher to skip frames and increase tracking speed (e.g. skip_frames=1 processes every 2nd frame).
+- Fixed infinite loop where already-tracked files were not removed from the job queue before pooled tracking started.
+- Reworked `filter_tracking_jumps` mask handling: jumps between two positions both near a masked region are now accepted unconditionally (fish traversed under mask), replacing the previous straight-line path-crossing check which failed when both endpoints were on the same side of the mask.
+- Fixed `filter_tracking_jumps` to use filtered (post-jump-check) positions when updating `movedat`, preventing noise contours rejected by the jump filter from overwriting the ID's reference position and causing persistent ID mis-assignment in subsequent frames.
+- Added `contour_mode` setting to `set_config()`. Set to `"dynamic"` to enable a per-ID rolling area consistency filter that rejects detections deviating strongly (below 25% or above 400%) from the ID's rolling median area, suppressing noise contours that pass the global thresholds but are inconsistent with the tracked object's history.
+- Tracking completion now prints per-ID median area and aspect ratio for accepted detections.
+- Replaced O(N²) trajectory drawing with per-ID deques: drawing now reads from a fixed-length deque instead of scanning all accumulated fulldat, eliminating a bottleneck that grew throughout long videos.
+- Removed `sys.stdout.flush()` from the per-frame threshold loop.
+- Cached all drawing color values (`eval()`, `namedcols()`) before the tracking loop so they are computed once per video instead of once per frame.
+- Eliminated redundant `cv2.contourArea` call per contour: areas are now computed once during sorting in `process()` and passed directly to `processcon()`.
+- Fixed mask shape comparison in `preprocess_bw_mode` to compare spatial dimensions only, avoiding a no-op `cv2.resize` call every frame.
+- Updated `processcon` function to get the aspect ratio of the rotated rectangle and always long side divided by short side, and set better default parameters for tracking fish
+- Fixed checking of firstframe and lastframe columns of the overview to deal with empty strings
+- When drawing rectangle in roi, mask, or measure mode in `set_interactive` mode, it now also shows the surface area.
 - Added `__citation__` to `__init__.py`.
 - Updated `README.md` with zenodo doi and moved citation to the top.
 - Cleaned `CHANGELOG.md` structure and standardize dates
+- Split monolithic `utils.py` into eight focused modules: `geometry.py` (spatial math), `contour_utils.py` (contour operations), `angles.py` (angle/orientation math), `trajectory.py` (movement analysis), `tracking_filters.py` (real-time filters), `media.py` (video/image I/O), `qt_utils.py` (Qt/screen utilities), and `data_utils.py` (data handling). `utils.py` is now a thin backward-compatibility shim so all existing code continues to work unchanged.
+- Replaced `from .utils import *` in `tracker.py` and `process_image.py` with explicit imports from the new specialized modules for cleaner dependency tracking.
+- Deleted obsolete `tracker_man.py` (manual tracking superseded by `visual_editor.py` / `manual_tracker()` wrapper).
+- Renamed `processor.py` to `post_processor.py` to clearly distinguish post-processing of tracked data from image processing; `__init__.py` updated accordingly.
+- Rewrote `__init__.py` with explicit named exports (`ATracker`, `manual_tracker`, `batch_measure`, `Processor`, `__citation__`) instead of star imports.
+- Fixed `warp_barcode_patch` being defined inside the `ProcessImage` class body instead of as a module-level function, which would have caused a `NameError` at runtime.
+- Fixed "colname does not exist" message printed during tracking: `namedcols()` was called for `"bw"` threshold types which are not color names; these are now correctly skipped when building the per-threshtype color lookup.
+- Fixed OpenCV `rectangle` crash (`Can't parse 'pt2'. Sequence item with index 1 has a wrong type`) in the tracking overlay caused by `pythutils.draw_text` returning float pixel coordinates; replaced all per-frame overlay label drawing with direct `cv2.getTextSize` / `cv2.rectangle` / `cv2.putText` calls using explicit integer arithmetic.
+- Added `drawinfobox` option to the tracking overlay and `visualiser`: when enabled, draws a compact white infobox in the top-left corner showing frame number and per-ID area and aspect ratio, replacing the previous fragmented per-line labels. The standalone frame-number label is suppressed automatically when the infobox is active.
 
 ## v1.0.0 — 2026-03-05 
 First public release of ATracker.
