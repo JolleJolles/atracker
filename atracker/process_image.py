@@ -2,20 +2,36 @@
 
 import cv2
 import numpy as np
+from scipy.spatial import KDTree
 from scipy.spatial.distance import cdist
 from shapely.geometry import LineString, Polygon
 
 from pythutils.mediautils import crop
 from pythutils.mathutils import points_to_angle, ptsToDist
+from pythutils.datutils import contour_to_tuple
 
-from .utils import *
+from .geometry import adjpt, get_coord, geom_tocoord
+from .contour_utils import concom, con_lathom
+from .tracking_filters import dic_exclnan
+
+
+def warp_barcode_patch(gray_img, contour, size=15):
+    pts = contour[:, 0, :].astype(np.float32)
+    if len(pts) != 4:
+        return None
+    dst = np.array([[0, 0], [size - 1, 0], [size - 1, size - 1], [0, size - 1]], dtype=np.float32)
+    M = cv2.getPerspectiveTransform(pts, dst)
+    patch = cv2.warpPerspective(gray_img, M, (size, size))
+    return patch
+
 
 class ProcessImage:
 
     def __init__(self, img, img_bg=None, img_mask=None, threshtype="bw", blur=9,
         erode=1, blur2=1, threshold=50, min_area=100, max_area=10000, croppad=20,
-        colmin=None, colmax=None, simple=True, 
-        tags=None, tag_ids=None, barcode_size=15, barcode_tol=1):
+        colmin=None, colmax=None, simple=True,
+        tags=None, tag_ids=None, barcode_size=15, barcode_tol=1,
+        flicker_threshold=None, min_aspect_ratio=1.4, max_aspect_ratio=10):
 
         self.img = np.asarray(img)
         self.img_bg = np.asarray(img_bg)
@@ -32,6 +48,10 @@ class ProcessImage:
         self.colmin = colmin
         self.colmax = colmax
         self.simple = simple
+        self.flicker_threshold = flicker_threshold
+        self.flicker = False
+        self.min_aspect_ratio = min_aspect_ratio
+        self.max_aspect_ratio = max_aspect_ratio
 
         # Barcoding
         self.tags = tags  # array of barcode templates
@@ -43,12 +63,20 @@ class ProcessImage:
     def preprocess_bw_mode(self):
 
         """Shared thresholding for bw and barcode modes."""
+          
+        self.img = cv2.subtract(self.img_bg, self.img)  # only darker-than-background survives
         
-        self.img = cv2.absdiff(self.img, self.img_bg)
+        if self.flicker_threshold is not None:
+            gray = cv2.cvtColor(self.img, cv2.COLOR_RGB2GRAY)
+            if np.mean(gray) > self.flicker_threshold:
+                self.flicker = True
+                self.img_thresh = np.zeros(gray.shape, np.uint8)
+                return
+        
         if self.img_mask is not None:
-            if self.img.shape != self.img_mask.shape:
-                self.img_mask = cv2.resize(self.img_mask, (self.img.shape[1],self.img.shape[0]), interpolation = cv2.INTER_AREA)
-            self.img = cv2.bitwise_and(self.img, self.img, mask = self.img_mask)
+            if self.img_mask.shape[:2] != self.img.shape[:2]:
+                self.img_mask = cv2.resize(self.img_mask, (self.img.shape[1], self.img.shape[0]), interpolation=cv2.INTER_AREA)
+            self.img = cv2.bitwise_and(self.img, self.img, mask=self.img_mask)
         self.img = cv2.cvtColor(self.img, cv2.COLOR_RGB2GRAY)
         self.img_thresh = cv2.GaussianBlur(self.img, (self.blur, self.blur), 3)
         self.img_thresh = cv2.erode(self.img_thresh, self.erode, 3)
@@ -81,20 +109,22 @@ class ProcessImage:
             self.img_thresh = cv2.dilate(self.img_thresh, None, iterations=2)
 
         # Extract contours
-        allcons,_ = cv2.findContours(self.img_thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)[-2:]
+        allcons,_ = cv2.findContours(self.img_thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)[-2:]
 
-        # Sort contours
-        #self.allcons.sort(key=lambda x:get_contour_precedence(x, self.img.shape[1]))
-        self.allcons = sorted(allcons, key=lambda x: cv2.contourArea(x), reverse=True)
+        # Compute areas once, sort contours by area descending
+        con_areas = [cv2.contourArea(c) for c in allcons]
+        order = sorted(range(len(allcons)), key=lambda i: con_areas[i], reverse=True)
+        self.allcons = [allcons[i] for i in order]
+        sorted_areas = [con_areas[i] for i in order]
 
         # Create conlist
-        varlist = ("id","objbox","area","length","inertia","convexity","curvature","com",
+        varlist = ("id","objbox","area","aspect_ratio","length","inertia","convexity","curvature","com",
         "head","tail","angle","lathom","fed","skeleton","contour")
         self.conlist = {var:[np.nan]*len(self.allcons) for var in varlist}
 
         # Go through the contours and extract contour information
-        for ind,contour in enumerate(self.allcons):
-            self.processcon(ind, contour)
+        for ind, (contour, area) in enumerate(zip(self.allcons, sorted_areas)):
+            self.processcon(ind, contour, precomputed_area=area)
 
         # Subset to only contours within dimensions
         inds,_ = dic_exclnan(self.conlist,"com")
@@ -177,26 +207,21 @@ class ProcessImage:
 
         return self.img_thresh, self.allcons, self.conlist
 
-    def warp_barcode_patch(gray_img, contour, size=15):
-        pts = contour[:, 0, :].astype(np.float32)
-        if len(pts) != 4:
-            return None
-        dst = np.array([[0, 0], [size-1, 0], [size-1, size-1], [0, size-1]], dtype=np.float32)
-        M = cv2.getPerspectiveTransform(pts, dst)
-        patch = cv2.warpPerspective(gray_img, M, (size, size))
-        return patch
     
-    def processcon(self, ind, contour, min_aspect_ratio = 0.1, max_aspect_ratio = 10):
+    def processcon(self, ind, contour, precomputed_area=None):
 
-        # Get contour area
+        # Get contour area (reuse precomputed value from sort if available)
         self.conlist["contour"][ind] = contour
-        area = int(cv2.contourArea(contour))
+        area = int(precomputed_area) if precomputed_area is not None else int(cv2.contourArea(contour))
         self.conlist["area"][ind] = area
-        _, _, w, h = cv2.boundingRect(contour)
-        aspect_ratio = float(w) / h if h > 0 else 0
 
-        # Continue only with contours of the right size
-        if self.min_area < area < self.max_area and min_aspect_ratio < aspect_ratio < max_aspect_ratio:
+        rotrecb = cv2.minAreaRect(contour)
+        short, long = sorted(rotrecb[1])
+        aspect_ratio = long / short if short > 0 else 0
+        self.conlist["aspect_ratio"][ind] = round(aspect_ratio,2)
+
+        # Continue only with contours of the right size and shape
+        if self.min_area < area < self.max_area and self.min_aspect_ratio < aspect_ratio < self.max_aspect_ratio:
             # Get object centroid
             self.conlist["com"][ind] = concom(contour)
             if not self.simple:
@@ -210,7 +235,6 @@ class ProcessImage:
 
                 # Calculate minimum rotatated bounding rectangle (used to get box centroid
                 # and finding head and tail
-                rotrecb = cv2.minAreaRect(contour)
                 rotrec = cv2.boxPoints(rotrecb)
                 rotrec = np.intp(rotrec)
 

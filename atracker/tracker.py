@@ -4,7 +4,9 @@ import os
 import cv2
 import sys
 import time
+import queue
 import shutil
+import threading
 import numpy as np
 import pandas as pd
 import multiprocessing
@@ -16,17 +18,51 @@ from pythutils.sysutils import lineprint, Suppressor, removeline
 from pythutils.fileutils import listfiles
 from pythutils.mediautils import check_media, crop
 from pythutils.drawutils import namedcols, draw_text, draw_traj, uniqcols
+from pythutils.mathutils import points_to_angle
 
-from .utils import *
+from ast import literal_eval
+
+from .geometry import get_coord, adjpt, geom_tocoord, fix_roi
+from .contour_utils import concom, concoords, consplit, con_lathom, draw_coordlist
+from .angles import hvflipangle
+from .trajectory import getavgvel
+from .tracking_filters import (filter_tracking_jumps, filter_contour_shape,
+                                update_shape_history, check_threshtypes,
+                                dic_exclnan, estimate_flicker_baseline)
+from .media import videowriter, make_even, framechecks
+from .data_utils import subdic, eval_func_tuple
 from .process_image import ProcessImage
 
 class KeyboardInterruptError(Exception): pass
+
+class AsyncVideoWriter:
+    def __init__(self, vidout):
+        self.vidout = vidout
+        self.q = queue.Queue(maxsize=64)
+        self.thread = threading.Thread(target=self._writer, daemon=True)
+        self.thread.start()
+
+    def _writer(self):
+        while True:
+            frame = self.q.get()
+            if frame is None:  # poison pill to stop
+                break
+            self.vidout.append_data(frame)
+
+    def write(self, frame):
+        self.q.put(frame)
+
+    def close(self):
+        self.q.put(None)  # signal stop
+        self.thread.join()  # wait for all frames to be written
+        self.vidout.close()
 
 class Tracker:
 
     def __init__(self, pools, inds, trackfiles, dirs, overview, config,
                  threshinfo, start, stop, custhreshtypes, cusobjects,
-                 checkconschange, suffix, max_framedist=200, overwrite=None):
+                 checkconschange, suffix, max_framedist=200, overwrite=None, check_flicker=False,
+                 skip_frames=0):
 
         self.pools = pools
         self.inds = inds
@@ -42,12 +78,15 @@ class Tracker:
         self.orientfrombw = self.config.track.orientfrombw
         self.linkdisthreshold = 100 if "linkdisthreshold" not in self.config.track else self.config.track.linkdisthreshold
         self.mergedmindist = 20 if "mergedmindist" not in self.config.track else self.config.track.mergedmindist
+        self.contour_mode = self.config.track.contour_mode if "contour_mode" in self.config.track else "static"
         self.tracked = 0
         self.custhreshtypes = custhreshtypes
         self.cusobjects = cusobjects
         self.checkconschange = checkconschange
         self.max_framedist = max_framedist
         self.overwrite = overwrite if overwrite is not None else self.config.track.overwrite
+        self.check_flicker = check_flicker
+        self.skip_frames = skip_frames
 
     def setuptracking(self, ind, trackfile):
 
@@ -81,6 +120,9 @@ class Tracker:
         for name, values in fileinfo.items():
             values = int(values) if type(values) == np.int64 else values
             self.__dict__.update([(name, values)])
+        if not isinstance(self.roi, str) or not self.roi.strip():
+            lineprint(self.pr_comm + "roi is missing in overview, skipping..")
+            return self.inds
         self.pt1, self.pt2 = literal_eval(self.roi)
         self.vidw  = self.pt2[0] - self.pt1[0]
         self.vidh =  self.pt2[1] - self.pt1[1]
@@ -166,16 +208,6 @@ class Tracker:
             self.img_mask = cv2.erode(img_mask, kernel)
             self.img_mask = cv2.dilate(self.img_mask, kernel)
             self.img_mask = cv2.resize(self.img_mask, (self.vidw, self.vidh), interpolation=cv2.INTER_AREA)
-
-        # Set up video writer
-        if self.config.track.create_vid:
-            self.vidout = videowriter(self.trackedfile, self.vidw, self.vidh, self.fps)
-            try:
-                if self.vidout is None or (hasattr(self.vidout, 'isOpened') and not self.vidout.isOpened()):
-                    raise ValueError("Video writer failed")
-            except Exception:
-                self.config.track.create_vid = False
-                lineprint(self.pr_comm + "Warning: video writer could not be created. Video output disabled.")
 
         # Set up video window (optional GUI)
         if self.config.vis.show_tracking and self.pools < 2:
@@ -397,6 +429,23 @@ class Tracker:
 
 
     def tracksingle(self):
+        # Capture file paths locally so pooled workers don't overwrite each other
+        trackedfile = self.trackedfile
+        trackeddata = self.trackeddata
+        tempfile = self.tempfile
+        filename = self.filename
+        create_vid = self.config.track.create_vid
+        create_dat = self.config.track.create_dat
+
+        # Set up video writer
+        if create_vid:
+            self.vidout = AsyncVideoWriter(videowriter(trackedfile, self.vidw, self.vidh, self.fps))
+            try:
+                    if self.vidout is None or (hasattr(self.vidout, 'isOpened') and not self.vidout.isOpened()):
+                        raise ValueError("Video writer failed")
+            except Exception:
+                create_vid = False
+                lineprint(self.pr_comm + "Warning: video writer could not be created. Video output disabled.")
 
         newline = False if self.pools<2 else True
         lineprint(self.pr_comm+"tracking started..", newline=newline)
@@ -406,8 +455,28 @@ class Tracker:
         self.fulldat = {"frame":[]}
         self.movedat = {}
         self.last_valid = {}
+        self.shape_history = {}
+        traj_history = {}   # {id: deque(maxlen=traj_length)} — only valid (cx, cy)
+        tracked_ids = set()
+
+        # Pre-compute drawing colors once to avoid eval()/namedcols() in hot loop
+        if create_vid or self.config.vis.show_tracking:
+            _col_red = namedcols("red")
+            _col_lightgreen = namedcols("lightgreen")
+            _col_orange = namedcols("orange")
+            _col_contour = eval(self.config.vis.contour_col)
+            _col_centre = eval(self.config.vis.centre_col)
+            _col_orient = eval(self.config.vis.orient_col)
+            _col_traj = eval(self.config.vis.traj_col)
+            _thresh_cols = {t: namedcols(t) for t in self.thresh_types if not t.startswith("bw")}
+            _cols = uniqcols(max(1, self.objects))
 
         try:
+            if self.check_flicker:
+                self.flicker_threshold = estimate_flicker_baseline(
+                    self.cap, self.img_bg, self.pt1, self.pt2)
+                lineprint(f"Flicker threshold set at: {self.flicker_threshold:.2f}")
+            
             while self.cap.isOpened():
                 frameOK, self.img = self.cap.read()
                 stop, skip, self.frame_nr = framechecks(self.cap, frameOK, None, self.frame_stop,
@@ -416,21 +485,26 @@ class Tracker:
                     break
                 if skip:
                     continue
-
+                if self.skip_frames > 0 and self.frame_nr % (self.skip_frames + 1) != 0:
+                    continue
+                
                 # Create images to work with
                 self.img = crop(self.img, self.pt1, self.pt2)
                 self.img_draw = self.img.copy()
 
                 # Get standard conlists
+                _frame_info = []
                 for t,self.thresh_type in enumerate(self.thresh_types):
-                    sys.stdout.flush()
                     ti = self.threshinfo[self.thresh_type]
                     if "blur2" not in ti:
                         ti["blur2"] = 1
+                    min_ar = ti.get("min_aspect_ratio", 1.4)
+                    max_ar = ti.get("max_aspect_ratio", 10)
                     if self.thresh_type.startswith("bw"):
                         PI = ProcessImage(self.img, self.img_bg, self.img_mask, self.thresh_type,
                             ti["blur"], ti["erode"], ti["blur2"], ti["threshold"], ti["min_area"], ti["max_area"],
-                            simple=self.simple)
+                            simple=self.simple, flicker_threshold=self.flicker_threshold if self.check_flicker else None,
+                            min_aspect_ratio=min_ar, max_aspect_ratio=max_ar)
                     else:
                         if "hue_lo" in ti:
                             colmin = (ti["hue_lo"], ti["sat_lo"], ti["val_lo"])
@@ -441,8 +515,11 @@ class Tracker:
                         PI = ProcessImage(self.img, self.img_bg, self.img_mask, self.thresh_type,
                             ti["blur"], min_area=ti["min_area"], max_area=ti["max_area"],
                             colmin=colmin, colmax=colmax,
-                            simple=True)
+                            simple=True, flicker_threshold=self.flicker_threshold if self.check_flicker else None,
+                            min_aspect_ratio=min_ar, max_aspect_ratio=max_ar)
                     self.img_thresh, self.allcons, self.conlist = PI.process()
+                    if PI.flicker:
+                        continue
 
                     # Check for merged contours and link IDs over time
                     self.conlist["consmerged"] = [0]*len(self.conlist["com"])
@@ -463,12 +540,44 @@ class Tracker:
                     self.fulldat["frame"].extend([self.frame_nr]*len(ids))
                     self.fulldat.setdefault("id",[]).extend(ids)
                     self.fulldat.setdefault("area",[]).extend([self.conlist["area"][i] for i in inds])
+                    self.fulldat.setdefault("aspect_ratio",[]).extend([self.conlist["aspect_ratio"][i] for i in inds])
                     self.fulldat.setdefault("consmerged",[]).extend([self.conlist["consmerged"][i] for i in inds])
 
                     # --- Live jump filtering: remove impossible jumps per ID ---
                     coms = [self.conlist["com"][i] for i in inds]
                     filtered_coms, self.last_valid = filter_tracking_jumps(
-                        ids, coms, self.frame_nr, self.last_valid, max_framedist=300, max_gap=10, pr_comm=self.pr_comm)
+                        ids, coms, self.frame_nr, self.last_valid, max_framedist=self.max_framedist,
+                        pr_comm=self.pr_comm, mask=self.img_mask)
+
+                    # --- Dynamic shape filter: reject contours that deviate from per-ID rolling area ---
+                    areas = [self.conlist["area"][i] for i in inds]
+                    if self.contour_mode == "dynamic":
+                        _area_tol = self.config.track.shape_area_tol if "shape_area_tol" in self.config.track else 0.25
+                        shape_accept = filter_contour_shape(
+                            ids, areas, self.frame_nr, self.shape_history, area_tol=_area_tol, pr_comm=self.pr_comm)
+                        for i, ok in enumerate(shape_accept):
+                            if not ok:
+                                filtered_coms[i] = (np.nan, np.nan)
+                    _history_len = self.config.track.shape_history_len if "shape_history_len" in self.config.track else 500
+                    update_shape_history(ids, areas, filtered_coms, self.shape_history, history_len=_history_len)
+
+                    # Collect overlay info for this thresh type
+                    if create_vid or self.config.vis.show_tracking:
+                        aspects = [self.conlist["aspect_ratio"][i] for i in inds]
+                        # Contours that failed processcon (valid area but no COM assigned)
+                        excl = [(self.conlist["area"][j], self.conlist["aspect_ratio"][j])
+                                for j in range(len(self.conlist["com"]))
+                                if not isinstance(self.conlist["com"][j], tuple)
+                                and self.conlist["area"][j] > 0]
+                        excl.sort(reverse=True)
+                        _frame_info.append(f"cons:{len(self.allcons)} id:{len(inds)}")
+                        for i, id in enumerate(ids):
+                            tag = "" if np.isfinite(filtered_coms[i][0]) else " [-]"
+                            _frame_info.append(f"ID{id}: area={areas[i]:.0f} ar={aspects[i]:.2f}{tag}")
+                        if excl:
+                            parts = [f"{a:.0f}/{ar:.1f}" for a, ar in excl[:3]]
+                            _frame_info.append(f"excl: {', '.join(parts)}")
+
                     self.fulldat.setdefault("cx", []).extend([c[0] for c in filtered_coms])
                     self.fulldat.setdefault("cy", []).extend([c[1] for c in filtered_coms])
 
@@ -491,45 +600,46 @@ class Tracker:
                     for i,id in enumerate(ids):
                         self.movedat.setdefault(id, {})
                         self.movedat[id].setdefault("frame", deque(maxlen=10)).appendleft(self.frame_nr)
-                        com = self.conlist["com"][inds[next(i for i,j in enumerate(ids) if j==id)]] if id in ids else (np.nan,np.nan)
+                        com = filtered_coms[i]  # NaN if jump was rejected, so linkIDs falls back to last real position
                         self.movedat[id].setdefault("com", deque(maxlen=10)).appendleft(com)
                         self.movedat[id].setdefault("vel", deque(maxlen=10)).appendleft(getavgvel(self.movedat[id]["com"]))
                         head = points_to_angle(self.movedat[id]["com"][-1],self.movedat[id]["com"][0],flip=True)
                         self.movedat[id].setdefault("head", deque(maxlen=10)).appendleft(head)
                         #self.movedat[id]["contour"] = self.conlist["contour"][inds[next(i for i,id in enumerate(ids))]] if id in ids else []
 
+                    # Update per-ID trajectory deques (O(1) per fish, avoids O(N) fulldat scans in drawing)
+                    for i, id in enumerate(ids):
+                        tracked_ids.add(id)
+                        cx, cy = filtered_coms[i]
+                        if np.isfinite(cx):
+                            if id not in traj_history:
+                                traj_history[id] = deque(maxlen=self.traj_length)
+                            traj_history[id].appendleft((cx, cy))
+
                     # Thresh_type drawing
                     #---------------------------------
                     if self.config.track.create_vid or self.config.vis.show_tracking:
 
-                        # Draw trajectories
-                        tframes = list(range(self.frame_nr-self.traj_length+1,self.frame_nr+1))
-                        cols = uniqcols(len(np.unique(self.fulldat["id"])))
-                        for i,id in enumerate(np.unique(self.fulldat["id"]) if self.thresh_type.startswith("bw") else [self.thresh_type]):
-                            idinds = [i for i,j in enumerate(self.fulldat["id"]) if j == id]
-                            trajdat = [
-                                (self.fulldat["cx"][k], self.fulldat["cy"][k])
-                                for k in idinds if self.fulldat["frame"][k] in tframes
-                            ]
-                            # Filter to only consecutive pairs that are both valid
-                            trajdat_valid = [pt for pt in trajdat if (
-                                pt is not None and
-                                isinstance(pt, (tuple, list)) and
-                                all([np.isfinite(x) for x in pt])
-                            )]
-                            trajcol = namedcols(self.thresh_type) if not self.thresh_type.startswith("bw") else cols[i] if self.config.vis.idcol else eval(self.config.vis.traj_col)
+                        # Draw trajectories from per-ID deques (O(1) per fish)
+                        draw_ids = sorted(tracked_ids) if self.thresh_type.startswith("bw") else [self.thresh_type]
+                        for i, id in enumerate(draw_ids):
+                            trajdat_valid = list(traj_history.get(id, []))
                             if len(trajdat_valid) >= 2:
+                                if self.thresh_type.startswith("bw"):
+                                    trajcol = _cols[(id - 1) % len(_cols)] if self.config.vis.idcol else _col_traj
+                                else:
+                                    trajcol = _thresh_cols.get(self.thresh_type, _col_traj)
                                 draw_traj(self.img_draw, trajdat_valid, trajcol,
-                                      self.config.vis.traj_minthick,
-                                      self.config.vis.traj_maxthick,
-                                      self.config.vis.traj_opacity)
+                                          self.config.vis.traj_minthick,
+                                          self.config.vis.traj_maxthick,
+                                          self.config.vis.traj_opacity)
 
                         # hide trajectories behind contours
                         if self.config.vis.trajs_below:
                             self.img_draw[self.img_thresh == 255] = self.img[self.img_thresh == 255]
 
                         # Draw all contours
-                        cv2.drawContours(self.img_draw, self.allcons, -1, namedcols("red"), 1)
+                        cv2.drawContours(self.img_draw, self.allcons, -1, _col_red, 1)
 
                         # Subset conlist to ID'ed contours
                         cl = self.conlist
@@ -537,23 +647,21 @@ class Tracker:
                             cl[key] = [cl[key][i] for i in inds]
 
                         # Draw contours and centroids within size range
-                        col = 128 if not self.thresh_type.startswith("bw") else eval(self.config.vis.contour_col) if not cl["consmerged"] else 128
+                        col = 128 if not self.thresh_type.startswith("bw") else _col_contour if not cl["consmerged"] else 128
                         cv2.drawContours(self.img_draw, cl["contour"], -1, col, 1)
 
                         # Draw more complex information
                         for i,j in enumerate(cl["id"]):
-                            #cv2.polylines(self.img_draw, np.array([cl["skeleton"][i]]), False, namedcols("orange"), 1)
                             if cl["skeleton"][i]==cl["skeleton"][i]:
-                                self.img_draw = draw_coordlist(self.img_draw, cl["skeleton"][i], namedcols("orange"))
+                                self.img_draw = draw_coordlist(self.img_draw, cl["skeleton"][i], _col_orange)
                             if cl["tail"][i]==cl["tail"][i]:
-                                cv2.circle(self.img_draw, cl["tail"][i], 0, namedcols("red"), 6)
-                            #cv2.circle(self.img_draw, cl["fed"][i], 0, namedcols("yellow"), 6)
+                                cv2.circle(self.img_draw, cl["tail"][i], 0, _col_red, 6)
                             if cl["head"][i]==cl["head"][i]:
                                 arrowtip = get_coord(cl["head"][i][0], cl["head"][i][1], cl["angle"][i], 13, True)
-                                cv2.arrowedLine(self.img_draw, cl["head"][i], arrowtip, eval(self.config.vis.orient_col), 1, tipLength = 0.4)
-                                cv2.circle(self.img_draw, cl["head"][i], 0, namedcols("lightgreen"), 6)
+                                cv2.arrowedLine(self.img_draw, cl["head"][i], arrowtip, _col_orient, 1, tipLength=0.4)
+                                cv2.circle(self.img_draw, cl["head"][i], 0, _col_lightgreen, 6)
                             if cl["com"][i]==cl["com"][i]:
-                                idcol = namedcols(self.thresh_type) if not self.thresh_type.startswith("bw") else eval(self.config.vis.centre_col)
+                                idcol = _thresh_cols.get(self.thresh_type, _col_centre) if not self.thresh_type.startswith("bw") else _col_centre
                                 cv2.circle(self.img_draw, cl["com"][i], 0, idcol, self.config.vis.centre_lwidth)
                                 if self.thresh_type.startswith("bw"):
                                     draw_text(self.img_draw, str(j), (cl["com"][i][0]-4, cl["com"][i][1]-4), 0.3, "black", 0, 1)
@@ -591,8 +699,18 @@ class Tracker:
                     cv2.addWeighted(img_masked, self.config.vis.mask_opacity,
                     self.img_draw, 1-self.config.vis.mask_opacity, 0, self.img_draw)
 
-                # Draw framenumber
-                draw_text(self.img_draw, str(self.frame_nr), (0,0), 0.8, margin=5, bgcol="white")
+                # Draw framenumber and per-frame contour info overlay
+                _info_lines = [f"frame {self.frame_nr}"] + _frame_info
+                _font = cv2.FONT_HERSHEY_SIMPLEX
+                _fsize, _pad = 0.38, 4
+                _dims = [cv2.getTextSize(l, _font, _fsize, 1)[0] for l in _info_lines]
+                _box_w = max(w for w, h in _dims) + 2 * _pad
+                _box_h = sum(h + _pad for w, h in _dims) + _pad
+                cv2.rectangle(self.img_draw, (0, 0), (_box_w, _box_h), (255, 255, 255), -1)
+                y = _pad
+                for line, (_, th) in zip(_info_lines, _dims):
+                    cv2.putText(self.img_draw, line, (_pad, y + th), _font, _fsize, (0, 0, 0), 1, cv2.LINE_AA)
+                    y += th + _pad
 
                 # Write video to file
                 if self.config.track.create_vid:
@@ -600,7 +718,7 @@ class Tracker:
                     even_w, even_h = make_even(self.vidw), make_even(self.vidh)
                     if (frame_rgb.shape[1], frame_rgb.shape[0]) != (even_w, even_h):
                         frame_rgb = cv2.resize(frame_rgb, (even_w, even_h))
-                    self.vidout.append_data(frame_rgb)
+                    self.vidout.write(frame_rgb)
 
                 # Display video
                 if self.config.vis.show_tracking:
@@ -619,21 +737,21 @@ class Tracker:
             self.exit()
 
             if key == 27:
-                shutil.move(self.tempfile, self.trackfile)
+                shutil.move(tempfile, self.trackfile)
                 try:
-                    os.remove(self.trackedfile)
+                    os.remove(trackedfile)
                 except:
                     pass
                 lineprint("\nUser quit and escaped, video put back and output deleted")
             else:
-                if self.config.track.create_dat:
+                if create_dat:
                     finaldat = pd.DataFrame(self.fulldat)
-                    finaldat.to_csv(self.trackeddata, index=False)
-                if self.config.track.create_vid and os.path.exists(self.trackedfile):
-                    shutil.move(self.trackedfile, os.path.join(self.dirs["tracked"], self.filename+self.suffix+"_TR.mp4"))
+                    finaldat.to_csv(trackeddata, index=False)
+                if create_vid and os.path.exists(trackedfile):
+                    shutil.move(trackedfile, os.path.join(self.dirs["tracked"], filename+self.suffix+"_TR.mp4"))
                 else:
                     lineprint(self.pr_comm + "Tracked video not created, skipping move.")
-                shutil.move(self.tempfile, os.path.join(self.dirs["originals"], self.filebase))
+                shutil.move(tempfile, os.path.join(self.dirs["originals"], self.filebase))
                 if key == ord('s'):
                     lineprint("User quit and saved, tracking output stored")
 
@@ -641,7 +759,18 @@ class Tracker:
             timediff = time.time() - t1
             speed = str(round((self.frame_nr-self.frame_start)/float(timediff),1))
             removeline()
-            lineprint(self.pr_comm+"tracking completed in "+"%.2f" % timediff+"s at "+speed+"fps; "+str(len(self.inds))+" left..")
+            left_msg = f"; {len(self.inds)} left.." if self.pools < 2 else ".."
+            lineprint(self.pr_comm+"tracking completed in "+"%.2f" % timediff+"s at "+speed+"fps; "+left_msg)
+            if self.fulldat.get("id") and self.fulldat.get("area"):
+                summary_df = pd.DataFrame({"id": self.fulldat["id"], "area": self.fulldat["area"],
+                                           "aspect_ratio": self.fulldat["aspect_ratio"],
+                                           "cx": self.fulldat["cx"]})
+                valid = summary_df[summary_df["cx"].notna() & summary_df["id"].notna()]
+                if len(valid) > 0:
+                    stats = valid.groupby("id").agg({"area": "median", "aspect_ratio": "median"})
+                    parts = [f"ID{int(i)}: area={r['area']:.0f} ar={r['aspect_ratio']:.2f}"
+                             for i, r in stats.iterrows()]
+                    lineprint(self.pr_comm + "  " + ", ".join(parts))
 
         except KeyboardInterrupt:
             raise KeyboardInterruptError()
