@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 import pandas as pd
 from scipy.spatial import KDTree
+import shapely
 from shapely.geometry import Point, Polygon
 
 from pythutils.mathutils import ptsToDist, points_to_angle
@@ -59,12 +60,30 @@ def dist_to_rect(xs, ys, xmin, xmax, ymin, ymax):
 
 
 def dist_to_poly(xs, ys, poly_coords):
+    xs = np.asarray(xs, dtype=float)
+    ys = np.asarray(ys, dtype=float)
     poly = Polygon(poly_coords)
-    pts = [Point(x, y) for x, y in zip(xs, ys)]
-    dists = np.array([poly.exterior.distance(pt) for pt in pts])
-    inside = np.array([poly.contains(pt) for pt in pts])
+    pts = shapely.points(xs, ys)
+    dists = shapely.distance(poly.exterior, pts)
+    inside = shapely.contains_xy(poly, xs, ys)
     dists[inside] = -dists[inside]
     return dists
+
+
+def dist_to_zone(xs, ys, coords, conv=1.0):
+    """Signed distance to a zone (point, rect, or polygon). Returns None if coords is empty."""
+    if not coords:
+        return None
+    if len(coords) == 1:
+        return dist_to_point(xs, ys, coords[0][0], coords[0][1]) * conv
+    arr = np.asarray(coords)
+    if len(coords) == 4 and is_axis_aligned_rectangle(coords):
+        return dist_to_rect(xs, ys,
+                            arr[:, 0].min(), arr[:, 0].max(),
+                            arr[:, 1].min(), arr[:, 1].max()) * conv
+    if len(coords) >= 3:
+        return dist_to_poly(xs, ys, coords) * conv
+    return None
 
 
 def dist_to_mask(xs, ys, mask, conv=1.0):

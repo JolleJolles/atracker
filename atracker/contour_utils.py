@@ -173,7 +173,14 @@ def coordsfromzones(imgfile, palette_hues=None, tol=20, min_sat=200, min_val=200
     """For each zone (color) in the image, return a simplified polygon as a list of (x, y) tuples."""
     if palette_hues is None:
         palette_hues = list(range(0, 360, 36))
-    img = cv2.imread(imgfile)
+    if isinstance(imgfile, np.ndarray):
+        img = imgfile
+    elif isinstance(imgfile, str):
+        img = cv2.imread(imgfile)
+    else:
+        return {}
+    if img is None:
+        return {}
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     img_hsv = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2HSV)
     zone_coords = {}

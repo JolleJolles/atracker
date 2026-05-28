@@ -2,23 +2,35 @@
 
 import re
 import os
+import numpy as np
 import pandas as pd
 import multiprocessing
 from ast import literal_eval
+from math import gcd
+from functools import reduce
 
 from pythutils.mathutils import points_to_angle, angle_to_vec, ptsToDist
 
-from .utils import *
+from .geometry import (calc_borderdistdf, convert, dist_to_point, dist_to_poly,
+                       dist_to_rect, dist_to_zone, is_axis_aligned_rectangle,
+                       series_to_point_tuple, valid_img_path)
+from .trajectory import (calcudiff, differentiate, fillmissing, getalones,
+                         process_trajectories, smooth)
+from .angles import get_anglediff
+from .contour_utils import coordsfrommask, coordsfromzones
+from .data_utils import ensure_columns, lit_converter
 
 
 class Processor:
 
     def __init__(self, dirs, config, overview, trackedfiles, orientfrombw, overwrite,
-                 addIDs=True, removeoutliers=True, min_segment=5, changefps=None,
-                 datflip=True, fulldata=True, convert=True, nearmaskdis=20, inmaskdis=10,
-                 trajgap=50, edgedis=10, smoothwin=10, centertype=None, centralise=False,
-                 interp_gap_com=500, interp_gap_orient=100, orient_min_speed=1,
-                 mintrajlength=10):
+                 fulldata=True, convert=True, datflip=True,
+                 changefps=None,
+                 mask_margin=15, max_traj_gap=50, min_traj_len=10,
+                 roi_edge_margin=10,
+                 interp_gap_com=500, interp_gap_orient=100,
+                 smoothwin=10, orient_min_speed=1,
+                 interpolate=True, compute_movement=True, compute_distances=True):
         """
         Post-processing pipeline for tracked coordinate data.
 
@@ -37,52 +49,50 @@ class Processor:
             head/tail coordinates.
         overwrite : bool
             Overwrite existing processed files.
-        addIDs : bool
-            Replace numeric tracker IDs with IDs from the overview file.
-        removeoutliers : bool
-            Remove isolated tracking fragments shorter than min_segment frames.
-        min_segment : int
-            Minimum contiguous segment length to keep; shorter bursts are treated
-            as noise and blanked (frames, default 5).
-        changefps : int or None
-            Resample output to this frame rate (must be ≤ video fps).
-        datflip : bool
-            Flip the y-axis when converting to real-world units so that the
-            coordinate system matches what is shown in the video.
         fulldata : bool
-            Extend the output to cover every frame from frame_start to frame_stop,
-            filling untracked frames with NaN.
+            Extend output to cover every tracked frame from frame_start to
+            frame_stop; untracked frames are filled with NaN (default True).
         convert : bool
             Convert pixel coordinates to real-world units using the conv factor
-            from the overview file.
-        nearmaskdis : int
-            Pixels from the mask boundary used when deciding whether a gap should
-            be interpolated through (default 20).
-        inmaskdis : int
-            Pixels from the mask boundary below which a detection is considered
-            inside the mask and removed (default 10).
-        trajgap : int
-            Frame gap above which missing data splits into a new trajectory
+            from the overview file (default True).
+        datflip : bool
+            Flip the y-axis on conversion so coordinates match video orientation
+            (default True).
+        changefps : int or None
+            Resample output to a lower frame rate (must be ≤ video fps).
+        mask_margin : int
+            Pixel distance from the mask boundary used for two purposes: detections
+            within this distance are removed as mask-covered; gaps within this
+            distance are not interpolated (default 15).
+        max_traj_gap : int
+            Frame gap above which a break in detections starts a new trajectory
             (default 50).
-        edgedis : int
-            Distance from the ROI edge in pixels; detections closer than this are
-            excluded from orientation calculations (default 10).
+        min_traj_len : int
+            Minimum trajectory length in frames; shorter trajectories — and
+            isolated detection bursts of the same length — are discarded (default 10).
+        roi_edge_margin : int
+            Pixels from the ROI edge; detections closer than this have their
+            head/tail coordinates blanked, and ROI exits are not interpolated
+            (default 10).
+        interp_gap_com : int
+            Maximum gap (frames) to interpolate centroid data over (default 500).
+        interp_gap_orient : int
+            Maximum gap (frames) to interpolate head/tail and orientation over
+            (default 100).
         smoothwin : int
             Savitzky–Golay smoothing window in frames (default 10; 1 = no smoothing).
-        centertype : str or None
-            How to compute the arena centre for cdist: "pt", "walls", "roi", or None.
-        centralise : bool
-            Subtract the arena centre from all coordinates.
-        interp_gap_com : int
-            Maximum frame gap to interpolate over for centroid data (default 500).
-        interp_gap_orient : int
-            Maximum frame gap to interpolate over for head/tail and orientation
-            vector data (default 100).
         orient_min_speed : float
-            Minimum speed (converted units) above which heading is used as a
+            Minimum speed (converted units/frame) above which heading is used as a
             fallback for missing orientation (default 1).
-        mintrajlength : int
-            Trajectories shorter than this many frames are discarded (default 10).
+        interpolate : bool
+            Interpolate gaps in centroid, head/tail, and orientation data (default True).
+            Set to False to keep only raw detections with no gap-filling.
+        compute_movement : bool
+            Compute movement variables: displacement, speed, acceleration, heading,
+            orientation, turn rates (default True).
+        compute_distances : bool
+            Compute distance measures: ROI edge, mask, walls, zones, custom points
+            (default True).
         """
         self.dirs = dirs
         self.config = config
@@ -93,29 +103,29 @@ class Processor:
         self.appendtxt = "_F.csv"
         self.orientfrombw = orientfrombw
         self.overwrite = overwrite
-        self.addIDs = addIDs
-        self.removeoutliers = removeoutliers
-        self.min_segment = min_segment
         self.fulldata = fulldata
-        self.changefps = changefps
-        self.datflip = datflip
         self.convert = convert
-        self.nearmaskdis = nearmaskdis
-        self.inmaskdis = inmaskdis
-        self.trajgap = trajgap
-        self.edgedis = edgedis
-        self.smoothwin = smoothwin
-        self.centertype = centertype
-        self.centralise = centralise
+        self.datflip = datflip
+        self.changefps = changefps
+        self.mask_margin = mask_margin
+        self.max_traj_gap = max_traj_gap
+        self.min_traj_len = min_traj_len
+        self.roi_edge_margin = roi_edge_margin
         self.interp_gap_com = interp_gap_com
         self.interp_gap_orient = interp_gap_orient
+        self.smoothwin = smoothwin
         self.orient_min_speed = orient_min_speed
-        self.mintrajlength = mintrajlength
+        self.interpolate = interpolate
+        self.compute_movement = compute_movement
+        self.compute_distances = compute_distances
 
 
     # ------------------------------------------------------------------
     # Setup and preparation
     # ------------------------------------------------------------------
+
+    def _log(self, msg):
+        print(f"  [{self.nr}] {msg}", flush=True)
 
     def _unpack_coords(self, column, newcols):
         """Unpack a tuple column (e.g. 'com') into two separate float columns."""
@@ -155,7 +165,7 @@ class Processor:
         if os.path.isfile(self.procfile) and not self.overwrite:
             return
 
-        print(self.pr_comm + "Processing started..", end=" ", flush=True)
+        print(f"{self.pr_comm.strip()} — processing", flush=True)
 
         # Locate this file's overview row
         if "_E" not in self.filebase[-5:] and "_Z" not in self.filebase[-5:] and "_R" not in self.filebase[-5:]:
@@ -178,7 +188,7 @@ class Processor:
             self.emptydat = False
         else:
             self.emptydat = True
-        print("[" + self.nr + "] Data loaded, " + str(len(self.data)) + " rows..", end=" ", flush=True)
+        self._log(f"loaded {len(self.data)} rows")
 
         self.ids = [i for i in pd.unique(self.data.id)]
 
@@ -215,6 +225,13 @@ class Processor:
         self.cover = pd.notna(self.fileinfo["maskimg"])
         self.height = self.fileinfo.roi[1][1] - self.fileinfo.roi[0][1]
 
+        # Detect actual frame sampling interval (1 = every frame, 2 = every other, etc.)
+        if not self.emptydat and len(self.data) >= 2:
+            diffs = np.diff(sorted(self.data["frame"].unique())).tolist()
+            self.frame_step = int(reduce(gcd, diffs)) if diffs else 1
+        else:
+            self.frame_step = 1
+
         self.prep()
 
         # Load reference images
@@ -231,18 +248,6 @@ class Processor:
             _, self.wallcoords = coordsfrommask(self.wall_path)
         if self.zone_path:
             self.zonecoords = coordsfromzones(self.zone_path)
-
-        self.center = None
-        if self.centertype == "pt" and "pt" in self.fileinfo and pd.notna(self.fileinfo["pt"]):
-            x, y = literal_eval(self.fileinfo["pt"])
-            self.center = (x, y)
-        elif self.centertype == "walls" and self.wallcoords:
-            wall_xs, wall_ys = zip(*self.wallcoords)
-            self.center = (np.mean(wall_xs), np.mean(wall_ys))
-        elif self.centertype == "roi":
-            xmin, ymin = self.fileinfo.roi[0]
-            xmax, ymax = self.fileinfo.roi[1]
-            self.center = ((xmax - xmin) / 2, (ymax - ymin) / 2)
 
         self.process()
 
@@ -285,18 +290,17 @@ class Processor:
         self.data.index = list(self.data.frame)
 
         # Remove frames outside the tracked window
-        valid_frames = list(range(self.minfr, self.maxfr + 1))
+        valid_frames = list(range(self.minfr, self.maxfr + 1, self.frame_step))
         invalid = self.data.index[~self.data.index.isin(valid_frames)]
         if len(invalid) > 0:
-            print(f"[{self.nr}] Removed {len(invalid)} frames outside "
-                  f"{self.minfr}–{self.maxfr}.", flush=True)
+            self._log(f"removed {len(invalid)} frames outside {self.minfr}–{self.maxfr}")
             self.data = self.data[self.data.index.isin(valid_frames)]
 
         # If nothing remains, create a minimal skeleton
         if len(self.data) == 0:
             self.ids = [0]
             self.data = pd.DataFrame({
-                "frame": list(range(self.minfr, self.maxfr + 1)),
+                "frame": list(range(self.minfr, self.maxfr + 1, self.frame_step)),
                 "id": 0,
             })
 
@@ -309,20 +313,19 @@ class Processor:
         final = None
         for idind, id in enumerate(self.ids):
 
-            if self.removeoutliers:
-                alones = getalones(self.data[self.data.id == id], "cx", self.min_segment)
-                if len(alones) > 0:
-                    coord_cols = (["cx", "cy"] +
-                                  (["fx", "fy"] if "fx" in self.data else []) +
-                                  (["tx", "ty"] if "tx" in self.data else []))
-                    self.data.loc[alones, coord_cols] = np.nan
-                    print(f"[{self.nr}] Removed {len(alones)} outlier frames", flush=True)
-                if self.data["cx"].isna().all():
-                    self.emptydat = True
+            alones = getalones(self.data[self.data.id == id], "cx", self.min_traj_len)
+            if len(alones) > 0:
+                coord_cols = (["cx", "cy"] +
+                              (["fx", "fy"] if "fx" in self.data else []) +
+                              (["tx", "ty"] if "tx" in self.data else []))
+                self.data.loc[alones, coord_cols] = np.nan
+                self._log(f"removed {len(alones)} outlier frames for obj {id}")
+            if self.data["cx"].isna().all():
+                self.emptydat = True
 
             # Build a full-range frame skeleton and fill in tracked rows
             newcols = [[frame, id] + list(np.repeat(np.nan, len(self.data.columns) - 2))
-                       for frame in range(self.minfr, self.maxfr + 1)]
+                       for frame in range(self.minfr, self.maxfr + 1, self.frame_step)]
             newdat = pd.DataFrame(newcols, columns=self.data.columns, dtype=object)
             newdat.index = list(newdat.frame)
             self.data.index = self.data["frame"]
@@ -333,7 +336,7 @@ class Processor:
         self.data.index = list(range(len(self.data)))
         self.data["frame"] = self.data["frame"].astype(int)
 
-        print(f"[{self.nr}] Data prepared..", end=" ", flush=True)
+        self._log("prepared")
 
 
     # ------------------------------------------------------------------
@@ -355,27 +358,27 @@ class Processor:
         for t in sub.traj.dropna().unique():
             tf = sub[sub.traj == t].copy().reset_index(drop=True)
 
-            # Blank head/tail within edgedis of the ROI boundary
+            # Blank head/tail within roi_edge_margin of the ROI boundary
             borderdist = calc_borderdistdf(tf, newroi)
-            tf.loc[borderdist < self.edgedis, ["fx", "fy", "tx", "ty"]] = np.nan
+            tf.loc[borderdist < self.roi_edge_margin, ["fx", "fy", "tx", "ty"]] = np.nan
 
-            # Remove isolated head/tail detections shorter than min_segment
-            alones = getalones(tf, "fx", self.min_segment)
+            # Remove isolated head/tail detections shorter than min_traj_len
+            alones = getalones(tf, "fx", self.min_traj_len)
             if alones:
                 tf.loc[alones, ["fx", "fy", "tx", "ty"]] = np.nan
 
             # Interpolate short head/tail gaps
-            for cols in [["fx", "fy"], ["tx", "ty"]]:
-                if cols[0] in tf.columns:
-                    tf, miss = fillmissing(tf, cols, None, self.fileinfo.roi,
-                                           win=5, lenthresh=self.interp_gap_orient)
-                    total_missing += miss
+            if self.interpolate:
+                for cols in [["fx", "fy"], ["tx", "ty"]]:
+                    if cols[0] in tf.columns:
+                        tf, miss = fillmissing(tf, cols, None, self.fileinfo.roi,
+                                               win=5, lenthresh=self.interp_gap_orient)
+                        total_missing += miss
 
             corrected.append(tf)
 
         if total_missing:
-            print(f"[{self.nr}] Filled {total_missing} head/tail frames..",
-                  end=" ", flush=True)
+            self._log(f"step 4: filled {total_missing} head/tail frames")
 
         return pd.concat(corrected).reset_index(drop=True) if corrected else sub
 
@@ -406,7 +409,6 @@ class Processor:
         if "fx" not in final.columns:
             return final
 
-        print(f"[{self.nr}] Improving orientation..", end=" ", flush=True)
         final["orient"] = np.nan
 
         for ID in final.ID.unique():
@@ -436,9 +438,10 @@ class Processor:
                 for col in ["vx", "vy"]:
                     final[col] = pd.to_numeric(final[col], errors="coerce")
 
-                final.loc[inds], _ = fillmissing(
-                    final.loc[inds], ["vx", "vy"], None, None,
-                    lenthresh=self.interp_gap_orient)
+                if self.interpolate:
+                    final.loc[inds], _ = fillmissing(
+                        final.loc[inds], ["vx", "vy"], None, None,
+                        lenthresh=self.interp_gap_orient)
                 final.loc[inds] = smooth(
                     final.loc[inds], [t], ["vx", "vy"], self.smoothwin)
 
@@ -463,30 +466,15 @@ class Processor:
             final["mdist"] = dist_to_poly(xs_full, ys_full, self.maskcoords) * self.conv
         if self.wallcoords:
             final["wdist"] = dist_to_poly(xs_full, ys_full, self.wallcoords) * self.conv
-        if self.center is not None:
-            final["cdist"] = dist_to_point(xs_full, ys_full, *self.center) * self.conv
-        if self.zonecoords:
-            for zidx, coords in self.zonecoords.items():
-                if not coords:
-                    continue
-                if len(coords) == 1:
-                    dists = dist_to_point(xs_full, ys_full,
-                                          coords[0][0], coords[0][1]) * self.conv
-                elif len(coords) == 4 and is_axis_aligned_rectangle(coords):
-                    arr = np.asarray(coords)
-                    dists = dist_to_rect(xs_full, ys_full,
-                                         arr[:, 0].min(), arr[:, 0].max(),
-                                         arr[:, 1].min(), arr[:, 1].max()) * self.conv
-                elif len(coords) >= 3:
-                    dists = dist_to_poly(xs_full, ys_full, coords) * self.conv
-                else:
-                    dists = np.nan
-                final[f"z{zidx}dist"] = dists
+        for zidx, coords in self.zonecoords.items():
+            d = dist_to_zone(xs_full, ys_full, coords, self.conv)
+            if d is not None:
+                final[f"z{zidx}dist"] = d
 
         ptcols = [c for c in self.overview.columns if re.match(r"pt\d+$", c)
                   and pd.notna(self.fileinfo.get(c))]
         if ptcols:
-            print(f"[{self.nr}] Distance to points:", end=" ", flush=True)
+            computed = []
             for ptcol in ptcols:
                 ptstr = self.fileinfo.get(ptcol)
                 try:
@@ -497,26 +485,17 @@ class Processor:
                                  if self.convert else pt)
                         final[f"{ptcol}dist"] = [ptsToDist((x, y), pt_cm)
                                                   for x, y in zip(final.cx_c, final.cy_c)]
-                        print(ptcol[2:], end=" ", flush=True)
+                        computed.append(ptcol[2:])
                 except Exception as e:
-                    print(f"\n[{self.nr}] Warning: could not parse {ptcol} → {ptstr}: {e}",
-                          flush=True)
+                    self._log(f"warning: could not parse {ptcol} → {ptstr}: {e}")
+            if computed:
+                self._log(f"step 9: point distances — {', '.join(computed)}")
+
         return final
 
 
     def _finalise(self, final):
         """Apply centralisation, blank in-mask coordinates, order columns, round."""
-
-        # Centralise if requested
-        if self.centralise and self.center is not None:
-            cx0, cy0 = convert(self.center[0], self.center[1], self.conv,
-                               self.height, self.datflip, self.fileinfo.roi)
-            final["cx_c"] -= float(cx0)
-            final["cy_c"] -= float(cy0)
-            if "fx_c" in final:
-                final["fx_c"] -= float(cx0)
-                final["fy_c"] -= float(cy0)
-            print(f"[{self.nr}] Centralised..", end=" ", flush=True)
 
         # Blank positional columns for in-mask frames
         positional = ["cx", "cy", "fx", "fy", "fx_c", "fy_c", "tx", "ty", "tx_c", "ty_c"]
@@ -542,7 +521,7 @@ class Processor:
             "fx", "fy", "fx_c", "fy_c",
             "displ", "speed", "accel", "cumdispl",
             "heading", "orient", "turnspeed", "turnaccel", "cumturn", "abscumturn",
-            "rdist", "mdist", "wdist", "cdist",
+            "rdist", "mdist", "wdist",
         ]
         ordered = [c for c in base_order if c in final.columns]
         zone_cols = sorted([c for c in final.columns if re.match(r"z\d+dist", c)],
@@ -557,7 +536,7 @@ class Processor:
             2: ["time", "cx", "cy", "fx", "fy", "cx_c", "cy_c", "fx_c", "fy_c",
                 "displ", "speed", "accel"],
             1: ["cumdispl", "cumturn", "abscumturn", "heading", "orient",
-                "mdist", "wdist", "cdist", "rdist"],
+                "mdist", "wdist", "rdist"],
         }
         for decimals, cols in round_map.items():
             present = [c for c in cols if c in final.columns]
@@ -578,7 +557,7 @@ class Processor:
         out["rdist"] = np.nan
         out["inmask"] = 1
         out.to_csv(self.procfile, index=False)
-        print(f"[{self.nr}] No tracking data — empty file written.")
+        self._log("no tracking data — empty file written")
 
 
     # ------------------------------------------------------------------
@@ -596,8 +575,8 @@ class Processor:
           6.  Convert pixel coordinates to real-world units
           7.  Compute per-trajectory movement variables
           8.  Compute and smooth orientation (requires speed/heading from step 7)
-          9.  Compute distance measures
-         10.  Finalise: centralise, blank in-mask rows, order columns, round, save
+          9.  Compute distance measures (if compute_distances=True)
+         10.  Finalise: blank in-mask rows, order columns, round, save
         """
         if self.emptydat:
             self._write_empty()
@@ -607,48 +586,49 @@ class Processor:
         self.data["time"] = np.round(self.data.frame / self.fileinfo.fps, 3)
         if isinstance(self.changefps, int):
             if self.changefps > self.fileinfo.fps:
-                print(f"[{self.nr}] Provided fps exceeds file fps — skipping.")
+                self._log("provided fps exceeds file fps — skipping")
                 return
             self.fps = self.changefps
             framelist = list(np.round(np.linspace(
                 1, self.maxfr,
                 int(self.maxfr / float(self.fileinfo.fps) * self.changefps))))
             self.data = self.data[self.data["frame"].isin(framelist)]
-            print(f"[{self.nr}] Resampled to {self.fps} fps..", end=" ")
+            self._log(f"step 1: resampled to {self.fps} fps")
 
         # Initialise output columns
-        self.data = self.data.assign(
-            ID=np.nan, traj=np.nan,
-            displ=np.nan, cumdispl=np.nan,
-            speed=np.nan, accel=np.nan,
-            heading=np.nan, orient=np.nan,
-            turnspeed=np.nan, turnaccel=np.nan,
-            cumturn=np.nan, abscumturn=np.nan,
-            inroi=1, inmask=1,
-        )
+        assign_cols = dict(ID=np.nan, traj=np.nan, inroi=1, inmask=1)
+        if self.compute_movement:
+            assign_cols.update(
+                displ=np.nan, cumdispl=np.nan,
+                speed=np.nan, accel=np.nan,
+                heading=np.nan, orient=np.nan,
+                turnspeed=np.nan, turnaccel=np.nan,
+                cumturn=np.nan, abscumturn=np.nan,
+            )
+        self.data = self.data.assign(**assign_cols)
 
         # Steps 2–5: per-ID processing
         final_parts = []
         for idind, id in enumerate(self.ids):
-            print(f"[{self.nr}] [obj {id}]:", end=" ", flush=True)
             sub = self.data[self.data.id == id].copy().reset_index(drop=True)
-            sub["ID"] = self.IDs[idind] if self.addIDs else id
+            sub["ID"] = self.IDs[idind]
 
             # Step 2: interpolate centroid gaps
-            sub, n_filled = fillmissing(
-                sub, ["cx", "cy"], None, self.fileinfo.roi,
-                win=5, nearmaskdis=self.nearmaskdis,
-                edgedis=self.edgedis, lenthresh=self.interp_gap_com)
-            print(f"filled {n_filled} frames..", end=" ", flush=True)
+            if self.interpolate:
+                sub, n_filled = fillmissing(
+                    sub, ["cx", "cy"], None, self.fileinfo.roi,
+                    win=5, nearmaskdis=self.mask_margin,
+                    edgedis=self.roi_edge_margin, lenthresh=self.interp_gap_com)
+                self._log(f"[obj {id}] step 2: {n_filled} centroid gaps filled")
 
             # Step 3: remove near-mask data; assign trajectory numbers
             sub, ntraj, nremoved = process_trajectories(
                 sub, mask=self.maskcoords, cover=self.cover, win=5,
-                trajgap=self.trajgap, inmaskdis=self.inmaskdis,
-                mintrajlength=self.mintrajlength,
-                erase_coords=True, interpolate=True)
+                trajgap=self.max_traj_gap, inmaskdis=self.mask_margin,
+                mintrajlength=self.min_traj_len,
+                erase_coords=True, interpolate=self.interpolate)
             sub["inmask"] = sub["traj"].isna().astype(int)
-            print(f"{ntraj} traj ({nremoved} near-mask removed)..", end=" ", flush=True)
+            self._log(f"[obj {id}] step 3: {ntraj} traj, {nremoved} near-mask removed")
 
             # Step 4: head/tail coordinate cleanup
             if {"fx", "fy"}.issubset(sub.columns):
@@ -657,7 +637,7 @@ class Processor:
             # Step 5: smooth centroid trajectories
             if self.smoothwin > 1:
                 sub = smooth(sub, sub.traj.dropna().unique(), ["cx", "cy"], self.smoothwin)
-                print(f"smoothed..", end=" ", flush=True)
+                self._log(f"[obj {id}] step 5: smoothed")
 
             final_parts.append(sub)
 
@@ -674,53 +654,58 @@ class Processor:
                 final["fx_c"], final["fy_c"] = convert(
                     final["fx"], final["fy"], self.conv, self.height,
                     self.datflip, self.fileinfo.roi, already_relative=True)
-            print(f"[{self.nr}] Converted..", end=" ", flush=True)
+            self._log("step 6: converted")
         else:
             final["cx_c"], final["cy_c"] = final["cx"].copy(), final["cy"].copy()
             if {"fx", "fy"}.issubset(final.columns):
                 final["fx_c"], final["fy_c"] = final["fx"].copy(), final["fy"].copy()
 
-        # Step 7: movement variables (displacement, speed, heading, turn rates)
-        for ID in final.ID.unique():
-            id_mask = final.ID == ID
-            for t in final.loc[id_mask, "traj"].dropna().unique():
-                traj_mask = id_mask & (final.traj == t)
-                fx = final.loc[traj_mask, "cx_c"]
-                fy = final.loc[traj_mask, "cy_c"]
-                final.loc[traj_mask, "displ"] = calcudiff(fx, fy)
-                # speed: displ (mm/frame) × fps → mm/s ÷ 10 → cm/s
-                final.loc[traj_mask, "speed"] = final.loc[traj_mask, "displ"] * self.fps / 10
-                final.loc[traj_mask, "accel"] = (
-                    differentiate(final.loc[traj_mask, "speed"]) * self.fps)
-                final.loc[traj_mask, "heading"] = calcudiff(fx, fy, angle=True)
-                final.loc[traj_mask, "turnspeed"] = get_anglediff(
-                    final.loc[traj_mask, "heading"])
-                final.loc[traj_mask, "turnaccel"] = get_anglediff(
-                    final.loc[traj_mask, "turnspeed"])
-            final.loc[id_mask, "cumdispl"] = np.nancumsum(final.loc[id_mask, "displ"])
+        if self.compute_movement:
+            # Step 7: movement variables (displacement, speed, heading, turn rates)
+            for ID in final.ID.unique():
+                id_mask = final.ID == ID
+                for t in final.loc[id_mask, "traj"].dropna().unique():
+                    traj_mask = id_mask & (final.traj == t)
+                    fx = final.loc[traj_mask, "cx_c"]
+                    fy = final.loc[traj_mask, "cy_c"]
+                    final.loc[traj_mask, "displ"] = calcudiff(fx, fy)
+                    # speed: displ (mm/frame) × fps → mm/s ÷ 10 → cm/s
+                    final.loc[traj_mask, "speed"] = final.loc[traj_mask, "displ"] * self.fps / 10
+                    final.loc[traj_mask, "accel"] = (
+                        differentiate(final.loc[traj_mask, "speed"]) * self.fps)
+                    final.loc[traj_mask, "heading"] = calcudiff(fx, fy, angle=True)
+                    final.loc[traj_mask, "turnspeed"] = get_anglediff(
+                        final.loc[traj_mask, "heading"])
+                    final.loc[traj_mask, "turnaccel"] = get_anglediff(
+                        final.loc[traj_mask, "turnspeed"])
+                final.loc[id_mask, "cumdispl"] = np.nancumsum(final.loc[id_mask, "displ"])
+            self._log("step 7: movement done")
 
-        # Ensure coordinate columns are numeric before orientation step
-        for col in ["fx", "fy", "cx", "cy", "vx", "vy"]:
-            if col in final.columns:
-                final[col] = pd.to_numeric(final[col], errors="coerce")
+            # Ensure coordinate columns are numeric before orientation step
+            for col in ["fx", "fy", "cx", "cy", "vx", "vy"]:
+                if col in final.columns:
+                    final[col] = pd.to_numeric(final[col], errors="coerce")
 
-        # Step 8: orientation (needs speed/heading from step 7)
-        final = self._compute_orientation(final)
-        for ID in final.ID.unique():
-            final.loc[final.ID == ID, "cumturn"] = np.nancumsum(
-                final.loc[final.ID == ID, "turnspeed"])
-            final.loc[final.ID == ID, "abscumturn"] = np.nancumsum(
-                abs(final.loc[final.ID == ID, "turnspeed"]))
+            # Step 8: orientation (needs speed/heading from step 7)
+            final = self._compute_orientation(final)
+            for ID in final.ID.unique():
+                final.loc[final.ID == ID, "cumturn"] = np.nancumsum(
+                    final.loc[final.ID == ID, "turnspeed"])
+                final.loc[final.ID == ID, "abscumturn"] = np.nancumsum(
+                    abs(final.loc[final.ID == ID, "turnspeed"]))
+            self._log("step 8: orientation done")
 
         # Ensure converted coordinates are numeric
         for col in ["cx_c", "cy_c", "fx_c", "fy_c"]:
             if col in final.columns:
                 final[col] = pd.to_numeric(final[col], errors="coerce")
 
-        # Step 9: distance measures
-        final = self._calc_distances(final, xs_global, ys_global)
+        if self.compute_distances:
+            # Step 9: distance measures
+            final = self._calc_distances(final, xs_global, ys_global)
+            self._log("step 9: distances done")
 
         # Step 10: finalise and save
         final = self._finalise(final)
         final.to_csv(self.procfile, index=False)
-        print(f"[{self.nr}] File written..", end=" ", flush=True)
+        self._log("step 10: saved")

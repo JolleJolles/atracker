@@ -3,12 +3,18 @@
 import os
 import cv2
 import time
+import numpy as np
+from scipy.spatial.distance import cdist
+from scipy.optimize import linear_sum_assignment
 
 from pythutils.sysutils import lineprint
 from pythutils.mediautils import crop, videowriter, add_transimg, imgresize
 from pythutils.drawutils import namedcols, draw_text, draw_traj, uniqcols
+from pythutils.mathutils import points_to_angle
 
-from atracker.utils import *
+from .media import framechecks
+from .geometry import get_coord
+from .contour_utils import draw_coordlist
 
 
 def addcanvas(img, dims, color):
@@ -43,6 +49,199 @@ def addcanvas(img, dims, color):
 
     return bgcanvas
 
+
+_ZONE_COLORS = [
+    (0, 210, 255),   # orange
+    (255, 255, 0),   # cyan
+    (0, 220, 80),    # lime green
+    (200, 0, 230),   # pink/magenta
+    (255, 180, 0),   # teal/azure
+    (50, 50, 255),   # red
+]
+
+
+class TrackVisualiser:
+    """Drawing helper for the real-time tracking loop (tracksingle)."""
+
+    def __init__(self, config, thresh_types, objects, threshcolors, orientfrombw,
+                 mask_contours=None, wall_contours=None, zone_coords=None):
+        self.config = config
+        self.thresh_types = thresh_types
+        self.objects = objects
+        self.threshcolors = threshcolors
+        self.orientfrombw = orientfrombw
+
+        # Pre-compute colours once per video
+        self.col_red       = namedcols("red")
+        self.col_lightgreen = namedcols("lightgreen")
+        self.col_orange    = namedcols("orange")
+        self.col_contour   = eval(config.vis.contour_col)
+        self.col_centre    = eval(config.vis.centre_col)
+        self.col_orient    = eval(config.vis.orient_col)
+        self.col_traj      = eval(config.vis.traj_col)
+        self.thresh_cols   = {t: namedcols(t) for t in thresh_types if not t.startswith("bw")}
+        self.cols          = uniqcols(max(1, objects))
+        self.mask_contours = mask_contours
+        self.wall_contours = wall_contours
+        self.zone_coords   = zone_coords
+
+    def draw_thresh_pass(self, img_draw, img, img_thresh, conlist, allcons,
+                         ids, filtered_coms, traj_history, tracked_ids, thresh_type):
+        """
+        Draw one threshold-type pass onto img_draw.
+        conlist must already be subsetted to the ID'ed contours (same length as ids).
+        """
+        # Trajectories
+        draw_ids = sorted(tracked_ids) if thresh_type.startswith("bw") else [thresh_type]
+        for i, id in enumerate(draw_ids):
+            trajdat = list(reversed(traj_history.get(id, [])))
+            if len(trajdat) >= 2:
+                col = (self.cols[(id - 1) % len(self.cols)] if self.config.vis.idcol else self.col_traj
+                       if thresh_type.startswith("bw") else self.thresh_cols.get(thresh_type, self.col_traj))
+                draw_traj(img_draw, trajdat, col,
+                          self.config.vis.traj_minthick,
+                          self.config.vis.traj_maxthick,
+                          self.config.vis.traj_opacity)
+
+        if self.config.vis.trajs_below:
+            img_draw[img_thresh == 255] = img[img_thresh == 255]
+
+        # All detected contours (thin red)
+        cv2.drawContours(img_draw, allcons, -1, self.col_red, 1)
+
+        # ID'ed contours
+        is_merged = (self.objects > 1 and thresh_type.startswith("bw")
+                     and conlist.get("consmerged"))
+        contour_col = (128 if not thresh_type.startswith("bw")
+                       else self.col_contour if not is_merged else 128)
+        cv2.drawContours(img_draw, conlist["contour"], -1, contour_col, 1)
+
+        # Per-object details: skeleton, tail, head/arrow, centroid, ID text
+        for i, id in enumerate(conlist["id"]):
+            if conlist["skeleton"][i] == conlist["skeleton"][i]:
+                img_draw = draw_coordlist(img_draw, conlist["skeleton"][i], self.col_orange)
+            if conlist["tail"][i] == conlist["tail"][i]:
+                cv2.circle(img_draw, conlist["tail"][i], 0, self.col_red, 6)
+            if conlist["head"][i] == conlist["head"][i]:
+                arrowtip = get_coord(conlist["head"][i][0], conlist["head"][i][1],
+                                     conlist["angle"][i], 13, True)
+                cv2.arrowedLine(img_draw, conlist["head"][i], arrowtip,
+                                self.col_orient, 1, tipLength=0.4)
+                cv2.circle(img_draw, conlist["head"][i], 0, self.col_lightgreen, 6)
+            if conlist["com"][i] == conlist["com"][i]:
+                idcol = (self.thresh_cols.get(thresh_type, self.col_centre)
+                         if not thresh_type.startswith("bw") else self.col_centre)
+                cv2.circle(img_draw, conlist["com"][i], 0, idcol,
+                           self.config.vis.centre_lwidth)
+                if thresh_type.startswith("bw"):
+                    draw_text(img_draw, str(id),
+                              (conlist["com"][i][0] - 4, conlist["com"][i][1] - 4),
+                              0.3, "black", 0, 1)
+
+    def draw_orient_link(self, img_draw, fulldat, frame_nr):
+        """
+        Compute and draw orientation arrows that link colour contours to their
+        paired bw contours. Also writes computed angles back into fulldat["angle"].
+        """
+        currframe_inds = [i for i, f in enumerate(fulldat["frame"]) if f == frame_nr]
+        ids = [id for i, id in enumerate(fulldat["id"]) if i in currframe_inds]
+
+        if "angle" not in fulldat:
+            fulldat["angle"] = [None] * len(fulldat["frame"])
+
+        if not ids or len(ids) != 2 * len([i for i in ids if type(i) == str]):
+            return
+
+        coms = [(fulldat["cx"][i], fulldat["cy"][i]) for i in currframe_inds]
+        colids, colcoms = zip(*[(ids[i], com) for i, com in enumerate(coms)
+                                if type(ids[i]) == str])
+        bwids, bwcoms = zip(*[(ids[i], com) for i, com in enumerate(coms)
+                               if type(ids[i]) != str])
+        _, bw_inds = linear_sum_assignment(cdist(colcoms, bwcoms))
+
+        for i, id in enumerate(colids):
+            angle = int(points_to_angle(colcoms[i], bwcoms[bw_inds[i]], flip=True))
+            target_index = currframe_inds[ids.index(id)]
+            if target_index >= len(fulldat["angle"]):
+                fulldat["angle"].extend(
+                    [None] * (target_index - len(fulldat["angle"]) + 1))
+            fulldat["angle"][target_index] = angle
+            arrowtip = get_coord(colcoms[i][0], colcoms[i][1], angle, 5, True)
+            col = (255, 255, 255) if id in ["blue", "black"] else (0, 0, 0)
+            cv2.arrowedLine(img_draw, colcoms[i], arrowtip, col,
+                            self.config.vis.orient_lwidth, tipLength=0.4)
+
+    def draw_scene_overlays(self, img_draw):
+        """Draw wall contours, zone polygons with labels, and mask border on img_draw."""
+        if self.wall_contours is not None:
+            overlay = img_draw.copy()
+            cv2.drawContours(overlay, self.wall_contours, -1, (160, 50, 160), -1)
+            cv2.addWeighted(overlay, 0.35, img_draw, 0.65, 0, img_draw)
+            cv2.drawContours(img_draw, self.wall_contours, -1, (110, 30, 110), 2)
+
+        if self.zone_coords is not None:
+            overlay = img_draw.copy()
+            for zone_idx, coords in self.zone_coords.items():
+                contour = np.array([[[x, y]] for x, y in coords], dtype=np.int32)
+                col = _ZONE_COLORS[(zone_idx - 1) % len(_ZONE_COLORS)]
+                cv2.drawContours(overlay, [contour], -1, col, -1)
+            cv2.addWeighted(overlay, 0.18, img_draw, 0.82, 0, img_draw)
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            for zone_idx, coords in self.zone_coords.items():
+                contour = np.array([[[x, y]] for x, y in coords], dtype=np.int32)
+                col = _ZONE_COLORS[(zone_idx - 1) % len(_ZONE_COLORS)]
+                cv2.drawContours(img_draw, [contour], -1, col, 2)
+                cx = int(np.mean([x for x, y in coords]))
+                cy = int(np.mean([y for x, y in coords]))
+                label = f"Z{zone_idx}"
+                cv2.putText(img_draw, label, (cx - 9, cy + 5), font, 0.4, (0, 0, 0), 2, cv2.LINE_AA)
+                cv2.putText(img_draw, label, (cx - 9, cy + 5), font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
+
+        if self.mask_contours is not None:
+            cv2.drawContours(img_draw, self.mask_contours, -1, (180, 180, 180), 1)
+
+    def _line_colour(self, line):
+        """Dark BGR colour for an info-box line, colour-coded by object ID."""
+        if line.startswith("frame "):
+            return (50, 50, 50)
+        if line.startswith("ID"):
+            id_str = line[2:line.index(":")] if ":" in line else line[2:]
+            try:
+                id_int = int(id_str)
+                base = self.cols[(id_int - 1) % len(self.cols)]
+                return tuple(max(0, int(v * 0.55)) for v in base)
+            except ValueError:
+                try:
+                    base = namedcols(id_str)
+                    return tuple(max(0, int(v * 0.55)) for v in base)
+                except Exception:
+                    pass
+        return (80, 80, 80)
+
+    def draw_info_overlay(self, img_draw, img_mask, frame_nr, frame_info):
+        """Draw mask overlay and a semi-transparent info box with per-ID colour coding."""
+        if img_mask is not None:
+            img_masked = cv2.bitwise_and(img_draw, img_draw, mask=img_mask)
+            cv2.addWeighted(img_masked, self.config.vis.mask_opacity,
+                            img_draw, 1 - self.config.vis.mask_opacity, 0, img_draw)
+
+        lines = [f"frame {frame_nr}"] + frame_info
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        fsize, pad = 0.38, 5
+        dims = [cv2.getTextSize(ln, font, fsize, 1)[0] for ln in lines]
+        box_w = max(w for w, _ in dims) + 2 * pad
+        box_h = sum(h + pad for _, h in dims) + pad
+
+        overlay = img_draw.copy()
+        cv2.rectangle(overlay, (0, 0), (box_w, box_h), (255, 255, 255), -1)
+        cv2.addWeighted(overlay, 0.7, img_draw, 0.3, 0, img_draw)
+        cv2.rectangle(img_draw, (0, 0), (box_w - 1, box_h - 1), (140, 140, 140), 1)
+
+        y = pad
+        for ln, (_, th) in zip(lines, dims):
+            cv2.putText(img_draw, ln, (pad, y + th), font, fsize,
+                        self._line_colour(ln), 1, cv2.LINE_AA)
+            y += th + pad
 
 
 def visualise(data, videofile, img_bg = None, img_mask = None, img_thresh=None,

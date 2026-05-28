@@ -1232,12 +1232,6 @@ class ATracker:
                     lineprint("Watch mode stopped.")
                     _stop = True
 
-    def _pworker(self, trackedfile, config_dict):
-        """Each worker creates its own Processor instance and processes the file."""
-        thread_id = threading.get_ident()
-        P = Processor(**config_dict)  # No pickling issues with threads
-        P.setup(trackedfile, thread_id)  
-    
     def check_interactive(self, folder="tracked", inds=None, names=None, query=None, cats=None, fileaction="overwrite"):
         if names is not None:
             inds = self.get_inds(names)
@@ -1284,13 +1278,13 @@ class ATracker:
             if result == "exit":
                 break
 
-    def process(self, pools=1, names=None, overwrite=False, fulldata=True, convert=True,
-                removeoutliers=True, min_segment=5, smoothwin=10, changefps=None,
-                addIDs=True, nearmaskdis=20, trajgap=50, edgedis=10,
-                interp_gap_com=500, inmaskdis=10, mintrajlength=10,
-                interp_gap_orient=100, orient_min_speed=1,
-                centertype=None, centralise=False):
-        
+    def process(self, pools=1, names=None, overwrite=False,
+                fulldata=True, convert=True, changefps=None,
+                mask_margin=15, max_traj_gap=50, min_traj_len=10,
+                roi_edge_margin=10,
+                interp_gap_com=500, interp_gap_orient=100,
+                smoothwin=10, orient_min_speed=1,
+                interpolate=True, compute_movement=True, compute_distances=True):
         """
         Post-process tracked CSV files into analysis-ready data.
 
@@ -1303,41 +1297,39 @@ class ATracker:
         overwrite : bool, default False
             Overwrite existing processed files.
         fulldata : bool, default True
-            Extend output to every frame in the tracked window (untracked frames → NaN).
+            Extend output to every tracked frame in the video window
+            (untracked frames → NaN).
         convert : bool, default True
             Convert pixels to real-world units using the conv factor in the overview.
-        removeoutliers : bool, default True
-            Remove isolated tracking fragments shorter than min_segment frames.
-        min_segment : int, default 5
-            Minimum contiguous fragment length; shorter bursts are treated as noise.
-        smoothwin : int, default 10
-            Savitzky–Golay smoothing window in frames (1 = no smoothing).
         changefps : int or None
-            Resample output to a lower frame rate.
-        addIDs : bool, default True
-            Replace numeric tracker IDs with IDs from the overview file.
-        nearmaskdis : int, default 20
-            Pixels from the mask boundary used when deciding whether a gap should
-            be interpolated through.
-        trajgap : int, default 50
-            Frame gap above which missing data splits into a new trajectory.
-        edgedis : int, default 10
-            Pixels from the ROI edge below which orientation is excluded.
+            Resample output to a lower frame rate (must be ≤ video fps).
+        mask_margin : int, default 15
+            Pixel distance from the mask: detections within this distance are
+            removed; gaps within this distance are not interpolated.
+        max_traj_gap : int, default 50
+            Frame gap above which a break splits into a new trajectory.
+        min_traj_len : int, default 10
+            Minimum trajectory length; shorter trajectories and isolated bursts
+            of the same length are discarded.
+        roi_edge_margin : int, default 10
+            Pixels from the ROI edge: head/tail blanked within this distance;
+            ROI exits within this distance are not interpolated.
         interp_gap_com : int, default 500
             Maximum frame gap to interpolate centroid data over.
-        inmaskdis : int, default 10
-            Pixels from the mask below which a detection is removed.
-        mintrajlength : int, default 10
-            Trajectories shorter than this many frames are discarded.
         interp_gap_orient : int, default 100
-            Maximum frame gap to interpolate head/tail and orientation vectors over.
+            Maximum frame gap to interpolate head/tail and orientation over.
+        smoothwin : int, default 10
+            Savitzky–Golay smoothing window in frames (1 = no smoothing).
         orient_min_speed : float, default 1
-            Minimum speed (converted units) above which heading is used as a
-            fallback for missing orientation.
-        centertype : str or None
-            Arena centre source for cdist: "pt", "walls", "roi", or None.
-        centralise : bool, default False
-            Subtract the arena centre from all coordinates.
+            Minimum speed above which heading is used as fallback for orientation.
+        interpolate : bool, default True
+            Interpolate gaps in centroid, head/tail, and orientation data.
+            Set to False to keep only raw detections with no gap-filling.
+        compute_movement : bool, default True
+            Compute movement variables: displacement, speed, acceleration,
+            heading, orientation, and turn rates.
+        compute_distances : bool, default True
+            Compute distance measures: ROI edge, mask, walls, zones, custom points.
         """
 
         # Get the list of files to process and normalise for windows compatibility
@@ -1381,35 +1373,56 @@ class ATracker:
             "trackedfiles": trackedfiles,
             "orientfrombw": self.config.track.orientfrombw,
             "overwrite": overwrite,
-            "addIDs": addIDs,
             "fulldata": fulldata,
-            "removeoutliers": removeoutliers,
-            "min_segment": min_segment,
-            "changefps": changefps,
-            "nearmaskdis": nearmaskdis,
-            "inmaskdis": inmaskdis,
-            "trajgap": trajgap,
-            "edgedis": edgedis,
             "convert": convert,
-            "smoothwin": smoothwin,
-            "centertype": centertype,
-            "centralise": centralise,
+            "changefps": changefps,
+            "mask_margin": mask_margin,
+            "max_traj_gap": max_traj_gap,
+            "min_traj_len": min_traj_len,
+            "roi_edge_margin": roi_edge_margin,
             "interp_gap_com": interp_gap_com,
             "interp_gap_orient": interp_gap_orient,
-            "mintrajlength": mintrajlength,
+            "smoothwin": smoothwin,
             "orient_min_speed": orient_min_speed,
+            "interpolate": interpolate,
+            "compute_movement": compute_movement,
+            "compute_distances": compute_distances,
         }
 
         lineprint("Processing started of " + str(len(trackedfiles)) + " files..")
 
-        if pools<2:
+        if pools < 2:
             P = Processor(**config_dict)
             for trackedfile in trackedfiles:
                 P.setup(trackedfile, None)
-            print("Processing completed..")
+            lineprint("Processing completed..")
         else:
             if not notebook():
+                def _worker(f):
+                    Processor(**config_dict).setup(f, threading.get_ident())
                 with ThreadPoolExecutor(max_workers=pools) as executor:
-                    executor.map(lambda f: self._pworker(f, config_dict), trackedfiles)
+                    executor.map(_worker, trackedfiles)
             else:
                 lineprint("Pooled processing can only be run from the terminal, exiting..")
+
+
+    def centralise(self, centertype="roi", names=None):
+        """
+        Subtract the arena centre from converted coordinates in processed files.
+
+        Modifies cx_c, cy_c (and fx_c, fy_c if present) in-place in each
+        processed CSV so that (0, 0) is the arena centre.
+
+        Parameters
+        ----------
+        centertype : str, default "roi"
+            How to compute the centre: "roi" uses the ROI midpoint, "walls" uses
+            the mean of wall contour coordinates, "pt" uses the pt column in the
+            overview.
+        names : list or None
+            Specific base names to centralise; all processed files if None.
+        """
+        raise NotImplementedError(
+            "centralise() is not yet implemented. "
+            "Apply arena-centre subtraction manually on the processed CSV."
+        )

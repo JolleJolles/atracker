@@ -2,9 +2,16 @@
 
 ## TODO
 - Make atracker also work standalone without folder initiation etc, such that say you have a single video, you can run some function with the video, the main tracking settings, such as background substraction, bw treshtypes or nr of objects, if mask should be drawn or not, and then show some random frames to set the treshold, using default blur and erode values that should work for most videos.
-- If working in fullscreen with set_interactive then stay in fullscreen and no need to press s key twice and then go fullscreen manually again.
+- set_interactive, when  working in fullscreen then stay in fullscreen when going to the next video so no need to press s to save and exit the video, and then in new video to click f to go to fullscreen again
 - integrate the maskzone in processing similar as the mask
-- Way to store key parameters used in set_interactive so next video it uses the same.
+- visual_editor to have a way to change transparency of the mask layer, and also show a thin black border for the mask
+- visual_editor for showing points have a button or toggle or so to only show tracking points in future, past, or all
+- visual_editor, make increasingly transparent the points the further they are from current position
+- visual_editor, add a point-size slider
+- visual_editor, being able to store and recall settings of set_interactive so when opening a video it directly uses the parameters. No need for special function to set them, but handy to be able to call the config in line and change some settings manually to then open the visual editor.
+- Improve logic in names of main python files as not too messy I think, and wondering if subsetting to folders with more split python files could be good or even convention
+
+
 
 ## Unreleased
 - Video frames are now written in a separate thread via AsyncVideoWriter, preventing video writing from blocking the tracking loop.

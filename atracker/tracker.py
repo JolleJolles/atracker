@@ -17,13 +17,12 @@ from scipy.optimize import linear_sum_assignment
 from pythutils.sysutils import lineprint, Suppressor, removeline
 from pythutils.fileutils import listfiles
 from pythutils.mediautils import check_media, crop
-from pythutils.drawutils import namedcols, draw_text, draw_traj, uniqcols
 from pythutils.mathutils import points_to_angle
 
 from ast import literal_eval
 
 from .geometry import get_coord, adjpt, geom_tocoord, fix_roi
-from .contour_utils import concom, concoords, consplit, con_lathom, draw_coordlist
+from .contour_utils import concom, concoords, consplit, con_lathom, coordsfrommask, coordsfromzones
 from .angles import hvflipangle
 from .trajectory import getavgvel
 from .tracking_filters import (filter_tracking_jumps, filter_contour_shape,
@@ -32,6 +31,7 @@ from .tracking_filters import (filter_tracking_jumps, filter_contour_shape,
 from .media import videowriter, make_even, framechecks
 from .data_utils import subdic, eval_func_tuple
 from .process_image import ProcessImage
+from .visualiser import TrackVisualiser
 
 class KeyboardInterruptError(Exception): pass
 
@@ -209,6 +209,25 @@ class Tracker:
             self.img_mask = cv2.erode(img_mask, kernel)
             self.img_mask = cv2.dilate(self.img_mask, kernel)
             self.img_mask = cv2.resize(self.img_mask, (self.vidw, self.vidh), interpolation=cv2.INTER_AREA)
+
+        # Precompute scene overlay contours for visualization
+        self.mask_contours = None
+        if self.img_mask is not None:
+            self.mask_contours, _ = coordsfrommask(self.img_mask)
+        self.wall_contours = None
+        if hasattr(self, "wallimg") and isinstance(self.wallimg, str):
+            _wall_img = cv2.imread(os.path.join(self.dirs["originals"], self.wallimg))
+            if _wall_img is not None:
+                _wall_img = crop(_wall_img, self.pt1, self.pt2)
+                _wall_img = cv2.resize(_wall_img, (self.vidw, self.vidh), interpolation=cv2.INTER_AREA)
+                self.wall_contours, _ = coordsfrommask(_wall_img)
+        self.zone_coords = None
+        if hasattr(self, "zoneimg") and isinstance(self.zoneimg, str):
+            _zone_img = cv2.imread(os.path.join(self.dirs["originals"], self.zoneimg))
+            if _zone_img is not None:
+                _zone_img = crop(_zone_img, self.pt1, self.pt2)
+                _zone_img = cv2.resize(_zone_img, (self.vidw, self.vidh), interpolation=cv2.INTER_AREA)
+                self.zone_coords = coordsfromzones(_zone_img)
 
         # Set up video window (optional GUI)
         if self.config.vis.show_tracking and self.pools < 2:
@@ -462,17 +481,11 @@ class Tracker:
         traj_history = {}   # {id: deque(maxlen=traj_length)} — only valid (cx, cy)
         tracked_ids = set()
 
-        # Pre-compute drawing colors once to avoid eval()/namedcols() in hot loop
-        if create_vid or self.config.vis.show_tracking:
-            _col_red = namedcols("red")
-            _col_lightgreen = namedcols("lightgreen")
-            _col_orange = namedcols("orange")
-            _col_contour = eval(self.config.vis.contour_col)
-            _col_centre = eval(self.config.vis.centre_col)
-            _col_orient = eval(self.config.vis.orient_col)
-            _col_traj = eval(self.config.vis.traj_col)
-            _thresh_cols = {t: namedcols(t) for t in self.thresh_types if not t.startswith("bw")}
-            _cols = uniqcols(max(1, self.objects))
+        vis = TrackVisualiser(self.config, self.thresh_types, self.objects,
+                              self.threshcolors, self.orientfrombw,
+                              mask_contours=self.mask_contours,
+                              wall_contours=self.wall_contours,
+                              zone_coords=self.zone_coords)
 
         try:
             if self.check_flicker:
@@ -623,99 +636,24 @@ class Tracker:
                     # Thresh_type drawing
                     #---------------------------------
                     if self.config.track.create_vid or self.config.vis.show_tracking:
-
-                        # Draw trajectories from per-ID deques (O(1) per fish)
-                        draw_ids = sorted(tracked_ids) if self.thresh_type.startswith("bw") else [self.thresh_type]
-                        for i, id in enumerate(draw_ids):
-                            trajdat_valid = list(reversed(traj_history.get(id, [])))
-                            if len(trajdat_valid) >= 2:
-                                if self.thresh_type.startswith("bw"):
-                                    trajcol = _cols[(id - 1) % len(_cols)] if self.config.vis.idcol else _col_traj
-                                else:
-                                    trajcol = _thresh_cols.get(self.thresh_type, _col_traj)
-                                draw_traj(self.img_draw, trajdat_valid, trajcol,
-                                          self.config.vis.traj_minthick,
-                                          self.config.vis.traj_maxthick,
-                                          self.config.vis.traj_opacity)
-
-                        # hide trajectories behind contours
-                        if self.config.vis.trajs_below:
-                            self.img_draw[self.img_thresh == 255] = self.img[self.img_thresh == 255]
-
-                        # Draw all contours
-                        cv2.drawContours(self.img_draw, self.allcons, -1, _col_red, 1)
-
-                        # Subset conlist to ID'ed contours
-                        cl = self.conlist
-                        for key in cl.keys():
-                            cl[key] = [cl[key][i] for i in inds]
-
-                        # Draw contours and centroids within size range
-                        is_merged = self.objects > 1 and self.thresh_type.startswith("bw") and cl.get("consmerged")
-                        col = 128 if not self.thresh_type.startswith("bw") else _col_contour if not is_merged else 128
-                        cv2.drawContours(self.img_draw, cl["contour"], -1, col, 1)
-
-                        # Draw more complex information
-                        for i,j in enumerate(cl["id"]):
-                            if cl["skeleton"][i]==cl["skeleton"][i]:
-                                self.img_draw = draw_coordlist(self.img_draw, cl["skeleton"][i], _col_orange)
-                            if cl["tail"][i]==cl["tail"][i]:
-                                cv2.circle(self.img_draw, cl["tail"][i], 0, _col_red, 6)
-                            if cl["head"][i]==cl["head"][i]:
-                                arrowtip = get_coord(cl["head"][i][0], cl["head"][i][1], cl["angle"][i], 13, True)
-                                cv2.arrowedLine(self.img_draw, cl["head"][i], arrowtip, _col_orient, 1, tipLength=0.4)
-                                cv2.circle(self.img_draw, cl["head"][i], 0, _col_lightgreen, 6)
-                            if cl["com"][i]==cl["com"][i]:
-                                idcol = _thresh_cols.get(self.thresh_type, _col_centre) if not self.thresh_type.startswith("bw") else _col_centre
-                                cv2.circle(self.img_draw, cl["com"][i], 0, idcol, self.config.vis.centre_lwidth)
-                                if self.thresh_type.startswith("bw"):
-                                    draw_text(self.img_draw, str(j), (cl["com"][i][0]-4, cl["com"][i][1]-4), 0.3, "black", 0, 1)
+                        for key in self.conlist.keys():
+                            self.conlist[key] = [self.conlist[key][i] for i in inds]
+                        vis.draw_thresh_pass(
+                            self.img_draw, self.img, self.img_thresh,
+                            self.conlist, self.allcons, ids, filtered_coms,
+                            traj_history, tracked_ids, self.thresh_type)
 
                 # Linking of bw and color threshtypes
                 if self.threshcolors and self.orientfrombw:
-                    currframe_inds = [i for i,f in enumerate(self.fulldat["frame"]) if f==self.frame_nr]
-                    ids = [id for i,id in enumerate(self.fulldat["id"]) if i in currframe_inds]
+                    vis.draw_orient_link(self.img_draw, self.fulldat, self.frame_nr)
 
-                    if "angle" not in self.fulldat:
-                        self.fulldat["angle"] = [None] * len(self.fulldat["frame"])
-
-                    if len(ids) > 0 and (len(ids) == 2*len([i for i in ids if type(i)==str])):
-                        # Get coms as tuples from cx, cy
-                        coms = [(self.fulldat["cx"][i], self.fulldat["cy"][i]) for i in currframe_inds]
-                        colids, colcoms = zip(*[(ids[i], com) for i, com in enumerate(coms) if type(ids[i])==str])
-                        bwids, bwcoms = zip(*[(ids[i], com) for i, com in enumerate(coms) if type(ids[i])!=str])
-                        dismat = cdist(colcoms, bwcoms)
-                        _, bw_inds = linear_sum_assignment(dismat)
-                        for i, id in enumerate(colids):
-                            angle = int(points_to_angle(colcoms[i], bwcoms[bw_inds[i]], flip=True))
-                            target_index = currframe_inds[ids.index(id)]
-                            if target_index >= len(self.fulldat["angle"]):
-                                self.fulldat["angle"].extend([None] * (target_index - len(self.fulldat["angle"]) + 1))
-                            self.fulldat["angle"][target_index] = angle
-                            arrowtip = get_coord(colcoms[i][0], colcoms[i][1], angle, 5, True)
-                            col = (255,255,255) if id in ["blue","black"] else (0,0,0)
-                            cv2.arrowedLine(self.img_draw, colcoms[i], arrowtip, col, self.config.vis.orient_lwidth, tipLength = 0.4)
+                if create_vid or self.config.vis.show_tracking:
+                    vis.draw_scene_overlays(self.img_draw)
 
                 # Final drawing
                 #---------------------------------
-                # Draw the mask
-                if isinstance(self.maskimg, str):
-                    img_masked = cv2.bitwise_and(self.img_draw, self.img_draw, mask = self.img_mask)
-                    cv2.addWeighted(img_masked, self.config.vis.mask_opacity,
-                    self.img_draw, 1-self.config.vis.mask_opacity, 0, self.img_draw)
-
-                # Draw framenumber and per-frame contour info overlay
-                _info_lines = [f"frame {self.frame_nr}"] + _frame_info
-                _font = cv2.FONT_HERSHEY_SIMPLEX
-                _fsize, _pad = 0.38, 4
-                _dims = [cv2.getTextSize(l, _font, _fsize, 1)[0] for l in _info_lines]
-                _box_w = max(w for w, h in _dims) + 2 * _pad
-                _box_h = sum(h + _pad for w, h in _dims) + _pad
-                cv2.rectangle(self.img_draw, (0, 0), (_box_w, _box_h), (255, 255, 255), -1)
-                y = _pad
-                for line, (_, th) in zip(_info_lines, _dims):
-                    cv2.putText(self.img_draw, line, (_pad, y + th), _font, _fsize, (0, 0, 0), 1, cv2.LINE_AA)
-                    y += th + _pad
+                img_mask_draw = self.img_mask if isinstance(self.maskimg, str) else None
+                vis.draw_info_overlay(self.img_draw, img_mask_draw, self.frame_nr, _frame_info)
 
                 # Write video to file
                 if self.config.track.create_vid:
