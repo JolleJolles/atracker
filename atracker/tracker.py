@@ -627,7 +627,7 @@ class Tracker:
                         # Draw trajectories from per-ID deques (O(1) per fish)
                         draw_ids = sorted(tracked_ids) if self.thresh_type.startswith("bw") else [self.thresh_type]
                         for i, id in enumerate(draw_ids):
-                            trajdat_valid = list(traj_history.get(id, []))
+                            trajdat_valid = list(reversed(traj_history.get(id, [])))
                             if len(trajdat_valid) >= 2:
                                 if self.thresh_type.startswith("bw"):
                                     trajcol = _cols[(id - 1) % len(_cols)] if self.config.vis.idcol else _col_traj
