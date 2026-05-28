@@ -31,14 +31,23 @@ def filter_tracking_jumps(ids, coms, frame_nr, last_valid, max_framedist=200, pr
         if id in last_valid:
             prev_x, prev_y, prev_frame, prev_near_mask = last_valid[id]
             gap = frame_nr - prev_frame
-            allowed_jump = max_framedist * gap  # scales linearly — no cap, so fish can always be re-acquired
             dist = np.linalg.norm([c[0] - prev_x, c[1] - prev_y])
-            if dist > allowed_jump:
-                if prev_near_mask and cur_near_mask:
-                    pass  # accept: fish traversed the mask region
-                else:
+
+            if prev_near_mask and not cur_near_mask:
+                # Fish's last valid position was near the mask (entering shelter).
+                # Regardless of how many frames have passed, it can only exit close
+                # to where it entered — cap at one frame's worth of movement.
+                if dist > max_framedist:
                     filtered_coms.append((np.nan, np.nan))
                     continue
+            else:
+                allowed_jump = max_framedist * gap
+                if dist > allowed_jump:
+                    if prev_near_mask and cur_near_mask:
+                        pass  # accept: fish traversed the mask region
+                    else:
+                        filtered_coms.append((np.nan, np.nan))
+                        continue
 
         filtered_coms.append((c[0], c[1]))
         last_valid[id] = (c[0], c[1], frame_nr, cur_near_mask)
