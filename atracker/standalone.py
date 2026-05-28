@@ -67,9 +67,22 @@ def _make_config(fps=25, simple=True, show_tracking=False, create_vid=True,
     })
 
 
+def _atrk_path(path):
+    """Normalise a user-supplied path to a canonical .atrk path."""
+    # Strip numpy's auto-appended .npz if present
+    if path.endswith(".npz"):
+        path = path[:-4]
+    # Accept legacy .atcache extension
+    if path.endswith(".atcache"):
+        path = path[:-8] + ".atrk"
+    if not path.endswith(".atrk"):
+        path += ".atrk"
+    return path
+
+
 def save_atcache(path, img_bg, img_mask, threshinfo, roi):
     """
-    Save tracking setup to a single .atcache file.
+    Save tracking setup to a single .atrk file.
 
     Stores background image, mask image, threshold settings, and ROI in one
     compressed file. Load it later with load_atcache() or pass the path to
@@ -78,7 +91,7 @@ def save_atcache(path, img_bg, img_mask, threshinfo, roi):
     Parameters
     ----------
     path : str
-        Output path. The .atcache extension is appended if missing.
+        Output path. The .atrk extension is appended if missing.
     img_bg : np.ndarray
         Background image (BGR uint8).
     img_mask : np.ndarray or None
@@ -88,8 +101,7 @@ def save_atcache(path, img_bg, img_mask, threshinfo, roi):
     roi : tuple
         ((x1, y1), (x2, y2)) region-of-interest coordinates.
     """
-    if not path.endswith(".atcache"):
-        path += ".atcache"
+    path = _atrk_path(path)
     mask_arr = img_mask if img_mask is not None else np.array([], dtype=np.uint8)
     np.savez_compressed(
         path,
@@ -98,17 +110,20 @@ def save_atcache(path, img_bg, img_mask, threshinfo, roi):
         threshinfo=np.frombuffer(json.dumps(threshinfo).encode(), dtype=np.uint8),
         roi=np.frombuffer(json.dumps([list(roi[0]), list(roi[1])]).encode(), dtype=np.uint8),
     )
+    # numpy appends .npz automatically; rename back to the clean .atrk path
+    if os.path.exists(path + ".npz") and not os.path.exists(path):
+        os.rename(path + ".npz", path)
     lineprint(f"Settings saved: {path}")
 
 
 def load_atcache(path):
     """
-    Load tracking setup from a .atcache file.
+    Load tracking setup from a .atrk file.
 
     Parameters
     ----------
     path : str
-        Path to the .atcache file.
+        Path to the .atrk file (or legacy .atcache path).
 
     Returns
     -------
@@ -118,8 +133,9 @@ def load_atcache(path):
         threshinfo: dict
         roi       : ((x1, y1), (x2, y2)) or None
     """
-    if not path.endswith(".atcache"):
-        path += ".atcache"
+    path = _atrk_path(path)
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Settings file not found: {path}")
     data = np.load(path)
     img_mask = data["mask"] if data["mask"].size > 0 else None
     threshinfo = json.loads(data["threshinfo"].tobytes().decode())
@@ -191,15 +207,15 @@ def track_video(
         Last frame to track. Defaults to end of video.
     fps : int or None
         Override the video's stored frame rate.
-    save_settings : str or None
-        If given, saves background image, mask, thresholds, and ROI to this
-        path as a single .atcache file. Useful for re-tracking with the same
-        setup without repeating the GUI steps.
-    load_settings : str or None
-        Path to a .atcache file previously created by save_settings. Skips
-        background extraction and GUI steps for any settings found in the file.
-        Individual steps (draw_roi, draw_mask, set_threshold) can still be set
-        True to override loaded values.
+    save_settings : bool or str, default False
+        Save background, mask, thresholds, and ROI to a .atrk file after
+        setup. True saves alongside the video as {video_base}.atrk; a string
+        is treated as an explicit output path.
+    load_settings : bool or str, default False
+        Load a previously saved .atrk file to skip setup GUIs. True looks for
+        {video_base}.atrk next to the video; a string is an explicit path.
+        Individual GUI steps (draw_roi, draw_mask, set_threshold) can still be
+        set True to override specific loaded values.
 
     Returns
     -------
@@ -214,6 +230,13 @@ def track_video(
     video_name = os.path.basename(video_path)
     video_base = os.path.splitext(video_name)[0]
     output_dir = os.path.abspath(output) if output else video_dir
+
+    # Resolve True/False for save_settings / load_settings to actual paths
+    default_atrk = os.path.join(video_dir, video_base + ".atrk")
+    if save_settings is True:
+        save_settings = default_atrk
+    if load_settings is True:
+        load_settings = default_atrk
 
     # --- Video parameters ---
     _fps, width, height, fcount = get_vid_params(video_path)
