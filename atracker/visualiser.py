@@ -4,6 +4,7 @@ import os
 import cv2
 import time
 import numpy as np
+import pandas as pd
 from scipy.spatial.distance import cdist
 from scipy.optimize import linear_sum_assignment
 
@@ -18,36 +19,20 @@ from .contour_utils import draw_coordlist
 
 
 def addcanvas(img, dims, color):
-
-    # Create background canvas
-    bgcanvas = np.zeros((dims[1], dims[0], 3), dtype="uint8")
-    bgcanvas = bgcanvas + [color]
-
-    # Get ratio canvas width and height to that of image
-    wratio = dims[0]/float(img.shape[1])
-    hratio = dims[1]/float(img.shape[0])
-
-    # Now resize image to be able to fit in canvas with maximum possible size
+    bgcanvas = np.zeros((dims[1], dims[0], 3), dtype="uint8") + color
+    wratio = dims[0] / float(img.shape[1])
+    hratio = dims[1] / float(img.shape[0])
     resize = min(wratio, hratio)
     img = imgresize(img, resize)
-
-    # Place image in center of canvas if ratios are not identical
     if wratio == hratio:
         bgcanvas = img
-
-    # Image occupies 100% of width of canvas, thus change yspace
     elif wratio < hratio:
         extra = int((bgcanvas.shape[0] - img.shape[0]) / 2)
-        bgcanvas[extra:extra+img.shape[0],:] = img
-
-    # Image occupies 100% of height of canvas, thus change wspace
-    elif wratio>hratio:
+        bgcanvas[extra:extra + img.shape[0], :] = img
+    else:
         extra = int((bgcanvas.shape[1] - img.shape[1]) / 2)
-        bgcanvas[:,extra:extra+img.shape[1]] = img
-
-    bgcanvas = bgcanvas.astype(np.uint8)
-
-    return bgcanvas
+        bgcanvas[:, extra:extra + img.shape[1]] = img
+    return bgcanvas.astype(np.uint8)
 
 
 _ZONE_COLORS = [
@@ -60,155 +45,116 @@ _ZONE_COLORS = [
 ]
 
 
-class TrackVisualiser:
-    """Drawing helper for the real-time tracking loop (tracksingle)."""
+class Visualiser:
+    """
+    Unified visualisation for tracking and post-processing video output.
 
-    def __init__(self, config, thresh_types, objects, threshcolors, orientfrombw,
-                 mask_contours=None, wall_contours=None, zone_coords=None):
-        self.config = config
-        self.thresh_types = thresh_types
-        self.objects = objects
-        self.threshcolors = threshcolors
-        self.orientfrombw = orientfrombw
+    Instantiate once per video with scene geometry and visual settings, then:
+    - During live tracking: call draw_thresh_pass(), draw_orient_link(),
+      draw_scene_overlays(), and draw_info_overlay() per frame.
+    - For post-processing from a CSV: call render().
+    - For single-frame drawing: call draw_frame() directly.
+    """
 
-        # Pre-compute colours once per video
-        self.col_red       = namedcols("red")
-        self.col_lightgreen = namedcols("lightgreen")
-        self.col_orange    = namedcols("orange")
-        self.col_contour   = eval(config.vis.contour_col)
-        self.col_centre    = eval(config.vis.centre_col)
-        self.col_orient    = eval(config.vis.orient_col)
-        self.col_traj      = eval(config.vis.traj_col)
-        self.thresh_cols   = {t: namedcols(t) for t in thresh_types if not t.startswith("bw")}
-        self.cols          = uniqcols(max(1, objects))
+    def __init__(self, objects=1, thresh_types=None, threshcolors=False,
+                 orientfrombw=False, mask_contours=None, wall_contours=None,
+                 zone_coords=None, config=None):
+        self.objects       = max(1, int(objects))
+        self.thresh_types  = thresh_types or ["bw"]
+        self.threshcolors  = threshcolors
+        self.orientfrombw  = orientfrombw
         self.mask_contours = mask_contours
         self.wall_contours = wall_contours
         self.zone_coords   = zone_coords
 
-    def draw_thresh_pass(self, img_draw, img, img_thresh, conlist, allcons,
-                         ids, filtered_coms, traj_history, tracked_ids, thresh_type):
-        """
-        Draw one threshold-type pass onto img_draw.
-        conlist must already be subsetted to the ID'ed contours (same length as ids).
-        """
-        # Trajectories
-        draw_ids = sorted(tracked_ids) if thresh_type.startswith("bw") else [thresh_type]
-        for i, id in enumerate(draw_ids):
-            trajdat = list(reversed(traj_history.get(id, [])))
-            if len(trajdat) >= 2:
-                col = (self.cols[(id - 1) % len(self.cols)] if self.config.vis.idcol else self.col_traj
-                       if thresh_type.startswith("bw") else self.thresh_cols.get(thresh_type, self.col_traj))
-                draw_traj(img_draw, trajdat, col,
-                          self.config.vis.traj_minthick,
-                          self.config.vis.traj_maxthick,
-                          self.config.vis.traj_opacity)
+        cfg = config.vis if (config is not None and hasattr(config, "vis")) else None
 
-        if self.config.vis.trajs_below:
-            img_draw[img_thresh == 255] = img[img_thresh == 255]
+        def _cv(key, default):
+            v = getattr(cfg, key, None) if cfg is not None else None
+            return default if v is None else v
 
-        # All detected contours (thin red)
-        cv2.drawContours(img_draw, allcons, -1, self.col_red, 1)
+        # Core colours (config stores them as eval-able strings)
+        self.col_contour     = eval(str(_cv("contour_col", str(namedcols("blue")))))
+        self.col_com         = eval(str(_cv("centre_col",  str(namedcols("white")))))
+        self.col_orient      = eval(str(_cv("orient_col",  str(namedcols("white")))))
+        self.col_traj        = eval(str(_cv("traj_col",    str(namedcols("yellow")))))
+        self.col_red         = namedcols("red")
+        self.col_lightgreen  = namedcols("lightgreen")
+        self.col_orange      = namedcols("orange")
+        self.col_head        = namedcols("lightgreen")
+        self.col_tail        = namedcols("red")
+        self.col_skel        = namedcols("orange")
+        self.col_mask_pt     = namedcols("pink")
+        self.col_wall_pt     = namedcols("pink")
+        self.col_wall_fill   = namedcols("purple")
+        self.col_wall_border = namedcols("mediumpurple")
 
-        # ID'ed contours
-        is_merged = (self.objects > 1 and thresh_type.startswith("bw")
-                     and conlist.get("consmerged"))
-        contour_col = (128 if not thresh_type.startswith("bw")
-                       else self.col_contour if not is_merged else 128)
-        cv2.drawContours(img_draw, conlist["contour"], -1, contour_col, 1)
+        # Numeric style settings
+        self.idcol         = _cv("idcol",         True)
+        self.traj_minthick = float(_cv("traj_minthick", 6.4))
+        self.traj_maxthick = float(_cv("traj_maxthick", 9.0))
+        self.traj_opacity  = float(_cv("traj_opacity",  0.5))
+        self.centre_lwidth = int(  _cv("centre_lwidth", 13))
+        self.orient_lwidth = int(  _cv("orient_lwidth", 2))
+        self.orient_length = int(  _cv("orient_length", 13))
+        self.mask_opacity  = float(_cv("mask_opacity",  0.6))
+        self.box_opacity   = float(_cv("box_opacity",   0.7))
+        self.trajs_below   = bool( _cv("trajs_below",   False))
+        self.wall_opacity  = 0.6
 
-        # Per-object details: skeleton, tail, head/arrow, centroid, ID text
-        for i, id in enumerate(conlist["id"]):
-            if conlist["skeleton"][i] == conlist["skeleton"][i]:
-                img_draw = draw_coordlist(img_draw, conlist["skeleton"][i], self.col_orange)
-            if conlist["tail"][i] == conlist["tail"][i]:
-                cv2.circle(img_draw, conlist["tail"][i], 0, self.col_red, 6)
-            if conlist["head"][i] == conlist["head"][i]:
-                arrowtip = get_coord(conlist["head"][i][0], conlist["head"][i][1],
-                                     conlist["angle"][i], 13, True)
-                cv2.arrowedLine(img_draw, conlist["head"][i], arrowtip,
-                                self.col_orient, 1, tipLength=0.4)
-                cv2.circle(img_draw, conlist["head"][i], 0, self.col_lightgreen, 6)
-            if conlist["com"][i] == conlist["com"][i]:
-                idcol = (self.thresh_cols.get(thresh_type, self.col_centre)
-                         if not thresh_type.startswith("bw") else self.col_centre)
-                cv2.circle(img_draw, conlist["com"][i], 0, idcol,
-                           self.config.vis.centre_lwidth)
-                if thresh_type.startswith("bw"):
-                    draw_text(img_draw, str(id),
-                              (conlist["com"][i][0] - 4, conlist["com"][i][1] - 4),
-                              0.3, "black", 0, 1)
+        self.cols        = uniqcols(self.objects)
+        self.thresh_cols = {t: namedcols(t) for t in self.thresh_types
+                            if not t.startswith("bw")}
 
-    def draw_orient_link(self, img_draw, fulldat, frame_nr):
-        """
-        Compute and draw orientation arrows that link colour contours to their
-        paired bw contours. Also writes computed angles back into fulldat["angle"].
-        """
-        currframe_inds = [i for i, f in enumerate(fulldat["frame"]) if f == frame_nr]
-        ids = [id for i, id in enumerate(fulldat["id"]) if i in currframe_inds]
+    # ------------------------------------------------------------------
+    # Scene overlays  (walls, zones, mask border)
+    # ------------------------------------------------------------------
+    def draw_scene_overlays(self, img_draw,
+                            wall_contours=None, zone_coords=None,
+                            mask_contours=None):
+        """Draw wall fill/border, zone fills with labels, and mask border."""
+        wc = wall_contours  if wall_contours  is not None else self.wall_contours
+        zc = zone_coords    if zone_coords    is not None else self.zone_coords
+        mc = mask_contours  if mask_contours  is not None else self.mask_contours
 
-        if "angle" not in fulldat:
-            fulldat["angle"] = [None] * len(fulldat["frame"])
-
-        if not ids or len(ids) != 2 * len([i for i in ids if type(i) == str]):
-            return
-
-        coms = [(fulldat["cx"][i], fulldat["cy"][i]) for i in currframe_inds]
-        colids, colcoms = zip(*[(ids[i], com) for i, com in enumerate(coms)
-                                if type(ids[i]) == str])
-        bwids, bwcoms = zip(*[(ids[i], com) for i, com in enumerate(coms)
-                               if type(ids[i]) != str])
-        _, bw_inds = linear_sum_assignment(cdist(colcoms, bwcoms))
-
-        for i, id in enumerate(colids):
-            angle = int(points_to_angle(colcoms[i], bwcoms[bw_inds[i]], flip=True))
-            target_index = currframe_inds[ids.index(id)]
-            if target_index >= len(fulldat["angle"]):
-                fulldat["angle"].extend(
-                    [None] * (target_index - len(fulldat["angle"]) + 1))
-            fulldat["angle"][target_index] = angle
-            arrowtip = get_coord(colcoms[i][0], colcoms[i][1], angle, 5, True)
-            col = (255, 255, 255) if id in ["blue", "black"] else (0, 0, 0)
-            cv2.arrowedLine(img_draw, colcoms[i], arrowtip, col,
-                            self.config.vis.orient_lwidth, tipLength=0.4)
-
-    def draw_scene_overlays(self, img_draw):
-        """Draw wall contours, zone polygons with labels, and mask border on img_draw."""
-        if self.wall_contours is not None:
+        if wc is not None:
             overlay = img_draw.copy()
-            cv2.drawContours(overlay, self.wall_contours, -1, (160, 50, 160), -1)
+            cv2.drawContours(overlay, wc, -1, (160, 50, 160), -1)
             cv2.addWeighted(overlay, 0.35, img_draw, 0.65, 0, img_draw)
-            cv2.drawContours(img_draw, self.wall_contours, -1, (110, 30, 110), 2)
+            cv2.drawContours(img_draw, wc, -1, (110, 30, 110), 2)
 
-        if self.zone_coords is not None:
+        if zc is not None:
             overlay = img_draw.copy()
-            for zone_idx, coords in self.zone_coords.items():
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            for zone_idx, coords in zc.items():
                 contour = np.array([[[x, y]] for x, y in coords], dtype=np.int32)
                 col = _ZONE_COLORS[(zone_idx - 1) % len(_ZONE_COLORS)]
                 cv2.drawContours(overlay, [contour], -1, col, -1)
             cv2.addWeighted(overlay, 0.18, img_draw, 0.82, 0, img_draw)
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            for zone_idx, coords in self.zone_coords.items():
+            for zone_idx, coords in zc.items():
                 contour = np.array([[[x, y]] for x, y in coords], dtype=np.int32)
                 col = _ZONE_COLORS[(zone_idx - 1) % len(_ZONE_COLORS)]
                 cv2.drawContours(img_draw, [contour], -1, col, 2)
-                cx = int(np.mean([x for x, y in coords]))
-                cy = int(np.mean([y for x, y in coords]))
-                label = f"Z{zone_idx}"
-                cv2.putText(img_draw, label, (cx - 9, cy + 5), font, 0.4, (0, 0, 0), 2, cv2.LINE_AA)
-                cv2.putText(img_draw, label, (cx - 9, cy + 5), font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
+                cx = int(np.mean([x for x, _ in coords]))
+                cy = int(np.mean([y for _, y in coords]))
+                cv2.putText(img_draw, f"Z{zone_idx}", (cx - 9, cy + 5),
+                            font, 0.4, (0, 0, 0), 2, cv2.LINE_AA)
+                cv2.putText(img_draw, f"Z{zone_idx}", (cx - 9, cy + 5),
+                            font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
 
-        if self.mask_contours is not None:
-            cv2.drawContours(img_draw, self.mask_contours, -1, (180, 180, 180), 1)
+        if mc is not None:
+            cv2.drawContours(img_draw, mc, -1, (180, 180, 180), 1)
 
+    # ------------------------------------------------------------------
+    # Info overlay  (mask darkening + semi-transparent box)
+    # ------------------------------------------------------------------
     def _line_colour(self, line):
-        """Dark BGR colour for an info-box line, colour-coded by object ID."""
         if line.startswith("frame "):
             return (50, 50, 50)
         if line.startswith("ID"):
             id_str = line[2:line.index(":")] if ":" in line else line[2:]
             try:
-                id_int = int(id_str)
-                base = self.cols[(id_int - 1) % len(self.cols)]
+                base = self.cols[(int(id_str) - 1) % len(self.cols)]
                 return tuple(max(0, int(v * 0.55)) for v in base)
             except ValueError:
                 try:
@@ -219,13 +165,13 @@ class TrackVisualiser:
         return (80, 80, 80)
 
     def draw_info_overlay(self, img_draw, img_mask, frame_nr, frame_info):
-        """Draw mask overlay and a semi-transparent info box with per-ID colour coding."""
+        """Apply mask darkening and draw a semi-transparent info box."""
         if img_mask is not None:
             img_masked = cv2.bitwise_and(img_draw, img_draw, mask=img_mask)
-            cv2.addWeighted(img_masked, self.config.vis.mask_opacity,
-                            img_draw, 1 - self.config.vis.mask_opacity, 0, img_draw)
+            cv2.addWeighted(img_masked, self.mask_opacity,
+                            img_draw, 1 - self.mask_opacity, 0, img_draw)
 
-        lines = [f"frame {frame_nr}"] + frame_info
+        lines = [f"frame {frame_nr}"] + list(frame_info)
         font = cv2.FONT_HERSHEY_SIMPLEX
         fsize, pad = 0.38, 5
         dims = [cv2.getTextSize(ln, font, fsize, 1)[0] for ln in lines]
@@ -234,7 +180,8 @@ class TrackVisualiser:
 
         overlay = img_draw.copy()
         cv2.rectangle(overlay, (0, 0), (box_w, box_h), (255, 255, 255), -1)
-        cv2.addWeighted(overlay, 0.7, img_draw, 0.3, 0, img_draw)
+        cv2.addWeighted(overlay, self.box_opacity, img_draw,
+                        1 - self.box_opacity, 0, img_draw)
         cv2.rectangle(img_draw, (0, 0), (box_w - 1, box_h - 1), (140, 140, 140), 1)
 
         y = pad
@@ -243,505 +190,508 @@ class TrackVisualiser:
                         self._line_colour(ln), 1, cv2.LINE_AA)
             y += th + pad
 
+    # ------------------------------------------------------------------
+    # Unified per-frame drawing
+    # ------------------------------------------------------------------
+    def draw_frame(self, img, frame_data,
+                   img_bg=None, img_mask=None,
+                   roi=None, cropimg=True, resizeimg=1, resizetosmooth=False,
+                   # draw toggles
+                   draw_trajs=True, draw_trajs_behind=False,
+                   draw_contours=True, draw_all_contours=False,
+                   draw_skeleton=False,
+                   draw_centroid=True, draw_id=True,
+                   draw_head=True, draw_tail=True, draw_orient=True,
+                   draw_mask=True, draw_mask_pt=False,
+                   draw_walls_pt=False,
+                   draw_scene=True,
+                   draw_frame_nr=True, draw_info_box=False,
+                   draw_roi=False,
+                   # optional scene override (for ROI-adjusted coords in render())
+                   wall_contours=None, zone_coords=None,
+                   canvasdims=None, logo=None, logooffsets=(10, 10)):
+        """
+        Draw frame_data onto img and return the annotated frame.
 
-def visualise(data, videofile, img_bg = None, img_mask = None, img_thresh=None,
-              wallconts = None, zone_coords = None, roi = None, outfile = None,
-              framestep = 1,
-              displaystep = 25,
-              cropimg=True,
-              startframe = None,
-              stopframe = None,
-              writevideo = True,
-              showvideo = False,
-              videosuffix = "_V",
-              fps=25,
-              trajlength=50,
-              resize = 1,
-              smoothresize = False,
-              canvasdims = None,
-              logo=None,
-              logooffsets=(10,10),
-              drawwalls=True,
-              drawwallborder=True,
-              drawroi=True,
-              drawmask=True,
-              drawmaskborder=True,
-              drawtrajs=True,
-              drawtrajsbehind=False,
-              partrajopacity=0.5,
-              partrajcol = namedcols("yellow"),
-              parmaskptcol = namedcols("pink"),
-              parwallptcol = namedcols("pink"),
-              parcomcol = namedcols("white"),
-              pararrowcol = namedcols("white"),
-              parmaskptsize = 6,
-              parwallptsize = 6,
-              parwallsborderthick = 3,
-              parwallscol = namedcols("purple"),
-              drawwallsborder = True,
-              parwallsbordercol = namedcols("black"),
-              drawobjects = False,
-              drawcontours = False,
-              drawcentroid = True,
-              drawID = True,
-              draweyes = False,
-              drawvision = False,
-              draworientarrow = True,
-              drawhead = False,
-              drawtail = False,
-              drawframenr = True,
-              drawptonwalls = False,
-              drawptonmask = False,
-              drawskeleton = False):
-
-    # Setup data to show
-    startfr = min(data.frame) if startframe is None else startframe
-    stopfr = max(data.frame) if stopframe is None else stopframe
-    data = data.loc[(data.frame>=startfr) & (data.frame<=stopfr)].copy()
-    framelist = None if framestep <= 1 else list(data.iloc[list(range(1,len(data),framestep))]["frame"])
-
-    # Resize data
-    if resize != 1:
-        cols = ["cx","cy"]
-        if "fx" in data:
-            cols += ["fx","fy"]
-        if "tx" in data:
-            cols += ["tx","ty"]
-        if "mx" in data:
-            cols += ["mx","my"]
-        if "wx" in data:
-            cols += ["wx","wy"]
-        data[cols] = data[cols]*resize
-    if "com" not in data:
-        if "cx" in data:
-            data["com"] = [np.nan if np.isnan(a) else (int(a),int(b)) for a,b in zip(data.cx, data.cy)]
-    if "head" not in data:
-        if "fx" in data:
-            data["head"] = [np.nan if np.isnan(a) else (int(a),int(b)) for a,b in zip(data.fx, data.fy)]
-        else:
-            data["head"] = np.nan
-    if "tail" not in data:
-        if "tx" in data:
-            data["tail"] = [np.nan if np.isnan(a) else (int(a),int(b)) for a,b in zip(data.tx, data.ty)]
-    if "mx" in data:
-        data["maskpt"] = [np.nan if np.isnan(a) else (int(a),int(b)) for a,b in zip(data.mx, data.my)]
-    if "wx" in data:
-        data["wallpt"] = [np.nan if np.isnan(a) else (int(a),int(b)) for a,b in zip(data.wx, data.wy)]
-
-    if "ID" not in data:
-        data["ID"] = data.id
-
-    # Load video and set frame to startframe
-    cap = cv2.VideoCapture(videofile)
-    cap.set(cv2.CAP_PROP_POS_FRAMES, startfr-1)
-
-    # Get video dimensions
-    if roi is not None and cropimg:
-        vidw  = roi[1][0] - roi[0][0]
-        vidh =  roi[1][1] - roi[0][1]
-    else:
-        _,img = cap.read()
-        vidw, vidh = (img.shape[1],img.shape[0])
-
-    wallconts2 = wallconts
-    # Adjust wall coordinates for ROI crop
-    if roi is not None and wallconts is not None:
-        wallconts = [[[(coord[0][0]-roi[0][0],coord[0][1]-roi[0][1])] for coord in cont] for cont in wallconts]
-
-    # Adjust zone coordinates for ROI crop
-    if roi is not None and zone_coords is not None:
-        xoff, yoff = roi[0]
-        zone_coords = {k: [(x - xoff, y - yoff) for x, y in coords]
-                       for k, coords in zone_coords.items()}
-
-    # Mask stuff
-    if cropimg and roi is not None and img_mask is not None:
-        img_mask = crop(img_mask, roi[0], roi[1])
-    if resize != 1 and img_mask is not None:
-        img_mask = imgresize(img_mask, resize)
-
-    # Set up for video writing
-    if writevideo:
-        _outfile = outfile if outfile is not None else os.path.splitext(videofile)[0]+videosuffix+".mp4"
-        viddims = (vidw,vidh) if smoothresize or resize==1 else (int(vidw*resize),int(vidh*resize))
-        vidoutdims = canvasdims if canvasdims is not None else viddims
-        vidout = videowriter(_outfile, vidoutdims[0], vidoutdims[1], fps)
-
-    # Set up for video display
-    if showvideo:
-        cv2.namedWindow("Video", cv2.WINDOW_NORMAL)
-        cv2.resizeWindow("Video", vidw, vidh)
-
-
-    # Start the frame loop
-    print("starting frameloop..", end=" ")
-    t1 = time.time()
-    frame_nr = startfr
-    while cap.isOpened():
-        frameOK, img = cap.read()
-        stop, skip, frame_nr = framechecks(cap, frameOK, framelist, stopfr, displaystep)
-        if stop:
-            break
-        if skip:
-            continue
-        # Get data for drawing
-        framedat = data.loc[data["frame"]==frame_nr].copy()
-        framedat = framedat.to_dict('list')
-        framedat["trajdat"] = []
-        if len(framedat["frame"])==0:
-            framedat["frame"] = [frame_nr]
-        else:
-            tframes = list(range(frame_nr-trajlength+1,frame_nr+1))
-            for i,_ in enumerate(framedat["frame"]):
-                id = framedat["ID"][i]
-                framedat["trajdat"].append(list(data.query('ID==@id & frame in @tframes')["com"]))
-
-        # Draw everything on the image
-        img_draw = draw_frame(img, framedat, img_bg, img_mask, img_thresh=img_thresh,
-            roi=roi,
-            resizeimg=resize,
-            resizetosmooth=smoothresize,
-            cropimg=cropimg,
-            wallconts=wallconts, wallconts2=wallconts2,
-            zone_coords=zone_coords,
-            logo=logo,
-            logooffsets=logooffsets,
-            drawwalls=drawwalls,
-            drawwallsborder=drawwallsborder,
-            drawroi=drawroi,
-            drawmask=drawmask,
-            drawmaskborder=drawmaskborder,
-            drawtrajs=drawtrajs,
-            drawtrajsbehind=drawtrajsbehind,
-            partrajopacity=partrajopacity,
-            parwallsbordercol=parwallsbordercol,
-            partrajcol=partrajcol,
-            drawobjects=drawobjects,
-            drawcontours=drawcontours,
-            drawcentroid=drawcentroid,
-            drawID=drawID,
-            draworientarrow=draworientarrow,
-            drawhead=drawhead,
-            drawtail=drawtail,
-            drawframenr=drawframenr,
-            drawptonwalls=drawptonwalls,
-            drawskeleton=drawskeleton,
-            draweyes=draweyes,
-            drawvision=drawvision,
-            drawptonmask=drawptonmask,
-            canvasdims=canvasdims,
-            parmaskptcol=parmaskptcol,
-            parmaskptsize=parmaskptsize,
-            parwallptsize=parwallptsize,
-            parwallsborderthick=parwallsborderthick,
-            parwallscol=parwallscol,
-            parwallptcol=parwallptcol,
-            parcomcol=parcomcol,
-            pararrowcol=pararrowcol)
-
-        # Show video
-        if showvideo:
-            cv2.imshow("Video", img_draw)
-            key = cv2.waitKey(1) & 0xff
-            if key == 27:
-                break
-
-        # Write image to video
-        if writevideo:
-            vidout.write(img_draw)
-
-    # Close everything that is open
-    if showvideo:
-        cv2.destroyAllWindows()
-        cv2.waitKey(1)
-    if writevideo:
-        vidout.release()
-
-    # Final output
-    timediff = time.time()-t1
-    speed = str(round((frame_nr - startfr)/float(timediff), 1))
-    lineprint("Completed in "+"%.2f" % timediff+" s at "+speed+" fps")
-
-
-def draw_frame(img, framedat, img_bg = None, img_mask = None, img_thresh = None,
-               roi = None, wallconts=None, wallconts2=None, zone_coords=None,
-               cropimg = True,
-               resizeimg = 1,
-               resizetosmooth = True,
-               drawobjects = False,
-               drawtrajs = True,
-               drawtrajsbehind = False,
-               drawcontours = True,
-               drawskeleton = True,
-               drawcentroid = True,
-               drawID = True,
-               drawhead = True,
-               drawtail = True,
-               draweyes = False,
-               draworientarrow = True,
-               drawvision = False,
-               drawroi = False,
-               drawsegments = False,
-               drawmask = True,
-               drawmaskborder = True,
-               drawptonmask = True,
-               drawwalls = False,
-               drawwallsborder = True,
-               drawptonwalls = True,
-               drawframenr = True,
-               drawinfobox = False,
-               canvasdims = None,
-               logo = None,
-               logooffsets = (10,10),
-               partrajcol = namedcols("yellow"),
-               parconcol = namedcols("blue"),
-               parskelcol = namedcols("orange"),
-               parcomcol = namedcols("white"),
-               paridcol = namedcols("black"),
-               parheadcol = namedcols("lightgreen"),
-               partailcol = namedcols("red"),
-               pararrowcol = namedcols("white"),
-               parroimaskcol = namedcols("black"),
-               parwallscol = namedcols("purple"),
-               parwallsbordercol = namedcols("mediumpurple"),
-               parcanvascol = namedcols("black"),
-               parmaskptcol = namedcols("pink"),
-               parwallptcol = namedcols("pink"),
-               partrajopacity = 0.5,
-               partrajminthick = 6.4,
-               partrajmaxthick = 9,
-               parconthick = 1,
-               parcomdotsize = 12,
-               paridsize = 0.3,
-               parheaddotsize = 6,
-               partaildotsize = 6,
-               pararrowlen = 13,
-               pararrowtiplen = 0.4,
-               parframesize = 0.8,
-               parwallsborderthick = 3,
-               parmaskptsize = 6,
-               parwallptsize = 6,
-               parroimaskopacity = 0.6,
-               parmaskopacity = 0.6,
-               parwallsopacity = 0.6):
-
-        # 1) Crop image
-        #--------------------
+        frame_data keys
+        ---------------
+        ID       : list of object identifiers
+        com      : list of (cx, cy) tuples or np.nan
+        head     : list of (fx, fy) or np.nan          (optional)
+        tail     : list of (tx, ty) or np.nan          (optional)
+        orient   : list of angle floats or np.nan      (optional)
+        heading  : list of angle floats or np.nan      (fallback for orient)
+        trajdat  : list of [(cx,cy),...] per object
+        maskpt   : list of (mx, my) or np.nan          (optional)
+        wallpt   : list of (wx, wy) or np.nan          (optional)
+        contours : list of cv2 contour arrays          (optional, tracking)
+        allcons  : list of all detected contours        (optional, tracking)
+        skeleton : list of skeleton coord lists         (optional)
+        frame    : frame number (int or list with one int)
+        area     : list of float areas                  (optional, for info box)
+        aspect_ratio : list of floats                  (optional, for info box)
+        """
+        # 1) Crop
         if cropimg and roi is not None:
             img = crop(img, roi[0], roi[1])
-
         if resizetosmooth:
-            dims = (img.shape[1], img.shape[0])
+            orig_dims = (img.shape[1], img.shape[0])
 
-        # 2) Resize image
-        #--------------------
+        # 2) Resize
         if resizeimg != 1:
-            img = imgresize(img, resizeimg)
-            img_bg = imgresize(img_bg, resizeimg)
+            img    = imgresize(img, resizeimg)
+            if img_bg is not None and not isinstance(img_bg, str):
+                img_bg = imgresize(img_bg, resizeimg)
 
-        # Copy image for drawing
         img_draw = img.copy()
 
-        # 3) Draw background
-        #--------------------
-        if type(img_bg)==str:
-            if img_bg == "white":
-                img_draw = np.zeros(img_draw.shape, dtype="uint8") + 255
+        # 3) Background
+        if isinstance(img_bg, str) and img_bg == "white":
+            img_draw = np.zeros(img_draw.shape, dtype="uint8") + 255
         elif img_bg is not None:
             img_nobg = cv2.absdiff(img_draw, img_bg)
             if img_mask is not None:
                 img_nobg = cv2.bitwise_and(img_nobg, img_mask)
-                img_nobg = 255-cv2.bitwise_not(img_nobg)
-            img_draw = 255-img_nobg
+                img_nobg = 255 - cv2.bitwise_not(img_nobg)
+            img_draw = np.asarray(255 - img_nobg)
 
-        # 4) Draw trajectories
-        #--------------------
-        if drawtrajs:
-            cols = uniqcols(len(np.unique(framedat["ID"])))
-            for i,_ in enumerate(framedat["trajdat"]):
-                if partrajcol is not None:
-                    trajcol = partrajcol 
+        # 4) Trajectories
+        ids     = frame_data.get("ID", [])
+        trajdat = frame_data.get("trajdat", [])
+        if draw_trajs and trajdat:
+            for i, traj in enumerate(trajdat):
+                if len(traj) < 2:
+                    continue
+                id_ = ids[i] if i < len(ids) else i + 1
+                if self.idcol and isinstance(id_, (int, np.integer)):
+                    col = self.cols[(int(id_) - 1) % len(self.cols)]
+                elif isinstance(id_, str) and not id_.startswith("F"):
+                    col = self.thresh_cols.get(id_, self.col_traj)
                 else:
-                    trajcol = namedcols(framedat["ID"][i]) if (type(framedat["ID"][i])==str and framedat["ID"][i][0]!="F") else cols[i]
-                draw_traj(img_draw, framedat["trajdat"][i], trajcol, partrajminthick,
-                          partrajmaxthick, partrajopacity)
+                    col = self.col_traj
+                draw_traj(img_draw, traj, col,
+                          self.traj_minthick, self.traj_maxthick, self.traj_opacity)
 
-        # 5) Draw black shapes
-        #--------------------
-        if drawobjects and "contours" in framedat:
-            cv2.drawContours(img_draw, framedat["contours"], -1, 0, -1)
+        # 5) All detected contours in red (tracking only)
+        if draw_all_contours and frame_data.get("allcons"):
+            cv2.drawContours(img_draw, frame_data["allcons"], -1, self.col_red, 1)
 
-        # 6) Draw trajectories behind objects
-        #--------------------
-        if drawtrajsbehind and not drawobjects and img_thresh is not None:
-            img_draw[img_thresh == 255] = img[img_thresh == 255]
+        # 6) Trajectories behind objects
+        if draw_trajs_behind and frame_data.get("img_thresh") is not None:
+            img_draw[frame_data["img_thresh"] == 255] = img[frame_data["img_thresh"] == 255]
 
-        # 7) Draw contours
-        #--------------------
-        if drawcontours and "contours" in framedat:
-            cv2.drawContours(img_draw, framedat["contours"], -1, parconcol, int(parconthick*resizeimg))
+        # 7) ID'd contours
+        if draw_contours and frame_data.get("contours"):
+            cv2.drawContours(img_draw, frame_data["contours"], -1, self.col_contour, 1)
 
-        # Draw furter individual object data
-        for i,_ in enumerate(framedat["ID"]):
-            col = True if len(framedat["ID"])>3 else False
+        # Per-object details
+        coms      = frame_data.get("com",          [])
+        heads     = frame_data.get("head",         [])
+        tails     = frame_data.get("tail",         [])
+        orients   = frame_data.get("orient",       [])
+        headings  = frame_data.get("heading",      [])
+        skeletons = frame_data.get("skeleton",     [])
+        mask_pts  = frame_data.get("maskpt",       [])
+        wall_pts  = frame_data.get("wallpt",       [])
 
-            # 8) Draw skeleton
-            #--------------------
-            if drawskeleton and "skeleton" in framedat:
-                img_draw = draw_coordlist(img_draw, framedat["skeleton"][i], parskelcol)
+        for i, id_ in enumerate(ids):
+            com = coms[i] if i < len(coms) else np.nan
+            com_valid = com == com  # NaN check
 
-            # 9) Draw centroid
-            #--------------------
-            if drawcentroid:
-                comcol = namedcols(framedat["ID"][i]) if (type(framedat["ID"][i])==str and framedat["ID"][i][0]!="F") else parcomcol
-                if framedat["com"][i]==framedat["com"][i]:
-                    cv2.circle(img_draw, framedat["com"][i], 0, comcol, int(parcomdotsize*resizeimg))
+            # 8) Skeleton
+            if draw_skeleton and i < len(skeletons):
+                sk = skeletons[i]
+                if sk == sk:
+                    img_draw = draw_coordlist(img_draw, sk, self.col_skel)
 
-            # 10) Draw ID
-            #--------------------
-            if drawID:
-                if framedat["com"][i]==framedat["com"][i]:
-                    if i<9:
-                        textloc = (framedat["com"][i][0]-int(4*resizeimg),framedat["com"][i][1]-int(4*resizeimg))
-                    else:
-                        textloc = (framedat["com"][i][0]-int(6*resizeimg),framedat["com"][i][1]-int(4*resizeimg))
-                    idcol = "white" if type(framedat["ID"][i])==str else paridcol
-                    draw_text(img_draw, str(i+1), textloc, paridsize*resizeimg, idcol, 0, 1)
+            # 9) Centroid
+            if draw_centroid and com_valid:
+                comcol = (self.thresh_cols.get(id_, self.col_com)
+                          if isinstance(id_, str) and not id_.startswith("F")
+                          else self.col_com)
+                cv2.circle(img_draw, com, 0, comcol, int(12 * resizeimg))
 
-            # 11) Draw head
-            #--------------------
-            if drawhead and "head" in framedat:
-                if framedat["head"][i]==framedat["head"][i]:
-                    cv2.circle(img_draw, framedat["head"][i], 0, parheadcol, int(parheaddotsize*resizeimg))
+            # 10) ID text
+            if draw_id and com_valid:
+                off = int(4 * resizeimg)
+                draw_text(img_draw, str(id_),
+                          (com[0] - off, com[1] - off),
+                          0.3 * resizeimg, "black", 0, 1)
 
-            # 12) Draw tail
-            #--------------------
-            if drawtail and "tail" in framedat:
-                if framedat["tail"][i]==framedat["tail"][i]:
-                    cv2.circle(img_draw, framedat["tail"][i], 0, partailcol, int(partaildotsize*resizeimg))
+            # 11) Head
+            if draw_head and i < len(heads):
+                h = heads[i]
+                if h == h:
+                    cv2.circle(img_draw, h, 0, self.col_head, int(6 * resizeimg))
 
-            # 13) Draw eyes
-            #--------------------
-            # TO ADD
+            # 12) Tail
+            if draw_tail and i < len(tails):
+                t = tails[i]
+                if t == t:
+                    cv2.circle(img_draw, t, 0, self.col_tail, int(6 * resizeimg))
 
-            # 14) Draw orientation arrow
-            #--------------------
-            if draworientarrow:
-                tip = None 
-                if "orient" in framedat:
-                    if framedat["orient"][i]==framedat["orient"][i]:
-                        tip = get_coord(framedat["cx"][i], framedat["cy"][i], framedat["orient"][i], int(pararrowlen*resizeimg), True)
-                else:
-                    if framedat["heading"][i]==framedat["heading"][i]:
-                        tip = get_coord(framedat["cx"][i], framedat["cy"][i], framedat["heading"][i], int(pararrowlen*resizeimg), True)
-                if tip is not None:
-                    cv2.arrowedLine(img_draw, (int(framedat["cx"][i]), int(framedat["cy"][i])), tip, pararrowcol, 1, tipLength = pararrowtiplen*resizeimg)
+            # 14) Orientation arrow
+            if draw_orient and com_valid:
+                angle = None
+                if i < len(orients) and orients[i] == orients[i]:
+                    angle = orients[i]
+                elif i < len(headings) and headings[i] == headings[i]:
+                    angle = headings[i]
+                if angle is not None:
+                    tip = get_coord(com[0], com[1], angle,
+                                    int(self.orient_length * resizeimg), True)
+                    cv2.arrowedLine(img_draw, com, tip, self.col_orient,
+                                    self.orient_lwidth, tipLength=0.4 * resizeimg)
 
-            # 15) Draw vision
-            #--------------------
-            # TO ADD
-
-        # 16) Draw ROI box
-        #--------------------
-        if not cropimg and drawroi and roi is not None:
+        # 16) ROI outline
+        if draw_roi and not cropimg and roi is not None:
             stencil = np.zeros(img.shape).astype(img.dtype)
-            stencil[:] = parroimaskcol
-            tl, br = [tuple(int(i*resizeimg) for i in pt) for pt in roi]
+            stencil[:] = namedcols("black")
+            tl, br = [tuple(int(c * resizeimg) for c in pt) for pt in roi]
             stencil[tl[1]:br[1], tl[0]:br[0]] = crop(img_draw, tl, br)
-            cv2.addWeighted(stencil, parroimaskopacity, img_draw, 1-parroimaskopacity, 0, img_draw)
+            cv2.addWeighted(stencil, 0.6, img_draw, 0.4, 0, img_draw)
 
-        # 17) Draw zones
-        #--------------------
-        if zone_coords is not None:
-            overlay = img_draw.copy()
-            for zone_idx, coords in zone_coords.items():
-                scaled = [(int(x * resizeimg), int(y * resizeimg)) for x, y in coords]
-                contour = np.array([[[x, y]] for x, y in scaled], dtype=np.int32)
-                col = _ZONE_COLORS[(zone_idx - 1) % len(_ZONE_COLORS)]
-                cv2.drawContours(overlay, [contour], -1, col, -1)
-            cv2.addWeighted(overlay, 0.18, img_draw, 0.82, 0, img_draw)
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            for zone_idx, coords in zone_coords.items():
-                scaled = [(int(x * resizeimg), int(y * resizeimg)) for x, y in coords]
-                contour = np.array([[[x, y]] for x, y in scaled], dtype=np.int32)
-                col = _ZONE_COLORS[(zone_idx - 1) % len(_ZONE_COLORS)]
-                cv2.drawContours(img_draw, [contour], -1, col, 2)
-                cx = int(np.mean([x for x, y in scaled]))
-                cy = int(np.mean([y for x, y in scaled]))
-                cv2.putText(img_draw, f"Z{zone_idx}", (cx - 9, cy + 5), font, 0.4,
-                            (0, 0, 0), 2, cv2.LINE_AA)
-                cv2.putText(img_draw, f"Z{zone_idx}", (cx - 9, cy + 5), font, 0.4,
-                            (255, 255, 255), 1, cv2.LINE_AA)
+        # 17) Scene overlays (walls, zones, mask border)
+        if draw_scene:
+            self.draw_scene_overlays(img_draw,
+                                     wall_contours=wall_contours,
+                                     zone_coords=zone_coords)
 
-        # 18) Draw mask
-        #--------------------
-        if drawmask and img_mask is not None:
+        # 18) Mask darkening + nearest-mask dot
+        if draw_mask and img_mask is not None:
             img_masked = cv2.bitwise_and(img_draw, img_mask)
-            cv2.addWeighted(img_masked, parmaskopacity, img_draw, 1-parmaskopacity, 0, img_draw)
-            if drawptonmask and "maskpt" in framedat:
-                for i,_ in enumerate(framedat["trajdat"]):
-                    if framedat["maskpt"][i]==framedat["maskpt"][i]:
-                        cv2.circle(img_draw, framedat["maskpt"][i], 0, parmaskptcol, int(parmaskptsize*resizeimg))
+            cv2.addWeighted(img_masked, self.mask_opacity,
+                            img_draw, 1 - self.mask_opacity, 0, img_draw)
+            if draw_mask_pt:
+                for mpt in mask_pts:
+                    if mpt == mpt:
+                        cv2.circle(img_draw, mpt, 0, self.col_mask_pt,
+                                   int(6 * resizeimg))
 
-        # 19) Draw walls
-        #--------------------
-        if (drawwalls or drawwallsborder) and wallconts is not None:
-            #wallconts = [tuple(int(i*resizeimg) for i in pt) for pt in wallconts]
-            wallconts = [[[list(np.round(i*resizeimg).astype(int))] for pt in cont for i in pt] for cont in wallconts]
-            img_masked = img_draw.copy()
-            if drawwallsborder:
-                #wallconts2 = [tuple(int(i*resizeimg) for i in pt) for pt in wallconts2]
-                thick = int(parwallsborderthick*resizeimg)
-                #cv2.polylines(img_masked, wallconts, 0, parwallsbordercol, thick)
-                cv2.drawContours(img_masked, wallconts2, contourIdx=-1, color=parwallsbordercol,thickness=thick)
-            #cv2.fillPoly(img_masked, wallconts, parwallscol)
-            if drawwalls:
-                cv2.drawContours(img_masked, wallconts2, contourIdx=-1, color=parwallscol,thickness=-1)
-            cv2.addWeighted(img_masked, parwallsopacity, img_draw, 1-parwallsopacity, 0, img_draw)
-            if drawptonwalls and "wallpt" in framedat:
-                for i,_ in enumerate(framedat["trajdat"]):
-                    if framedat["wallpt"][i]==framedat["wallpt"][i]:
-                        cv2.circle(img_draw, framedat["wallpt"][i], 0, parwallptcol, int(parwallptsize*resizeimg))
+        # 19) Nearest-wall dot
+        if draw_walls_pt:
+            for wpt in wall_pts:
+                if wpt == wpt:
+                    cv2.circle(img_draw, wpt, 0, self.col_wall_pt, int(6 * resizeimg))
 
-        # 20) Draw framenr
-        #--------------------
-        if drawframenr and not drawinfobox:
-            draw_text(img_draw, str(list(framedat["frame"])[0]), (0,0), parframesize*resizeimg, margin=5, bgcol="white")
+        # 20) Frame number
+        fn = frame_data.get("frame")
+        if isinstance(fn, list):
+            fn = fn[0] if fn else None
+        if draw_frame_nr and not draw_info_box and fn is not None:
+            draw_text(img_draw, str(fn), (0, 0), 0.8 * resizeimg,
+                      margin=5, bgcol="white")
 
-        # 21) Draw infobox
-        #--------------------
-        if drawinfobox:
-            _info_lines = [f"frame {list(framedat['frame'])[0]}"]
-            for i, id in enumerate(framedat.get("ID", [])):
-                line = f"ID{id}"
-                if "area" in framedat and i < len(framedat["area"]) and framedat["area"][i] == framedat["area"][i]:
-                    line += f" area={int(framedat['area'][i])}"
-                if "aspect_ratio" in framedat and i < len(framedat["aspect_ratio"]) and framedat["aspect_ratio"][i] == framedat["aspect_ratio"][i]:
-                    line += f" ar={framedat['aspect_ratio'][i]:.2f}"
-                _info_lines.append(line)
-            _font = cv2.FONT_HERSHEY_SIMPLEX
-            _fsize, _pad = 0.38, 4
-            _dims = [cv2.getTextSize(l, _font, _fsize, 1)[0] for l in _info_lines]
-            _box_w = max(w for w, h in _dims) + 2 * _pad
-            _box_h = sum(h + _pad for w, h in _dims) + _pad
-            cv2.rectangle(img_draw, (0, 0), (_box_w, _box_h), (255, 255, 255), -1)
-            y = _pad
-            for line, (_, th) in zip(_info_lines, _dims):
-                cv2.putText(img_draw, line, (_pad, y + th), _font, _fsize, (0, 0, 0), 1, cv2.LINE_AA)
-                y += th + _pad
+        # 21) Info box
+        if draw_info_box and fn is not None:
+            info_lines = [f"frame {fn}"]
+            areas = frame_data.get("area", [])
+            ars   = frame_data.get("aspect_ratio", [])
+            for i, id_ in enumerate(ids):
+                line = f"ID{id_}"
+                if i < len(areas) and areas[i] == areas[i]:
+                    line += f" area={int(areas[i])}"
+                if i < len(ars) and ars[i] == ars[i]:
+                    line += f" ar={ars[i]:.2f}"
+                info_lines.append(line)
+            font  = cv2.FONT_HERSHEY_SIMPLEX
+            fsize = 0.38
+            pad   = 4
+            tdims = [cv2.getTextSize(l, font, fsize, 1)[0] for l in info_lines]
+            if tdims:
+                box_w = max(w for w, _ in tdims) + 2 * pad
+                box_h = sum(h + pad for _, h in tdims) + pad
+                cv2.rectangle(img_draw, (0, 0), (box_w, box_h), (255, 255, 255), -1)
+                y = pad
+                for line, (_, th) in zip(info_lines, tdims):
+                    cv2.putText(img_draw, line, (pad, y + th), font, fsize,
+                                self._line_colour(line), 1, cv2.LINE_AA)
+                    y += th + pad
 
-        # Return to normal size when resizing for smoothing
+        # Return to original size (smooth-resize mode)
         if resizetosmooth and resizeimg != 1:
-            img_draw = imgresize(img_draw, dims = dims, back = True)
+            img_draw = imgresize(img_draw, dims=orig_dims, back=True)
 
-        # 22) Add image to canvas
-        #--------------------
+        # Canvas + logo
         if canvasdims is not None:
-            img_draw = addcanvas(img_draw, canvasdims, parcanvascol)
-
-        # 23) Draw logo
-        #--------------------
+            img_draw = addcanvas(img_draw, canvasdims, namedcols("black"))
         if logo is not None:
             img_draw = add_transimg(img_draw, logo, logooffsets)
 
         return img_draw
+
+    # ------------------------------------------------------------------
+    # Batch post-processing
+    # ------------------------------------------------------------------
+    def render(self, data, videofile=None, outfile=None,
+               img_bg=None, img_mask=None, roi=None,
+               startframe=None, stopframe=None,
+               fps=25, resize=1, trajlength=50,
+               writevideo=True, showvideo=False,
+               videosuffix="_V", canvasdims=None,
+               logo=None, logooffsets=(10, 10),
+               framestep=1, displaystep=25, cropimg=True,
+               **draw_kwargs):
+        """
+        Create a visualisation video from CSV data.
+
+        Parameters
+        ----------
+        data      : DataFrame or path to CSV.
+        videofile : path to original video; None → draw on a blank canvas.
+        outfile   : output path; default is videofile stem + videosuffix + .mp4.
+        **draw_kwargs : forwarded to draw_frame() for every frame.
+        """
+        if isinstance(data, str):
+            data = pd.read_csv(data)
+
+        startfr = int(data.frame.min()) if startframe is None else int(startframe)
+        stopfr  = int(data.frame.max()) if stopframe  is None else int(stopframe)
+        data = data.loc[(data.frame >= startfr) & (data.frame <= stopfr)].copy()
+        framelist = (None if framestep <= 1
+                     else list(data.iloc[list(range(1, len(data), framestep))]["frame"]))
+
+        # Rescale coordinate columns
+        if resize != 1:
+            for col in ["cx", "cy", "fx", "fy", "tx", "ty", "mx", "my", "wx", "wy"]:
+                if col in data:
+                    data[col] = data[col] * resize
+
+        # Build tuple columns from x/y pairs
+        def _ptcol(xc, yc):
+            return [np.nan if not np.isfinite(float(a)) else (int(a), int(b))
+                    for a, b in zip(data[xc].values, data[yc].values)]
+
+        if "com" not in data and "cx" in data:
+            data["com"] = _ptcol("cx", "cy")
+        if "head" not in data and "fx" in data:
+            data["head"] = _ptcol("fx", "fy")
+        if "tail" not in data and "tx" in data:
+            data["tail"] = _ptcol("tx", "ty")
+        if "maskpt" not in data and "mx" in data:
+            data["maskpt"] = _ptcol("mx", "my")
+        if "wallpt" not in data and "wx" in data:
+            data["wallpt"] = _ptcol("wx", "wy")
+        if "ID" not in data and "id" in data:
+            data["ID"] = data["id"]
+
+        # ROI-adjust scene overlays (they're in full-image coords)
+        _wall_conts  = self.wall_contours
+        _zone_coords = self.zone_coords
+        if roi is not None:
+            xo, yo = roi[0]
+            if _wall_conts is not None:
+                _wall_conts = [[[(c[0][0] - xo, c[0][1] - yo)] for c in cont]
+                               for cont in _wall_conts]
+            if _zone_coords is not None:
+                _zone_coords = {k: [(x - xo, y - yo) for x, y in coords]
+                                for k, coords in _zone_coords.items()}
+
+        # Crop and resize mask
+        _img_mask = img_mask
+        if cropimg and roi is not None and _img_mask is not None:
+            _img_mask = crop(_img_mask, roi[0], roi[1])
+        if resize != 1 and _img_mask is not None:
+            _img_mask = imgresize(_img_mask, resize)
+
+        # Video / canvas dimensions
+        if videofile is not None:
+            cap = cv2.VideoCapture(videofile)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, startfr - 1)
+            if roi is not None and cropimg:
+                vidw = roi[1][0] - roi[0][0]
+                vidh = roi[1][1] - roi[0][1]
+            else:
+                ok, _f = cap.read()
+                vidw, vidh = (_f.shape[1], _f.shape[0]) if ok else (640, 480)
+                cap.set(cv2.CAP_PROP_POS_FRAMES, startfr - 1)
+        else:
+            cap = None
+            if _img_mask is not None:
+                vidh, vidw = _img_mask.shape[:2]
+            elif img_bg is not None and not isinstance(img_bg, str):
+                vidh, vidw = img_bg.shape[:2]
+            else:
+                vidw, vidh = 640, 480
+
+        if resize != 1:
+            vidw, vidh = int(vidw * resize), int(vidh * resize)
+
+        if writevideo:
+            if outfile is None:
+                stem = os.path.splitext(videofile)[0] if videofile else "output"
+                outfile = stem + videosuffix + ".mp4"
+            vidoutdims = canvasdims if canvasdims is not None else (vidw, vidh)
+            vidout = videowriter(outfile, vidoutdims[0], vidoutdims[1], fps)
+
+        if showvideo:
+            cv2.namedWindow("Video", cv2.WINDOW_NORMAL)
+            cv2.resizeWindow("Video", vidw, vidh)
+
+        print("starting frameloop..", end=" ")
+        t1 = time.time()
+        frame_nr = startfr
+
+        if cap is not None:
+            # Video-driven frame loop
+            while cap.isOpened():
+                frameOK, img = cap.read()
+                stop, skip, frame_nr = framechecks(
+                    cap, frameOK, framelist, stopfr, displaystep)
+                if stop:
+                    break
+                if skip:
+                    continue
+
+                frame_data = _build_frame_data(data, frame_nr, trajlength)
+                img_draw = self.draw_frame(
+                    img, frame_data,
+                    img_bg=img_bg, img_mask=_img_mask,
+                    roi=roi, cropimg=cropimg, resizeimg=resize,
+                    wall_contours=_wall_conts, zone_coords=_zone_coords,
+                    canvasdims=canvasdims, logo=logo, logooffsets=logooffsets,
+                    **draw_kwargs)
+
+                if showvideo:
+                    cv2.imshow("Video", img_draw)
+                    if cv2.waitKey(1) & 0xff == 27:
+                        break
+                if writevideo:
+                    vidout.write(img_draw)
+        else:
+            # No video: iterate over frames that have data
+            for frame_nr in sorted(data["frame"].unique()):
+                frame_nr = int(frame_nr)
+                if frame_nr < startfr or frame_nr > stopfr:
+                    continue
+                img = np.zeros((vidh, vidw, 3), dtype="uint8")
+                frame_data = _build_frame_data(data, frame_nr, trajlength)
+                img_draw = self.draw_frame(
+                    img, frame_data,
+                    img_bg=img_bg, img_mask=_img_mask,
+                    roi=None, cropimg=False, resizeimg=1,
+                    wall_contours=_wall_conts, zone_coords=_zone_coords,
+                    canvasdims=canvasdims, logo=logo, logooffsets=logooffsets,
+                    **draw_kwargs)
+
+                if showvideo:
+                    cv2.imshow("Video", img_draw)
+                    if cv2.waitKey(1) & 0xff == 27:
+                        break
+                if writevideo:
+                    vidout.write(img_draw)
+
+        if cap is not None:
+            cap.release()
+        if showvideo:
+            cv2.destroyAllWindows()
+            cv2.waitKey(1)
+        if writevideo:
+            vidout.release()
+
+        timediff = time.time() - t1
+        speed = round((frame_nr - startfr) / max(timediff, 0.001), 1)
+        lineprint(f"Completed in {timediff:.2f}s at {speed}fps")
+
+    # ------------------------------------------------------------------
+    # Tracking-specific methods
+    # ------------------------------------------------------------------
+    def draw_thresh_pass(self, img_draw, img, img_thresh, conlist, allcons,
+                         ids, filtered_coms, traj_history, tracked_ids, thresh_type):
+        """Draw one threshold-type pass onto img_draw during live tracking."""
+        # Trajectories
+        draw_ids = sorted(tracked_ids) if thresh_type.startswith("bw") else [thresh_type]
+        for id_ in draw_ids:
+            trajdat = list(reversed(traj_history.get(id_, [])))
+            if len(trajdat) >= 2:
+                if not thresh_type.startswith("bw"):
+                    col = self.thresh_cols.get(thresh_type, self.col_traj)
+                elif self.idcol and isinstance(id_, (int, np.integer)):
+                    col = self.cols[(int(id_) - 1) % len(self.cols)]
+                else:
+                    col = self.col_traj
+                draw_traj(img_draw, trajdat, col,
+                          self.traj_minthick, self.traj_maxthick, self.traj_opacity)
+
+        if self.trajs_below:
+            img_draw[img_thresh == 255] = img[img_thresh == 255]
+
+        # All detected contours (thin red)
+        cv2.drawContours(img_draw, allcons, -1, self.col_red, 1)
+
+        # ID'd contours
+        is_merged = (self.objects > 1 and thresh_type.startswith("bw")
+                     and conlist.get("consmerged"))
+        contour_col = (128 if not thresh_type.startswith("bw")
+                       else self.col_contour if not is_merged else 128)
+        cv2.drawContours(img_draw, conlist["contour"], -1, contour_col, 1)
+
+        # Per-object details
+        for i, id_ in enumerate(conlist["id"]):
+            sk = conlist["skeleton"][i]
+            if sk == sk:
+                img_draw = draw_coordlist(img_draw, sk, self.col_orange)
+            t = conlist["tail"][i]
+            if t == t:
+                cv2.circle(img_draw, t, 0, self.col_red, 6)
+            h = conlist["head"][i]
+            if h == h:
+                arrowtip = get_coord(h[0], h[1], conlist["angle"][i], 13, True)
+                cv2.arrowedLine(img_draw, h, arrowtip,
+                                self.col_orient, 1, tipLength=0.4)
+                cv2.circle(img_draw, h, 0, self.col_lightgreen, 6)
+            c = conlist["com"][i]
+            if c == c:
+                idcol = (self.thresh_cols.get(thresh_type, self.col_com)
+                         if not thresh_type.startswith("bw") else self.col_com)
+                cv2.circle(img_draw, c, 0, idcol, self.centre_lwidth)
+                if thresh_type.startswith("bw"):
+                    draw_text(img_draw, str(id_),
+                              (c[0] - 4, c[1] - 4), 0.3, "black", 0, 1)
+
+    def draw_orient_link(self, img_draw, fulldat, frame_nr):
+        """Draw orientation arrows linking colour contours to bw contours."""
+        currframe_inds = [i for i, f in enumerate(fulldat["frame"]) if f == frame_nr]
+        ids = [id_ for i, id_ in enumerate(fulldat["id"]) if i in currframe_inds]
+
+        if "angle" not in fulldat:
+            fulldat["angle"] = [None] * len(fulldat["frame"])
+
+        if not ids or len(ids) != 2 * len([i for i in ids if type(i) == str]):
+            return
+
+        coms = [(fulldat["cx"][i], fulldat["cy"][i]) for i in currframe_inds]
+        colids, colcoms = zip(*[(ids[i], com) for i, com in enumerate(coms)
+                                if type(ids[i]) == str])
+        _, bwcoms = zip(*[(ids[i], com) for i, com in enumerate(coms)
+                          if type(ids[i]) != str])
+        _, bw_inds = linear_sum_assignment(cdist(colcoms, bwcoms))
+
+        for i, id_ in enumerate(colids):
+            angle = int(points_to_angle(colcoms[i], bwcoms[bw_inds[i]], flip=True))
+            target_index = currframe_inds[ids.index(id_)]
+            if target_index >= len(fulldat["angle"]):
+                fulldat["angle"].extend(
+                    [None] * (target_index - len(fulldat["angle"]) + 1))
+            fulldat["angle"][target_index] = angle
+            arrowtip = get_coord(colcoms[i][0], colcoms[i][1], angle, 5, True)
+            col = (255, 255, 255) if id_ in ["blue", "black"] else (0, 0, 0)
+            cv2.arrowedLine(img_draw, colcoms[i], arrowtip, col,
+                            self.orient_lwidth, tipLength=0.4)
+
+
+# ------------------------------------------------------------------
+# Module-level helper
+# ------------------------------------------------------------------
+def _build_frame_data(data, frame_nr, trajlength):
+    """Build the frame_data dict for a single frame from the full DataFrame."""
+    fd = data.loc[data["frame"] == frame_nr].to_dict("list")
+    fd["trajdat"] = []
+    if not fd.get("frame"):
+        fd["frame"] = [frame_nr]
+    else:
+        tframes = list(range(frame_nr - trajlength + 1, frame_nr + 1))
+        for id_ in fd.get("ID", []):
+            fd["trajdat"].append(
+                list(data.query("ID == @id_ & frame in @tframes")["com"]))
+    return fd

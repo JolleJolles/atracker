@@ -31,7 +31,7 @@ from atracker.tracker import Tracker
 from atracker.post_processor import Processor
 from atracker.media import convert_h264_to_mp4
 from atracker.utils import *
-from atracker.visualiser import visualise as _visualise_video
+from atracker.visualiser import Visualiser as _Visualiser
 
 warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
 
@@ -1527,16 +1527,18 @@ class ATracker:
 
             data = pd.read_csv(csvfile)
 
+            vis = _Visualiser(wall_contours=wallconts,
+                               zone_coords=zone_coords,
+                               config=self.config)
+
             _call_kwargs = dict(fps=fps_val)
             _call_kwargs.update(kwargs)
 
-            _visualise_video(
+            vis.render(
                 data=data,
                 videofile=orig_video,
                 img_bg=img_bg,
                 img_mask=img_mask,
-                wallconts=wallconts,
-                zone_coords=zone_coords,
                 roi=roi,
                 outfile=outfile,
                 **_call_kwargs,

@@ -31,7 +31,7 @@ from .tracking_filters import (filter_tracking_jumps, filter_contour_shape,
 from .media import videowriter, make_even, framechecks
 from .data_utils import subdic, eval_func_tuple
 from .process_image import ProcessImage
-from .visualiser import TrackVisualiser
+from .visualiser import Visualiser
 
 class KeyboardInterruptError(Exception): pass
 
@@ -481,11 +481,14 @@ class Tracker:
         traj_history = {}   # {id: deque(maxlen=traj_length)} — only valid (cx, cy)
         tracked_ids = set()
 
-        vis = TrackVisualiser(self.config, self.thresh_types, self.objects,
-                              self.threshcolors, self.orientfrombw,
-                              mask_contours=self.mask_contours,
-                              wall_contours=self.wall_contours,
-                              zone_coords=self.zone_coords)
+        vis = Visualiser(objects=self.objects,
+                         thresh_types=self.thresh_types,
+                         threshcolors=self.threshcolors,
+                         orientfrombw=self.orientfrombw,
+                         mask_contours=self.mask_contours,
+                         wall_contours=self.wall_contours,
+                         zone_coords=self.zone_coords,
+                         config=self.config)
 
         try:
             if self.check_flicker:
