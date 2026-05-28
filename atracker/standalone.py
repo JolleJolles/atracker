@@ -288,12 +288,9 @@ def track_video(
         # --- Thresholds (in memory) ---
         threshinfo = loaded.get("threshinfo") or {}
         thresh_types = [method] if method != "bw" else ["bw"]
-        # Tracker always inserts "bw" at index 0 when not present, so we must
-        # calibrate it even for colour-only methods or tracking will KeyError.
-        calibrate_types = (["bw"] + thresh_types) if method != "bw" else thresh_types
 
         if set_threshold:
-            for ttype in calibrate_types:
+            for ttype in thresh_types:
                 mode = "thresholding" if ttype.startswith("bw") else "thresholding color"
                 lineprint(f"Calibrate threshold for '{ttype}' — close window when done.")
                 result = annotation_gui(

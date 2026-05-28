@@ -1966,10 +1966,18 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         if self.is_video:
             frame_info = f"Frame : {self.current_frame_idx+1} / {self.total_frames}"
 
-        if self.opmode_combo.currentText().lower() == "thresholding":
+        if self.opmode_combo.currentText().lower().startswith("thresholding"):
             info_text = f"{frame_info}\n{current_str}"
-            if hasattr(self, 'contour_sizes') and self.contour_sizes:
-                info_text += f"\nContours: {len(self.contour_sizes)}\nSizes: {self.contour_sizes}"
+            all_sz = getattr(self, "all_contour_sizes", [])
+            focal_sz = getattr(self, "contour_sizes", [])
+            if all_sz:
+                sz_range = f"{min(all_sz)}–{max(all_sz)}"
+                info_text += f"\nAll blobs: {len(all_sz)}  (areas: {sz_range})"
+            else:
+                info_text += "\nAll blobs: 0"
+            info_text += f"\nAccepted:  {len(focal_sz)}"
+            if focal_sz:
+                info_text += f"  (areas: {min(focal_sz)}–{max(focal_sz)})"
         else:
             info_text = f"{frame_info}\n{current_str}\n{last_str}\n{metric}"
 
@@ -2406,31 +2414,46 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         else:
             focal_cons = []
 
+        # Compute areas for all detected contours (for info display)
+        all_areas = [int(cv2.contourArea(c)) for c in (allcons or [])]
+        focal_areas = [int(cv2.contourArea(c)) for c in focal_cons]
+
         if show_overlay:
+            # Blue outlines: all detected blobs (including those outside area range)
             if allcons:
-                cv2.drawContours(overlay, allcons, -1, blue, 2)
+                cv2.drawContours(overlay, allcons, -1, blue, 1)
+            # Red outlines + area labels: blobs within the current area filter
             if focal_cons:
                 cv2.drawContours(overlay, focal_cons, -1, red, 2)
                 for i, c in enumerate(focal_cons):
                     M = cv2.moments(c)
                     if M["m00"] != 0:
-                        # Compute centroid
                         cX = int(M["m10"] / M["m00"])
                         cY = int(M["m01"] / M["m00"])
-
-                        # Draw a small filled circle at the centroid
                         cv2.circle(overlay, (cX, cY), 4, red, -1)
-
-                        # Label the contour index with outline for contrast
-                        text = str(i)
-                        cv2.putText(overlay, text, (cX+10, cY+10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, black, 2, cv2.LINE_AA)
-                        cv2.putText(overlay, text, (cX+10, cY+10),   cv2.FONT_HERSHEY_SIMPLEX, 0.8, white, 1, cv2.LINE_AA)
+                        text = str(focal_areas[i])
+                        cv2.putText(overlay, text, (cX + 6, cY - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.55, black, 2, cv2.LINE_AA)
+                        cv2.putText(overlay, text, (cX + 6, cY - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.55, white, 1, cv2.LINE_AA)
+            # Grey area labels on excluded blobs so user can see what they're filtering out
+            grey = (180, 180, 180, 200)
+            min_a = self.thresh_params.get("min_area", 0)
+            max_a = self.thresh_params.get("max_area", 999999)
+            for c in (allcons or []):
+                area = int(cv2.contourArea(c))
+                if area < min_a or area > max_a:
+                    M = cv2.moments(c)
+                    if M["m00"] != 0:
+                        cX = int(M["m10"] / M["m00"])
+                        cY = int(M["m01"] / M["m00"])
+                        text = str(area)
+                        cv2.putText(overlay, text, (cX + 4, cY - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.45, grey, 1, cv2.LINE_AA)
 
         overlay_qimg = QImage(overlay.data, w, h, 4 * w, QImage.Format_RGBA8888).copy()
         self.drawing_widget.drawing_overlay = overlay_qimg
 
         # Save size data for info panel
-        self.contour_sizes = [int(cv2.contourArea(c)) for c in focal_cons]
+        self.contour_sizes = focal_areas
+        self.all_contour_sizes = all_areas
 
         self.drawing_widget.update()
         self.proxyUpdate()

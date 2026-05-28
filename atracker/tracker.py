@@ -234,8 +234,6 @@ class Tracker:
         if len(self.thresh_types) > 1:
             self.objects = len(self.thresh_types)
             self.threshcolors = True
-        if not any(thresh.startswith("bw") for thresh in self.thresh_types):
-            self.thresh_types.insert(0, "bw")
 
         # Launch the tracker
         self.tracksingle()
