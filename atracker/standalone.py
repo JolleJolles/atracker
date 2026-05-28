@@ -307,7 +307,13 @@ def track_video(
 
         # --- Thresholds (in memory) ---
         threshinfo = loaded.get("threshinfo") or {}
-        thresh_types = [method] if method != "bw" else ["bw"]
+        if method != "bw":
+            thresh_types = [method]
+        elif threshinfo:
+            # Derive thresh type from saved threshinfo keys rather than defaulting to "bw"
+            thresh_types = list(threshinfo.keys())
+        else:
+            thresh_types = ["bw"]
 
         if set_threshold:
             for ttype in thresh_types:
