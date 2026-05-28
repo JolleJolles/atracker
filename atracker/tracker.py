@@ -539,7 +539,8 @@ class Tracker:
                     self.fulldat.setdefault("id",[]).extend(ids)
                     self.fulldat.setdefault("area",[]).extend([self.conlist["area"][i] for i in inds])
                     self.fulldat.setdefault("aspect_ratio",[]).extend([self.conlist["aspect_ratio"][i] for i in inds])
-                    self.fulldat.setdefault("consmerged",[]).extend([self.conlist["consmerged"][i] for i in inds])
+                    if self.objects > 1 and self.thresh_type.startswith("bw"):
+                        self.fulldat.setdefault("consmerged",[]).extend([self.conlist["consmerged"][i] for i in inds])
 
                     # --- Live jump filtering: remove impossible jumps per ID ---
                     coms = [self.conlist["com"][i] for i in inds]
@@ -645,7 +646,8 @@ class Tracker:
                             cl[key] = [cl[key][i] for i in inds]
 
                         # Draw contours and centroids within size range
-                        col = 128 if not self.thresh_type.startswith("bw") else _col_contour if not cl["consmerged"] else 128
+                        is_merged = self.objects > 1 and self.thresh_type.startswith("bw") and cl.get("consmerged")
+                        col = 128 if not self.thresh_type.startswith("bw") else _col_contour if not is_merged else 128
                         cv2.drawContours(self.img_draw, cl["contour"], -1, col, 1)
 
                         # Draw more complex information
