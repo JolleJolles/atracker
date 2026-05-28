@@ -1122,6 +1122,27 @@ class ATracker:
             _inds = existing_inds
             trackfiles = existing_trackfiles
 
+            # Pre-filter already-tracked files when overwrite is off
+            effective_overwrite = overwrite if overwrite is not None else self.config.track.overwrite
+            if not effective_overwrite:
+                suffix_str = f"_{suffix}" if suffix else ""
+                todo_inds, todo_trackfiles = [], []
+                skip_count = 0
+                for ind, tf in zip(_inds, trackfiles):
+                    video = self.overview.loc[ind, "video"]
+                    region = self.overview.loc[ind, "region"] if "region" in self.overview.columns else None
+                    name = f"{video}_R{int(region)}" if (region is not None and pd.notnull(region)) else video
+                    csv_path = os.path.join(self.dirs["tracked"], name + suffix_str + ".csv")
+                    if os.path.exists(csv_path):
+                        skip_count += 1
+                    else:
+                        todo_inds.append(ind)
+                        todo_trackfiles.append(tf)
+                if skip_count > 0:
+                    lineprint(f"Skipped {skip_count} already-tracked file(s).")
+                _inds = todo_inds
+                trackfiles = todo_trackfiles
+
             # Now create the Tracker with only existing files
             T = Tracker(pools, _inds, trackfiles, self.dirs, self.overview,
                         self.config, self.threshinfo, frame_start, frame_stop, threshtype,
