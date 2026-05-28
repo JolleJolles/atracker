@@ -72,9 +72,6 @@ def _atrk_path(path):
     # Strip numpy's auto-appended .npz if present
     if path.endswith(".npz"):
         path = path[:-4]
-    # Accept legacy .atcache extension
-    if path.endswith(".atcache"):
-        path = path[:-8] + ".atrk"
     if not path.endswith(".atrk"):
         path += ".atrk"
     return path
