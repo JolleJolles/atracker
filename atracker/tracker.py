@@ -402,7 +402,11 @@ class Tracker:
                                 IDsfinal[i] = IDs_available[0]
                                 IDs_available = IDs_available[1:]
                         else:
-                            IDsfinal[i] = np.nan
+                            # No valid history for any ID: re-acquire using available IDs
+                            if len(IDs_available) > 0:
+                                IDsfinal[i] = IDs_available.pop(0)
+                            else:
+                                IDsfinal[i] = np.nan
 
         else:
             if self.thresh_type not in self.movedat:
