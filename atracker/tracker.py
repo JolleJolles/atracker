@@ -79,6 +79,7 @@ class Tracker:
         self.linkdisthreshold = 100 if "linkdisthreshold" not in self.config.track else self.config.track.linkdisthreshold
         self.mergedmindist = 20 if "mergedmindist" not in self.config.track else self.config.track.mergedmindist
         self.contour_mode = self.config.track.contour_mode if "contour_mode" in self.config.track else "static"
+        self.keep_frames = int(self.config.track.keep_frames) if "keep_frames" in self.config.track else 10
         self.tracked = 0
         self.threshtype_override = threshtype
         self.objects_override = objects
@@ -602,12 +603,12 @@ class Tracker:
                     allids = np.unique(ids+list(self.movedat.keys())) if self.thresh_type.startswith("bw") else ids
                     for i,id in enumerate(ids):
                         self.movedat.setdefault(id, {})
-                        self.movedat[id].setdefault("frame", deque(maxlen=10)).appendleft(self.frame_nr)
+                        self.movedat[id].setdefault("frame", deque(maxlen=self.keep_frames)).appendleft(self.frame_nr)
                         com = filtered_coms[i]  # NaN if jump was rejected, so linkIDs falls back to last real position
-                        self.movedat[id].setdefault("com", deque(maxlen=10)).appendleft(com)
-                        self.movedat[id].setdefault("vel", deque(maxlen=10)).appendleft(getavgvel(self.movedat[id]["com"]))
+                        self.movedat[id].setdefault("com", deque(maxlen=self.keep_frames)).appendleft(com)
+                        self.movedat[id].setdefault("vel", deque(maxlen=self.keep_frames)).appendleft(getavgvel(self.movedat[id]["com"]))
                         head = points_to_angle(self.movedat[id]["com"][-1],self.movedat[id]["com"][0],flip=True)
-                        self.movedat[id].setdefault("head", deque(maxlen=10)).appendleft(head)
+                        self.movedat[id].setdefault("head", deque(maxlen=self.keep_frames)).appendleft(head)
                         #self.movedat[id]["contour"] = self.conlist["contour"][inds[next(i for i,id in enumerate(ids))]] if id in ids else []
 
                     # Update per-ID trajectory deques (O(1) per fish, avoids O(N) fulldat scans in drawing)
