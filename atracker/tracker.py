@@ -766,7 +766,7 @@ class Tracker:
                 valid = summary_df[summary_df["cx"].notna() & summary_df["id"].notna()]
                 if len(valid) > 0:
                     stats = valid.groupby("id").agg({"area": "median", "aspect_ratio": "median"})
-                    parts = [f"ID{int(i)}: area={r['area']:.0f} ar={r['aspect_ratio']:.2f}"
+                    parts = [f"ID{i}: area={r['area']:.0f} ar={r['aspect_ratio']:.2f}"
                              for i, r in stats.iterrows()]
                     lineprint(self.pr_comm + "  " + ", ".join(parts))
 
