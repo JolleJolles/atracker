@@ -245,7 +245,7 @@ class TrackVisualiser:
 
 
 def visualise(data, videofile, img_bg = None, img_mask = None, img_thresh=None,
-              wallconts = None, roi = None,
+              wallconts = None, zone_coords = None, roi = None, outfile = None,
               framestep = 1,
               displaystep = 25,
               cropimg=True,
@@ -344,10 +344,15 @@ def visualise(data, videofile, img_bg = None, img_mask = None, img_thresh=None,
         vidw, vidh = (img.shape[1],img.shape[0])
 
     wallconts2 = wallconts
-   # Resize wall coordinates
+    # Adjust wall coordinates for ROI crop
     if roi is not None and wallconts is not None:
-        #wallconts = [(pt[0]-roi[0][0],pt[1]-roi[0][1]) for pt in wallconts]
         wallconts = [[[(coord[0][0]-roi[0][0],coord[0][1]-roi[0][1])] for coord in cont] for cont in wallconts]
+
+    # Adjust zone coordinates for ROI crop
+    if roi is not None and zone_coords is not None:
+        xoff, yoff = roi[0]
+        zone_coords = {k: [(x - xoff, y - yoff) for x, y in coords]
+                       for k, coords in zone_coords.items()}
 
     # Mask stuff
     if cropimg and roi is not None and img_mask is not None:
@@ -357,10 +362,10 @@ def visualise(data, videofile, img_bg = None, img_mask = None, img_thresh=None,
 
     # Set up for video writing
     if writevideo:
-        outfile = os.path.splitext(videofile)[0]+videosuffix+".mp4"
+        _outfile = outfile if outfile is not None else os.path.splitext(videofile)[0]+videosuffix+".mp4"
         viddims = (vidw,vidh) if smoothresize or resize==1 else (int(vidw*resize),int(vidh*resize))
         vidoutdims = canvasdims if canvasdims is not None else viddims
-        vidout = videowriter(outfile, vidoutdims[0], vidoutdims[1], fps)
+        vidout = videowriter(_outfile, vidoutdims[0], vidoutdims[1], fps)
 
     # Set up for video display
     if showvideo:
@@ -398,6 +403,7 @@ def visualise(data, videofile, img_bg = None, img_mask = None, img_thresh=None,
             resizetosmooth=smoothresize,
             cropimg=cropimg,
             wallconts=wallconts, wallconts2=wallconts2,
+            zone_coords=zone_coords,
             logo=logo,
             logooffsets=logooffsets,
             drawwalls=drawwalls,
@@ -458,7 +464,7 @@ def visualise(data, videofile, img_bg = None, img_mask = None, img_thresh=None,
 
 
 def draw_frame(img, framedat, img_bg = None, img_mask = None, img_thresh = None,
-               roi = None, wallconts=None, wallconts2=None,
+               roi = None, wallconts=None, wallconts2=None, zone_coords=None,
                cropimg = True,
                resizeimg = 1,
                resizetosmooth = True,
@@ -644,9 +650,28 @@ def draw_frame(img, framedat, img_bg = None, img_mask = None, img_thresh = None,
             stencil[tl[1]:br[1], tl[0]:br[0]] = crop(img_draw, tl, br)
             cv2.addWeighted(stencil, parroimaskopacity, img_draw, 1-parroimaskopacity, 0, img_draw)
 
-        # 17) Draw segments
+        # 17) Draw zones
         #--------------------
-        # TO ADD
+        if zone_coords is not None:
+            overlay = img_draw.copy()
+            for zone_idx, coords in zone_coords.items():
+                scaled = [(int(x * resizeimg), int(y * resizeimg)) for x, y in coords]
+                contour = np.array([[[x, y]] for x, y in scaled], dtype=np.int32)
+                col = _ZONE_COLORS[(zone_idx - 1) % len(_ZONE_COLORS)]
+                cv2.drawContours(overlay, [contour], -1, col, -1)
+            cv2.addWeighted(overlay, 0.18, img_draw, 0.82, 0, img_draw)
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            for zone_idx, coords in zone_coords.items():
+                scaled = [(int(x * resizeimg), int(y * resizeimg)) for x, y in coords]
+                contour = np.array([[[x, y]] for x, y in scaled], dtype=np.int32)
+                col = _ZONE_COLORS[(zone_idx - 1) % len(_ZONE_COLORS)]
+                cv2.drawContours(img_draw, [contour], -1, col, 2)
+                cx = int(np.mean([x for x, y in scaled]))
+                cy = int(np.mean([y for x, y in scaled]))
+                cv2.putText(img_draw, f"Z{zone_idx}", (cx - 9, cy + 5), font, 0.4,
+                            (0, 0, 0), 2, cv2.LINE_AA)
+                cv2.putText(img_draw, f"Z{zone_idx}", (cx - 9, cy + 5), font, 0.4,
+                            (255, 255, 255), 1, cv2.LINE_AA)
 
         # 18) Draw mask
         #--------------------

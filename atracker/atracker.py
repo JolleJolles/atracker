@@ -31,6 +31,7 @@ from atracker.tracker import Tracker
 from atracker.post_processor import Processor
 from atracker.media import convert_h264_to_mp4
 from atracker.utils import *
+from atracker.visualiser import visualise as _visualise_video
 
 warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
 
@@ -1405,6 +1406,141 @@ class ATracker:
             else:
                 lineprint("Pooled processing can only be run from the terminal, exiting..")
 
+
+    def visualise(self, folder="processed", names=None, overwrite=False, **kwargs):
+        """
+        Create visualisation videos for tracked or processed CSV files.
+
+        Parameters
+        ----------
+        folder : str, default "processed"
+            Source folder containing CSVs: "processed" or "tracked".
+        names : list or str or None
+            Specific base names (without extension) to visualise; all files
+            in the folder if None.
+        overwrite : bool, default False
+            Overwrite existing visualisation videos.
+        **kwargs
+            Additional arguments forwarded to the standalone visualise() function,
+            e.g. resize, trajlength, writevideo, showvideo, drawptonmask, etc.
+        """
+        csvfiles = listfiles(self.dirs[folder], type=".csv", keepdir=True)
+        csvfiles = [os.path.normpath(f) for f in csvfiles]
+
+        if names is not None:
+            if isinstance(names, str):
+                names = [names]
+            names_set = {os.path.splitext(os.path.basename(n))[0] for n in names}
+            csvfiles = [f for f in csvfiles if os.path.splitext(os.path.basename(f))[0] in names_set]
+
+        if not csvfiles:
+            lineprint("No CSV files found to visualise..")
+            return
+
+        lineprint(f"Visualising {len(csvfiles)} file(s) from '{folder}'..")
+
+        for i, csvfile in enumerate(csvfiles):
+            base = os.path.splitext(os.path.basename(csvfile))[0]
+
+            # Strip _F suffix for processed files to get tracking base name
+            tracking_base = base[:-2] if (folder == "processed" and base.endswith("_F")) else base
+
+            # Parse video name and optional region number
+            region_match = re.search(r'_R(\d+)$', tracking_base)
+            if region_match:
+                region = int(region_match.group(1))
+                video_name = tracking_base[:region_match.start()]
+            else:
+                region = None
+                video_name = tracking_base
+
+            # Find overview row
+            rows = self.overview[self.overview["video"] == video_name]
+            if "region" in rows.columns and region is not None:
+                rows = rows[rows["region"] == region]
+            if len(rows) == 0:
+                lineprint(f"Video {i+1}|{len(csvfiles)} {base}: no overview row found, skipping")
+                continue
+            ind = rows.index[0]
+            row = self.overview.loc[ind]
+
+            outfile = os.path.join(self.dirs[folder], base + "_V.mp4")
+            if os.path.exists(outfile) and not overwrite:
+                lineprint(f"Video {i+1}|{len(csvfiles)} {base}: already exists, skipping")
+                continue
+
+            lineprint(f"Video {i+1}|{len(csvfiles)} {base}", True, False)
+
+            orig_video = os.path.join(self.dirs["originals"], f"{video_name}.mp4")
+            if not os.path.isfile(orig_video):
+                lineprint(f" — original video not found, skipping")
+                continue
+
+            # FPS from overview, overridable via kwargs
+            try:
+                fps_val = float(row["fps"]) if not pd.isna(row.get("fps", np.nan)) else 25.0
+            except (TypeError, ValueError):
+                fps_val = 25.0
+
+            # ROI
+            roi = None
+            if "roi" in self.overview.columns and isinstance(row.get("roi"), str):
+                try:
+                    roi = literal_eval(row["roi"])
+                except Exception:
+                    pass
+
+            # Background image
+            img_bg = None
+            bgimg = row.get("bgimg")
+            if isinstance(bgimg, str):
+                _p = os.path.join(self.dirs["originals"], bgimg)
+                if os.path.isfile(_p):
+                    img_bg = cv2.imread(_p)
+
+            # Mask image
+            img_mask = None
+            maskimg = row.get("maskimg")
+            if isinstance(maskimg, str):
+                _p = os.path.join(self.dirs["originals"], maskimg)
+                if os.path.isfile(_p):
+                    img_mask = cv2.imread(_p)
+
+            # Wall contours (full-image coords; visualise() adjusts for ROI)
+            wallconts = None
+            wallimg = row.get("wallimg")
+            if isinstance(wallimg, str):
+                _p = os.path.join(self.dirs["originals"], wallimg)
+                wall_arr = cv2.imread(_p)
+                if wall_arr is not None:
+                    wallconts, _ = coordsfrommask(wall_arr)
+
+            # Zone coords (full-image coords; visualise() adjusts for ROI)
+            zone_coords = None
+            zoneimg = row.get("zoneimg")
+            if isinstance(zoneimg, str):
+                _p = os.path.join(self.dirs["originals"], zoneimg)
+                zone_arr = cv2.imread(_p)
+                if zone_arr is not None:
+                    _zc = coordsfromzones(zone_arr)
+                    zone_coords = _zc if _zc else None
+
+            data = pd.read_csv(csvfile)
+
+            _call_kwargs = dict(fps=fps_val)
+            _call_kwargs.update(kwargs)
+
+            _visualise_video(
+                data=data,
+                videofile=orig_video,
+                img_bg=img_bg,
+                img_mask=img_mask,
+                wallconts=wallconts,
+                zone_coords=zone_coords,
+                roi=roi,
+                outfile=outfile,
+                **_call_kwargs,
+            )
 
     def centralise(self, centertype="roi", names=None):
         """

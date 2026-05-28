@@ -18,6 +18,7 @@ from .trajectory import (calcudiff, differentiate, fillmissing, getalones,
                          process_trajectories, smooth)
 from .angles import get_anglediff
 from .contour_utils import coordsfrommask, coordsfromzones
+from scipy.spatial import KDTree
 from .data_utils import ensure_columns, lit_converter
 
 
@@ -462,10 +463,34 @@ class Processor:
         ys_full = ys_global + ymin
 
         final["rdist"] = dist_to_rect(xs_full, ys_full, xmin, xmax, ymin, ymax) * self.conv * -1
+
+        valid = np.isfinite(xs_full) & np.isfinite(ys_full)
+
         if self.maskcoords:
             final["mdist"] = dist_to_poly(xs_full, ys_full, self.maskcoords) * self.conv
+            mx = np.full(len(xs_full), np.nan)
+            my = np.full(len(xs_full), np.nan)
+            if valid.any():
+                tree = KDTree(self.maskcoords)
+                _, idxs = tree.query(np.column_stack([xs_full[valid], ys_full[valid]]))
+                pts = np.array(self.maskcoords)
+                mx[valid] = pts[idxs, 0] - xmin
+                my[valid] = pts[idxs, 1] - ymin
+            final["mx"] = mx
+            final["my"] = my
+
         if self.wallcoords:
             final["wdist"] = dist_to_poly(xs_full, ys_full, self.wallcoords) * self.conv
+            wx = np.full(len(xs_full), np.nan)
+            wy = np.full(len(xs_full), np.nan)
+            if valid.any():
+                tree = KDTree(self.wallcoords)
+                _, idxs = tree.query(np.column_stack([xs_full[valid], ys_full[valid]]))
+                pts = np.array(self.wallcoords)
+                wx[valid] = pts[idxs, 0] - xmin
+                wy[valid] = pts[idxs, 1] - ymin
+            final["wx"] = wx
+            final["wy"] = wy
         for zidx, coords in self.zonecoords.items():
             d = dist_to_zone(xs_full, ys_full, coords, self.conv)
             if d is not None:
@@ -495,10 +520,11 @@ class Processor:
 
 
     def _finalise(self, final):
-        """Apply centralisation, blank in-mask coordinates, order columns, round."""
+        """Blank in-mask coordinates, order columns, round, and save."""
 
         # Blank positional columns for in-mask frames
-        positional = ["cx", "cy", "fx", "fy", "fx_c", "fy_c", "tx", "ty", "tx_c", "ty_c"]
+        positional = ["cx", "cy", "fx", "fy", "fx_c", "fy_c", "tx", "ty", "tx_c", "ty_c",
+                      "mx", "my", "wx", "wy"]
         final.loc[final["inmask"] == 1,
                   [c for c in positional if c in final.columns]] = np.nan
 
@@ -522,6 +548,7 @@ class Processor:
             "displ", "speed", "accel", "cumdispl",
             "heading", "orient", "turnspeed", "turnaccel", "cumturn", "abscumturn",
             "rdist", "mdist", "wdist",
+            "mx", "my", "wx", "wy",
         ]
         ordered = [c for c in base_order if c in final.columns]
         zone_cols = sorted([c for c in final.columns if re.match(r"z\d+dist", c)],
@@ -542,6 +569,8 @@ class Processor:
             present = [c for c in cols if c in final.columns]
             if present:
                 final[present] = final[present].round(decimals)
+        for col in [c for c in ["mx", "my", "wx", "wy"] if c in final.columns]:
+            final[col] = final[col].round(0)
         for col in zone_cols + pt_cols:
             if col in final.columns:
                 final[col] = final[col].round(1)
