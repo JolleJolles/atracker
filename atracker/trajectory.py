@@ -196,7 +196,7 @@ def fillmissing(series, colpair, mask, roi, win=5, nearmaskdis=25, edgedis=10, l
 
 def process_trajectories(series, mask=None, cover=True, win=5,
                          trajgap=50, inmaskdis=10, mintrajlength=10,
-                         erase_coords=True, interpolate=True, force_single_traj=False):
+                         erase_coords=True, interpolate=True):
     """
     Process trajectories: detects mask-covered segments, removes data near mask,
     assigns trajectory IDs, interpolates gaps, and removes short trajectories.
@@ -229,12 +229,6 @@ def process_trajectories(series, mask=None, cover=True, win=5,
         return [(idxs[start], idxs[end - 1]) for start, end in zip(breaks[:-1], breaks[1:])]
 
     sections = _getindsections(nonmiss, gap=trajgap)
-    if force_single_traj:
-        if len(nonmiss) > 0:
-            start, end = nonmiss[0], nonmiss[-1]
-            sections = [(start, end)]
-        else:
-            sections = []
 
     for i, (start, end) in enumerate(sections, start=1):
         series.loc[start:end, "traj"] = i

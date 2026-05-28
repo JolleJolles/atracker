@@ -1284,74 +1284,60 @@ class ATracker:
             if result == "exit":
                 break
 
-    def process(self, pools=1, names=None, overwrite=False, fulldata=True, convert=True, 
-                removeoutliers=True, alonewindow=5, smoothwin=10, changefps=None, 
-                addIDs=True, nearmaskdis=20, trajgap = 50, edgedis=10, 
-                filllenthresh_com=500, inmaskdis=10, mintrajlength=10, filllenthresh_headtail=40, 
-                headtoorientspeedthresh=1, fillmissingorientdiffthresh=100, 
-                centertype = None, centralise=False, delcontdata=False, powermate=False, force_single_traj=False):
+    def process(self, pools=1, names=None, overwrite=False, fulldata=True, convert=True,
+                removeoutliers=True, min_segment=5, smoothwin=10, changefps=None,
+                addIDs=True, nearmaskdis=20, trajgap=50, edgedis=10,
+                interp_gap_com=500, inmaskdis=10, mintrajlength=10,
+                interp_gap_orient=100, orient_min_speed=1,
+                centertype=None, centralise=False):
         
         """
-        Runs data processing
+        Post-process tracked CSV files into analysis-ready data.
 
-        Custom Parameters
+        Parameters
         ----------
-        pools : int; default = 1
-            The number of pools to create for parallel processing.
-        names : list; default = None
-            A list of files to process. Will lookin the "3tracked" folder.
-        overwrite : bool; default = False
-            If the output file should be overwritten if it already exists.
-        fulldata : bool; default = True
-            If missing tracking data should be extended for the full time series 
-            from the start to stop frame.
-        convert : bool; default = True
-            If the data should be converted from pixels to mm, using the conv setting.
-        removeoutliers : bool; default = True
-            If automatically spatial outliers should be removed.
-        alonewindow : int; default = 5
-            The time window in frames used for considering data to be outliers or not 
-            for the "removeoutliers" function.
-        
-        smoothwin : int; default = 10
-            The window in frames to use for smoothing the data.
-        changefps : int, default = None
-            To subset the framerate of the video to a lower value, e.g. to help reduce the filesize.
-        addIDs : bool, default = None
-            If ID information should be added from the overview file to the datafile.
-        nearmaskdis : int, default = 20
-            The distance from the mask in pixels. Parameter used for checking if object is under/near
-            or away from the mask, used for interpolation functions.
-        trajgap : int, default = 50
-            Distance in frames at which point missing coordinate data should be split in separate 
-            trajectories.
-        edgedis : int; default = 10
-            The distance from the roi in pixels at which the object is considered to be on the edge. 
-            Parameter for removing data outside of the region of interest.
-        filllenthresh_com : int; default = 500
-            Maximum distance in frames between coordinate data outside of any potential mask that
-            should be filled-in by differentiating.
-        inmaskdis : int; default = 10
-            Distance in pixels from mask that should be considered to be under the mask and
-            therefore removed. Different from nearmaskdis, which is only used for determining
-            the frames used for interpolating.
-        mintrajlength : int; default = 10
-            Minimum length of frames for a trajectory. Trajectories shorted than this are deleted.  
-        filllenthresh_headtail : int, default = 40
-            Maximum difference in frames for missing head and tail coordinate data outside of any 
-            potential mask that shoudl be filled-in y differentiating.
-        headtoorientspeedthresh : float; default = 1 
-            The speed value in converted units above which heading should be used to set orientation.
-        fillmissingorientdiffthresh : int; default = 100
-            Maximum difference in frames for missing orientation vector data outside of any potential
-            mask that should be filled-in by differentiating.
-
-        centertype : str in [None, "walls","roi","pt"]; default = "walls"
-            What type of data should be used to compute the arena center
-        centralise : bool; default = False
-            If the data should be centralised or not, based on the centertype
-        delcontdata : bool; default = False
-            If contour data of bw contours should be removed or not
+        pools : int, default 1
+            Number of parallel workers.
+        names : list or None
+            Specific file names to process; processes all tracked files if None.
+        overwrite : bool, default False
+            Overwrite existing processed files.
+        fulldata : bool, default True
+            Extend output to every frame in the tracked window (untracked frames → NaN).
+        convert : bool, default True
+            Convert pixels to real-world units using the conv factor in the overview.
+        removeoutliers : bool, default True
+            Remove isolated tracking fragments shorter than min_segment frames.
+        min_segment : int, default 5
+            Minimum contiguous fragment length; shorter bursts are treated as noise.
+        smoothwin : int, default 10
+            Savitzky–Golay smoothing window in frames (1 = no smoothing).
+        changefps : int or None
+            Resample output to a lower frame rate.
+        addIDs : bool, default True
+            Replace numeric tracker IDs with IDs from the overview file.
+        nearmaskdis : int, default 20
+            Pixels from the mask boundary used when deciding whether a gap should
+            be interpolated through.
+        trajgap : int, default 50
+            Frame gap above which missing data splits into a new trajectory.
+        edgedis : int, default 10
+            Pixels from the ROI edge below which orientation is excluded.
+        interp_gap_com : int, default 500
+            Maximum frame gap to interpolate centroid data over.
+        inmaskdis : int, default 10
+            Pixels from the mask below which a detection is removed.
+        mintrajlength : int, default 10
+            Trajectories shorter than this many frames are discarded.
+        interp_gap_orient : int, default 100
+            Maximum frame gap to interpolate head/tail and orientation vectors over.
+        orient_min_speed : float, default 1
+            Minimum speed (converted units) above which heading is used as a
+            fallback for missing orientation.
+        centertype : str or None
+            Arena centre source for cdist: "pt", "walls", "roi", or None.
+        centralise : bool, default False
+            Subtract the arena centre from all coordinates.
         """
 
         # Get the list of files to process and normalise for windows compatibility
@@ -1388,7 +1374,7 @@ class ATracker:
             lineprint("No files to fix..")
             return
 
-        config_dict = {  # No need for Manager.dict()
+        config_dict = {
             "dirs": self.dirs,
             "config": self.config,
             "overview": self.overview,
@@ -1398,7 +1384,7 @@ class ATracker:
             "addIDs": addIDs,
             "fulldata": fulldata,
             "removeoutliers": removeoutliers,
-            "alonewindow": alonewindow,
+            "min_segment": min_segment,
             "changefps": changefps,
             "nearmaskdis": nearmaskdis,
             "inmaskdis": inmaskdis,
@@ -1408,14 +1394,10 @@ class ATracker:
             "smoothwin": smoothwin,
             "centertype": centertype,
             "centralise": centralise,
-            "filllenthresh_com": filllenthresh_com,
-            "filllenthresh_headtail": filllenthresh_headtail,
+            "interp_gap_com": interp_gap_com,
+            "interp_gap_orient": interp_gap_orient,
             "mintrajlength": mintrajlength,
-            "fillmissingorientdiffthresh": fillmissingorientdiffthresh,
-            "headtoorientspeedthresh": headtoorientspeedthresh,
-            "delcontdata": delcontdata,
-            "powermate": powermate,
-            "force_single_traj": force_single_traj
+            "orient_min_speed": orient_min_speed,
         }
 
         lineprint("Processing started of " + str(len(trackedfiles)) + " files..")
