@@ -12,31 +12,30 @@ from box import Box
 from pythutils.mediautils import get_vid_params
 from pythutils.sysutils import lineprint
 
-from .tracker import Tracker
-from .media import bg_extract
-from .visual_editor import annotation_gui
+from .track import Tracker
+from .helpers.media import bg_extract
+from .process import Processor
+from .editor import annotation_gui
 
 
-def _make_config(fps=25, simple=True, show_tracking=False, create_vid=True,
-                 overwrite=True, frame_start=1, frame_stop=99999):
+def _make_config(advanced=False, show_tracking=False, create_vid=True, overwrite=True):
     """Build a minimal Box config compatible with Tracker."""
     return Box({
-        "exp": Box({"fps": fps, "realdims": None}),
         "track": Box({
-            "startframe": frame_start,
-            "stopframe": frame_stop,
-            "keep_frames": 10,
-            "simple": simple,
+            "advanced": advanced,
             "orientfrombw": False,
             "create_vid": create_vid,
             "create_dat": True,
             "overwrite": overwrite,
-            "strict": False,
-            "linkdisthreshold": 100,
-            "mergedmindist": 20,
-            "contour_mode": "static",
-            "shape_area_tol": 0.25,
-            "shape_history_len": 500,
+            "link_dist": 100,
+            "merge_dist": 20,
+            "size_filter": False,
+            "size_filter_tol": 0.25,
+            "size_filter_memory": 500,
+            "check_flicker": False,
+            "skip_frames": 0,
+            "max_framedist": 200,
+            "track_merges": False,
         }),
         "vis": Box({
             "show_tracking": show_tracking,
@@ -62,8 +61,6 @@ def _make_config(fps=25, simple=True, show_tracking=False, create_vid=True,
             "contnrs": False,
             "trajs_below": False,
         }),
-        "orient": Box({"delwindow": 10}),
-        "bgextract": Box({"bg_frames": 25}),
     })
 
 
@@ -364,9 +361,10 @@ def track_video(
 
         # --- Config ---
         config = _make_config(
-            fps=vid_fps, simple=simple, show_tracking=show_tracking,
-            create_vid=create_vid, overwrite=overwrite,
-            frame_start=fs, frame_stop=fe,
+            advanced=not simple,
+            show_tracking=show_tracking,
+            create_vid=create_vid,
+            overwrite=overwrite,
         )
 
         # --- Run tracking ---
@@ -404,3 +402,194 @@ def track_video(
     else:
         lineprint("Tracking finished (no CSV produced — check threshold settings).")
     return output_csv
+
+
+def process_video(
+    csvfile,
+    videofile=None,
+    outdir=None,
+    fps=25,
+    roi=None,
+    conv=1,
+    maskfile=None,
+    wallfile=None,
+    zonefile=None,
+    orientfrombw=False,
+    overwrite=False,
+    fulldata=False,
+    convert=True,
+    changefps=None,
+    mask_margin=15,
+    max_traj_gap=50,
+    min_traj_len=10,
+    roi_edge_margin=10,
+    interp_gap_com=500,
+    interp_gap_orient=100,
+    smoothwin=10,
+    orient_min_speed=1,
+    interpolate=True,
+    compute_movement=True,
+    compute_distances=True,
+):
+    """
+    Post-process a single tracked CSV file without an ATracker folder setup.
+
+    Runs the same pipeline as AT.process() but takes explicit paths instead of
+    relying on an overview file.  The output is written to the same directory as
+    the CSV (or *outdir* if specified) with a ``_F.csv`` suffix.
+
+    Parameters
+    ----------
+    csvfile : str
+        Path to the tracked CSV produced by track_video() or AT.track().
+    videofile : str or None
+        Original video file. When provided, fps, resolution, and frame count are
+        read from it; roi defaults to the full frame.
+    outdir : str or None
+        Directory for the output CSV. Defaults to the directory of *csvfile*.
+    fps : float, default 25
+        Frame rate used for speed calculations. Ignored when *videofile* is given.
+    roi : tuple or None
+        ``((x1, y1), (x2, y2))`` region of interest. Defaults to the full frame
+        when *videofile* is given, or is inferred from coordinate ranges otherwise.
+    conv : float, default 1
+        Pixel-to-real-world conversion factor (mm/pixel). 1 = no conversion.
+    maskfile : str or None
+        Path to a mask image (exclusion zone).
+    wallfile : str or None
+        Path to a wall image (physical boundary for distance calculations).
+    zonefile : str or None
+        Path to a zone image (named areas for distance calculations).
+    orientfrombw : bool, default False
+        Use the bw tracking angle column as orientation instead of head/tail coords.
+    overwrite : bool, default False
+        Overwrite an existing processed file.
+    fulldata : bool, default False
+        Extend output to every frame in the video window (needs *videofile* or a
+        reliable frame count). When False, output covers only detected frames.
+    convert : bool, default True
+        Apply the *conv* factor to convert pixel coordinates.
+    changefps : int or None
+        Resample output to a lower frame rate.
+    mask_margin : int, default 15
+        Pixels from the mask boundary: detections within are removed, gaps are
+        not interpolated.
+    max_traj_gap : int, default 50
+        Frame gap above which a break starts a new trajectory.
+    min_traj_len : int, default 10
+        Minimum trajectory length in frames; shorter bursts are discarded.
+    roi_edge_margin : int, default 10
+        Pixels from the ROI edge: head/tail blanked; ROI exits not interpolated.
+    interp_gap_com : int, default 500
+        Maximum gap (frames) to interpolate centroid data over.
+    interp_gap_orient : int, default 100
+        Maximum gap (frames) to interpolate head/tail and orientation over.
+    smoothwin : int, default 10
+        Savitzky–Golay smoothing window in frames (1 = no smoothing).
+    orient_min_speed : float, default 1
+        Minimum speed above which heading is used as fallback for orientation.
+    interpolate : bool, default True
+        Interpolate gaps in centroid, head/tail, and orientation data.
+    compute_movement : bool, default True
+        Compute movement variables: displacement, speed, heading, turn rates.
+    compute_distances : bool, default True
+        Compute distance measures: ROI edge, mask, walls, zones.
+
+    Returns
+    -------
+    str
+        Path to the output ``_F.csv`` file.
+    """
+    csvfile = os.path.abspath(csvfile)
+    if not os.path.exists(csvfile):
+        raise FileNotFoundError(f"CSV not found: {csvfile}")
+
+    csv_dir = os.path.dirname(csvfile)
+    csv_base = os.path.splitext(os.path.basename(csvfile))[0]
+    out_dir = os.path.abspath(outdir) if outdir else csv_dir
+
+    # --- Video metadata ---
+    fcount = 99999
+    resolution = None
+    if videofile is not None:
+        videofile = os.path.abspath(videofile)
+        _fps, width, height, fcount = get_vid_params(videofile)
+        fps = _fps if _fps and _fps > 0 else fps
+        resolution = (width, height)
+        if roi is None:
+            roi = ((0, 0), (width, height))
+
+    # Infer ROI from data if still unknown
+    if roi is None:
+        _data = pd.read_csv(csvfile)
+        cx_max = _data["cx"].max() if "cx" in _data and _data["cx"].notna().any() else 1000
+        cy_max = _data["cy"].max() if "cy" in _data and _data["cy"].notna().any() else 1000
+        roi = ((0, 0), (int(cx_max * 1.1) + 1, int(cy_max * 1.1) + 1))
+
+    if resolution is None:
+        resolution = roi[1]
+
+    # --- Build minimal overview row ---
+    # Store image paths as absolute paths — valid_img_path uses os.path.join which
+    # ignores the originals_dir prefix when the stored value is already absolute.
+    overview = pd.DataFrame([{
+        "video": csv_base,
+        "fps": fps,
+        "fcount": fcount,
+        "resolution": str(resolution),
+        "frame_start": np.nan,
+        "frame_stop": np.nan,
+        "roi": str(roi),
+        "conv": conv,
+        "maskimg": os.path.abspath(maskfile) if maskfile else np.nan,
+        "wallimg": os.path.abspath(wallfile) if wallfile else np.nan,
+        "zoneimg": os.path.abspath(zonefile) if zonefile else np.nan,
+        "bgimg": np.nan,
+        "ID": np.nan,
+        "objects": 1,
+        "exclude": np.nan,
+    }], index=[0])
+    overview["roi"] = [roi]  # Processor reads roi as a pre-parsed tuple
+
+    dirs = {
+        "originals": csv_dir,  # unused — image paths are absolute
+        "processed": out_dir,
+        "tracked": csv_dir,
+        "temp": csv_dir,
+        "todo": csv_dir,
+    }
+
+    config = _make_config()
+
+    lineprint(f"Processing {os.path.basename(csvfile)}..")
+
+    P = Processor(
+        dirs=dirs,
+        config=config,
+        overview=overview,
+        trackedfiles=[csvfile],
+        orientfrombw=orientfrombw,
+        overwrite=overwrite,
+        fulldata=fulldata,
+        convert=convert,
+        changefps=changefps,
+        mask_margin=mask_margin,
+        max_traj_gap=max_traj_gap,
+        min_traj_len=min_traj_len,
+        roi_edge_margin=roi_edge_margin,
+        interp_gap_com=interp_gap_com,
+        interp_gap_orient=interp_gap_orient,
+        smoothwin=smoothwin,
+        orient_min_speed=orient_min_speed,
+        interpolate=interpolate,
+        compute_movement=compute_movement,
+        compute_distances=compute_distances,
+    )
+    P.setup(csvfile, None)
+
+    out_csv = os.path.join(out_dir, csv_base + "_F.csv")
+    if os.path.exists(out_csv):
+        lineprint(f"Processing complete → {out_csv}")
+    else:
+        lineprint("Processing finished (no output produced).")
+    return out_csv

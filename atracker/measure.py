@@ -3,7 +3,7 @@
 import os
 import pandas as pd
 from pythutils.sysutils import lineprint
-from atracker.visual_editor import annotation_gui
+from atracker.editor import annotation_gui
 
 def batch_measure(
     folder=".",

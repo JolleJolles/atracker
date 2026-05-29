@@ -13,9 +13,9 @@ from pythutils.mediautils import crop, videowriter, add_transimg, imgresize
 from pythutils.drawutils import namedcols, draw_text, draw_traj, uniqcols
 from pythutils.mathutils import points_to_angle
 
-from .media import framechecks
-from .geometry import get_coord
-from .contour_utils import draw_coordlist
+from .helpers.media import framechecks
+from .helpers.geometry import get_coord
+from .helpers.contours import draw_coordlist
 
 
 def addcanvas(img, dims, color):

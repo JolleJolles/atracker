@@ -26,12 +26,12 @@ from pythutils.mediautils import get_vid_params, check_media
 from pythutils.datutils import to_query
 
 from atracker.__version__ import __version__
-from atracker.visual_editor import annotation_gui
-from atracker.tracker import Tracker
-from atracker.post_processor import Processor
-from atracker.media import convert_h264_to_mp4
-from atracker.utils import *
-from atracker.visualiser import Visualiser as _Visualiser
+from atracker.editor import annotation_gui
+from atracker.track import Tracker
+from atracker.process import Processor
+from atracker.helpers.media import convert_h264_to_mp4, bg_extract, find_max_working_pyframe
+from atracker.helpers.data import duplicate_row
+from atracker.visualise import Visualiser as _Visualiser
 
 warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
 
@@ -123,23 +123,26 @@ class ATracker:
         self.config = LocalConfig(self.cfiles["config"], compact_form=True)
         if not os.path.exists(self.cfiles["config"]):
             print("Configfile not found, new file created", end=" | ")
-            for section in ["exp","track","bgextract","orient","vis"]:
+            for section in ["track","vis"]:
                 if section not in list(self.config):
                     self.config.add_section(section)
-            self.set_config(fps=25, real_dims=None, startframe=1,
-                          stopframe=99999, keep_frames=10, bg_frames=25,
-                          show_tracking=True, vid_displaysize=1, frame_disstep=100,
-                          userwait=False, idcol=True, simple=True, orientfrombw=False,
-                          contour_col="blue", centre_col="white", front_col="black",
-                          orient_col="black", traj_col="yellow", centre_lwidth=13,
-                          orient_lwidth=2, orient_tip=0.15, orient_length=15,
-                          traj_length=4, traj_minthick=6.4, traj_maxthick=9,
-                          traj_opacity=0.5, mask_opacity=0.15, box_opacity=0.7,
-                          draw_contournrs=False, trajs_below=False, strict=False,
-                          create_vid=True, create_dat=True, overwrite=True,
-                          shape_area_tol=0.25, shape_history_len=500, linkdisthreshold=100, internal="")
+            self.set_config(
+                overwrite=True, create_vid=True, create_dat=True,
+                advanced=False, link_dist=100, merge_dist=20,
+                size_filter=False, size_filter_tol=0.25, size_filter_memory=500,
+                min_aspect_ratio=1.4, max_aspect_ratio=10,
+                check_flicker=False, skip_frames=0, max_framedist=200, track_merges=False,
+                show_tracking=True, vid_displaysize=1, frame_disstep=100,
+                userwait=False, idcol=True,
+                contour_col="blue", centre_col="white", front_col="black",
+                orient_col="black", traj_col="yellow", centre_lwidth=13,
+                orient_lwidth=2, orient_tip=0.15, orient_length=15,
+                traj_length=4, traj_minthick=6.4, traj_maxthick=9,
+                traj_opacity=0.5, mask_opacity=0.15, box_opacity=0.7,
+                draw_contournrs=False, trajs_below=False, internal="")
             print("Config settings stored", end=" | ")
         else:
+            self._migrate_config()
             print("Config settings loaded", end=" | ")
 
         if os.path.exists(self.cfiles["threshinfo"]):
@@ -153,6 +156,82 @@ class ATracker:
             print("Threshinfo file created")
 
         os.chdir(self.dir)
+
+    def _migrate_config(self):
+        """Detect a legacy config format and migrate it to the current one."""
+        sections = list(self.config)
+        legacy_sections = [s for s in ["exp", "bgextract", "orient"] if s in sections]
+        try:
+            track_keys = set(k for k, _ in self.config.items("track"))
+        except Exception:
+            track_keys = set()
+        legacy_params = {"simple", "contour_mode", "startframe", "stopframe",
+                         "keep_frames", "strict"} & track_keys
+
+        if not legacy_sections and not legacy_params:
+            return
+
+        # Save backup of old config
+        backup_path = self.cfiles["config"].replace(".conf", "_legacy_backup.conf")
+        shutil.copy2(self.cfiles["config"], backup_path)
+
+        # Read old track values to preserve them
+        def _gt(key, default):
+            try:
+                val = dict(self.config.items("track")).get(key, default)
+                return default if val is None else val
+            except Exception:
+                return default
+
+        overwrite       = _gt("overwrite", True)
+        create_vid      = _gt("create_vid", True)
+        create_dat      = _gt("create_dat", True)
+        advanced        = not bool(_gt("simple", True))
+        link_dist       = int(float(_gt("linkdisthreshold", 100)))
+        merge_dist      = int(float(_gt("mergedmindist", 20)))
+        size_filter     = _gt("contour_mode", "static") == "dynamic"
+        size_filter_tol = float(_gt("shape_area_tol", 0.25))
+        size_filter_mem = int(float(_gt("shape_history_len", 500)))
+        min_ar          = float(_gt("min_aspect_ratio", 1.4))
+        max_ar          = float(_gt("max_aspect_ratio", 10))
+
+        # Recreate config from scratch with new format
+        os.remove(self.cfiles["config"])
+        self.config = LocalConfig(self.cfiles["config"], compact_form=True)
+        for section in ["track", "vis"]:
+            self.config.add_section(section)
+
+        self.set_config(
+            overwrite=overwrite, create_vid=create_vid, create_dat=create_dat,
+            advanced=advanced, link_dist=link_dist, merge_dist=merge_dist,
+            size_filter=size_filter, size_filter_tol=size_filter_tol,
+            size_filter_memory=size_filter_mem,
+            min_aspect_ratio=min_ar, max_aspect_ratio=max_ar,
+            check_flicker=False, skip_frames=0, max_framedist=200, track_merges=False,
+            show_tracking=True, vid_displaysize=1, frame_disstep=100,
+            userwait=False, idcol=True,
+            contour_col="blue", centre_col="white", front_col="black",
+            orient_col="black", traj_col="yellow", centre_lwidth=13,
+            orient_lwidth=2, orient_tip=0.15, orient_length=15,
+            traj_length=4, traj_minthick=6.4, traj_maxthick=9,
+            traj_opacity=0.5, mask_opacity=0.15, box_opacity=0.7,
+            draw_contournrs=False, trajs_below=False, internal="")
+
+        print(f"\n{'='*60}")
+        print("CONFIG MIGRATION: Legacy config format detected!")
+        print(f"  Backup saved as: {os.path.basename(backup_path)}")
+        print("  Track settings migrated:")
+        print(f"    simple={not advanced!s:<5} -> advanced={advanced}")
+        print(f"    linkdisthreshold   -> link_dist     = {link_dist}")
+        print(f"    mergedmindist      -> merge_dist    = {merge_dist}")
+        print(f"    contour_mode       -> size_filter   = {size_filter}")
+        print(f"    shape_area_tol     -> size_filter_tol    = {size_filter_tol}")
+        print(f"    shape_history_len  -> size_filter_memory = {size_filter_mem}")
+        if legacy_sections:
+            print(f"  Removed sections: {legacy_sections}")
+        print("  Visualisation settings reset to defaults.")
+        print("  Review your new config file and update if needed.")
+        print(f"{'='*60}\n")
 
     def _name_and_index(self, vid):
 
@@ -359,114 +438,96 @@ class ATracker:
     def set_config(self, **kwargs):
 
         """
-        Dynamically sets the configuration file
+        Dynamically sets the configuration file.
 
         Parameters
         ----------
-        regions: bool, default = False
-            If regions should be considered
-        fps: int, default = 25
-            The fps of the recorded videos
-        real_dims: tuple, default = None
-            The real dimensions of the arena in mm
-        frame_start: int, default = 1
-            The start frame to be used for tracking
-        frame_stop: int, default = 99999
-            The stop frame to be used for tracking
-        keep_frames: int, default = 10
-            The number of frames to keep for getting previous contour
-        strict : bool, default = False
-            If contour distance exclusion should be strict or not. Strict
-            is for example required when tracking a large object among
-            many smaller objects such as a pike among shiners.
-        overwrite : bool, default = True
-            If tracking data should be overwritten or not
-        create_vid : bool, default = True
-            If a tracking video should be created
-        create_dat : bool, default = True
-            If data should be written to file
-        simple : bool, default = True
-            If only simple contour data or complex contour data (skeleton,
-            head, tail, orientation, curvature etc) should be extracted
-        contour_mode : str, default = "static"
-            Contour consistency mode. "static" uses only the global area/aspect
-            thresholds set in the threshold file (current behaviour). "dynamic"
-            additionally applies a per-ID rolling area check: once an ID has 10
-            accepted frames of history, detections whose area falls below 25% or
-            above 400% of that ID's rolling median are rejected as noise.
-        orientfrombw : bool, default = False
-            If orientation data should be acquired from the difference in
-            centroid and other contour (such as color or barcode)
-        bg_frames : int, default = 25
-            The number of frames that should be used to create a background
-            image between the start and stopframe
-        mergedmindist : int, default = None
-            Minimal distance that previous contours should be to a potential
-            merged contour as condition for being a merged contour
-        linkdisthreshold : int, default = 100
-            Maximum distance in converted pixels per frame to be used to link
-            two IDs during tracking
-        shape_area_tol : float, default = 0.25
-            Ratio threshold for the dynamic per-ID area consistency filter (contour_mode="dynamic").
-            A detection is accepted if its area is within [tol × median, (1/tol) × median].
-            E.g. 0.25 accepts areas between 25% and 400% of the rolling median.
-        shape_history_len : int, default = 500
-            Number of accepted frames used to compute the rolling median area per ID.
-            500 frames at 25fps = 20 seconds of history, giving a stable baseline.
-        min_aspect_ratio : float, default = 1.4
-            Minimum contour aspect ratio accepted as a valid animal detection.
-        max_aspect_ratio : float, default = 10
-            Maximum contour aspect ratio accepted as a valid animal detection.
-        show_tracking : boolean, default = True
-            If tracking should be shown live
-        vid_displaysize : int, default = 1
-            Size of the video display window relative to the video size. The
-            default of 1 is thus the same as the video dimensions.
-        frame_disstep : int, default = 100
-            Nr of timesteps at which framenumber should be displayed inline to
-            keep up-to-date with the status of tracking
-        userwait : boolean, default = False
-            If tracking display should wait for user key
-        idcol : boolean, default = True
-            If ids should have a unique color
-        contour_col : str, default = "blue"
-            Colour of object contours
-        centre_col : str, default = "red"
-            Colour of centre points of objects
-        front_col : str, default = "black"
-            Colour of front points of objects
-        orient_col : str, default = "black"
-            Colour of orientation arrow
-        traj_col : str, default = "yellow"
-            Colour of trajectories
-        centre_lwidth : int, default = 13
-            Line thickness of the object centre points
-        orient_lwidth : int, default = 2
-            Line thickness of the orientation arrows
-        orient_tip : float, default = 0.3
-            Width of the tip of the orientation arrows
-        orient_length : int, default = 30
-            Length of the orientation arrows
-        traj_length : float, default = 4
-            Delay with which the object trajectories should be
-            displayed, in seconds
-        traj_minthick : float, default = 6.4
-            Minimum thickness of the trajectory
-        traj_maxthick : float, default = 9
-            Maximum thickness of the trajectory
-        traj_opacity : float, default = 0.5
-            Opacity of the trajectory
-        mask_opacity : float, default = 0.15
-            Opacity of the mask layer
-        box_opacity : float, default = 0.7
-            Opacity of the box displaying tracking information
-        draw_contournrs : bool, default = False
-            If the blob contour numbers should be drawn
+        regions : bool, default False
+            If regions should be considered.
+        overwrite : bool, default True
+            If tracking data should be overwritten or not.
+        create_vid : bool, default True
+            If a tracking video should be created.
+        create_dat : bool, default True
+            If data should be written to file.
+        advanced : bool, default False
+            Enable advanced contour extraction: skeleton, head, tail,
+            orientation, curvature. False = centroid and area only.
+        size_filter : bool, default False
+            Enable per-ID rolling area consistency check on top of global
+            min/max thresholds. Rejects detections that deviate strongly
+            from each ID's recent area history.
+        size_filter_tol : float, default 0.25
+            Tolerance for size_filter. Accepts area within
+            [tol × median, (1/tol) × median].
+        size_filter_memory : int, default 500
+            Number of accepted frames used to compute the rolling median area.
+        link_dist : int, default 100
+            Maximum distance in pixels per frame to link two IDs during tracking.
+        merge_dist : int, default 20
+            Minimum distance previous contours must be from a potential merged
+            contour for it to be flagged as a merge.
+        min_aspect_ratio : float, default 1.4
+            Minimum contour aspect ratio accepted as a valid detection.
+        max_aspect_ratio : float, default 10
+            Maximum contour aspect ratio accepted as a valid detection.
+        check_flicker : bool, default False
+            If brightness flicker detection should be used.
+        skip_frames : int, default 0
+            Number of frames to skip between tracked frames (0 = track all).
+        max_framedist : int, default 200
+            Maximum pixel distance per frame before a detection is rejected as a jump.
+        track_merges : bool, default False
+            If merge/split detection should be attempted.
+        show_tracking : bool, default True
+            If tracking should be shown live.
+        vid_displaysize : float, default 1
+            Size of the display window relative to video size.
+        frame_disstep : int, default 100
+            Frame interval at which frame number is printed inline.
+        userwait : bool, default False
+            If tracking display should wait for user keypress.
+        idcol : bool, default True
+            If IDs should have unique colours.
+        contour_col : str, default "blue"
+            Colour of object contours.
+        centre_col : str, default "white"
+            Colour of centre points.
+        front_col : str, default "black"
+            Colour of front points.
+        orient_col : str, default "black"
+            Colour of orientation arrows.
+        traj_col : str, default "yellow"
+            Colour of trajectories.
+        centre_lwidth : int, default 13
+            Line thickness of the centre point marker.
+        orient_lwidth : int, default 2
+            Line thickness of orientation arrows.
+        orient_tip : float, default 0.15
+            Width of orientation arrow tip.
+        orient_length : int, default 15
+            Length of orientation arrows.
+        traj_length : float, default 4
+            Trajectory display length in seconds.
+        traj_minthick : float, default 6.4
+            Minimum thickness of trajectory line.
+        traj_maxthick : float, default 9
+            Maximum thickness of trajectory line.
+        traj_opacity : float, default 0.5
+            Opacity of trajectories.
+        mask_opacity : float, default 0.15
+            Opacity of the mask overlay.
+        box_opacity : float, default 0.7
+            Opacity of the info box.
+        draw_contournrs : bool, default False
+            If blob contour numbers should be drawn.
+        trajs_below : bool, default False
+            If trajectories should be drawn below contours.
         """
 
         # Special: regions modifies overview structure
         if "regions" in kwargs:
-            self.config.exp.regions = kwargs["regions"]
+            self.config.track.regions = kwargs["regions"]
             if kwargs["regions"] and "region" not in self.overview:
                 self.overview.insert(1, "region", 1)
                 self.save()
@@ -474,44 +535,27 @@ class ATracker:
                 self.overview.drop("region", axis=1, inplace=True)
                 self.save()
 
-        # Public frame_start/frame_stop map to internal startframe/stopframe
-        if "frame_start" in kwargs:
-            kwargs["startframe"] = kwargs.pop("frame_start")
-        if "frame_stop" in kwargs:
-            kwargs["stopframe"] = kwargs.pop("frame_stop")
-
-        # exp section
-        if "fps" in kwargs:
-            self.config.exp.fps = int(kwargs["fps"])
-        if "real_dims" in kwargs:
-            self.config.exp.realdims = kwargs["real_dims"]
-
         # track section
         _track_map = {
-            "startframe": "startframe",
-            "stopframe": "stopframe",
-            "keep_frames": "keep_frames",
-            "strict": "strict",
             "overwrite": "overwrite",
             "create_vid": "create_vid",
             "create_dat": "create_dat",
-            "simple": "simple",
-            "contour_mode": "contour_mode",
-            "orientfrombw": "orientfrombw",
-            "mergedmindist": "mergedmindist",
-            "linkdisthreshold": "linkdisthreshold",
-            "shape_area_tol": "shape_area_tol",
-            "shape_history_len": "shape_history_len",
+            "advanced": "advanced",
+            "size_filter": "size_filter",
+            "size_filter_tol": "size_filter_tol",
+            "size_filter_memory": "size_filter_memory",
+            "link_dist": "link_dist",
+            "merge_dist": "merge_dist",
             "min_aspect_ratio": "min_aspect_ratio",
             "max_aspect_ratio": "max_aspect_ratio",
+            "check_flicker": "check_flicker",
+            "skip_frames": "skip_frames",
+            "max_framedist": "max_framedist",
+            "track_merges": "track_merges",
         }
         for k, attr in _track_map.items():
             if k in kwargs:
                 setattr(self.config.track, attr, kwargs[k])
-
-        # bgextract section
-        if "bg_frames" in kwargs:
-            self.config.bgextract.bg_frames = kwargs["bg_frames"]
 
         # vis section — plain scalar assignments
         _vis_map = {
@@ -578,7 +622,7 @@ class ATracker:
         if autoconvert:
             if convlist:
                 lineprint(f"Converting {len(convlist)} files...", newline=False)
-                conversion_fps = fps if fps is not None else self.config.exp.fps
+                conversion_fps = fps if fps is not None else 25
                 convert_h264_to_mp4(originals_dir, fps=conversion_fps)
             else:
                 lineprint("No files to convert..")
@@ -689,7 +733,7 @@ class ATracker:
                 if stops:
                     stop = stops[0] if len(stops) == 1 else stops[k]
 
-                framenr = self.config.bgextract.bg_frames
+                framenr = 25
 
                 img_bg = bg_extract(vidpath, start, stop, framenr)
                 cv2.imwrite(bgpath, img_bg)
@@ -1071,7 +1115,11 @@ class ATracker:
 
     def track(self, inds=None, names=None, query=None, cats=None, pools=1, folder="todo", frame_start=None,
         frame_stop=None, threshtype=None, objects=None, checkconschange=False, suffix="", threshfile=None,
-        max_framedist=200, overwrite=None, check_flicker=False, skip_frames=0, watch=False, watch_interval=60):
+        max_framedist=None, overwrite=None, check_flicker=None, skip_frames=None, watch=False, watch_interval=60):
+
+        check_flicker = check_flicker if check_flicker is not None else bool(getattr(self.config.track, 'check_flicker', False))
+        skip_frames = skip_frames if skip_frames is not None else int(getattr(self.config.track, 'skip_frames', 0))
+        max_framedist = max_framedist if max_framedist is not None else int(getattr(self.config.track, 'max_framedist', 200))
 
         if watch:
             lineprint(f"Watch mode enabled — checking every {watch_interval}s (Ctrl+C to stop)..")
@@ -1372,7 +1420,7 @@ class ATracker:
             "config": self.config,
             "overview": self.overview,
             "trackedfiles": trackedfiles,
-            "orientfrombw": self.config.track.orientfrombw,
+            "orientfrombw": bool(getattr(self.config.track, 'orientfrombw', False)),
             "overwrite": overwrite,
             "fulldata": fulldata,
             "convert": convert,

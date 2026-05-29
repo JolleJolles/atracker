@@ -11,8 +11,8 @@ from pythutils.mathutils import points_to_angle, ptsToDist
 from pythutils.datutils import contour_to_tuple
 
 from .geometry import adjpt, get_coord, geom_tocoord
-from .contour_utils import concom, con_lathom
-from .tracking_filters import dic_exclnan
+from .contours import concom, con_lathom
+from .filters import dic_exclnan
 
 
 def warp_barcode_patch(gray_img, contour, size=15):

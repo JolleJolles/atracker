@@ -1,7 +1,6 @@
 # Changelog
 
 ## TODO
-- Make atracker also work standalone without folder initiation etc, such that say you have a single video, you can run some function with the video, the main tracking settings, such as background substraction, bw treshtypes or nr of objects, if mask should be drawn or not, and then show some random frames to set the treshold, using default blur and erode values that should work for most videos.
 - set_interactive, when  working in fullscreen then stay in fullscreen when going to the next video so no need to press s to save and exit the video, and then in new video to click f to go to fullscreen again
 - integrate the maskzone in processing similar as the mask
 - visual_editor to have a way to change transparency of the mask layer, and also show a thin black border for the mask
@@ -12,8 +11,6 @@
 - Improve logic in names of main python files as not too messy I think, and wondering if subsetting to folders with more split python files could be good or even convention
 - make post_processor also work for a single video
 - make track_video() work with the track() function directly, just provide a single video name and then it should work as track_video.
-- same for post-processing, make it work such that we can load the filename of the tracked file that it will then post-process. It should thus store the mask, zone whatever in the location of the video so they can be used properly for post-processing.
-- make the visualise functionality work in the same way, such that we can visualise a folder of tracking files, such as 3tracked (not needed as for them it is automatic) or 4processed, but also a single video.
 - Perhaps besides storing the default tracking file and tracked video for each file, we could store an associated file that has coord data of all relevant files for that video, such as of the mask, the walls, and zones.  
 
 

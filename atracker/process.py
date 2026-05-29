@@ -11,15 +11,14 @@ from functools import reduce
 
 from pythutils.mathutils import points_to_angle, angle_to_vec, ptsToDist
 
-from .geometry import (calc_borderdistdf, convert, dist_to_point, dist_to_poly,
-                       dist_to_rect, dist_to_zone, is_axis_aligned_rectangle,
-                       series_to_point_tuple, valid_img_path)
-from .trajectory import (calcudiff, differentiate, fillmissing, getalones,
-                         process_trajectories, smooth)
-from .angles import get_anglediff
-from .contour_utils import coordsfrommask, coordsfromzones
+from .helpers.geometry import (calc_borderdistdf, convert, dist_to_point, dist_to_poly,
+                               dist_to_rect, dist_to_zone, is_axis_aligned_rectangle,
+                               series_to_point_tuple, valid_img_path, get_anglediff)
+from .helpers.trajectory import (calcudiff, differentiate, fillmissing, getalones,
+                                  process_trajectories, smooth)
+from .helpers.contours import coordsfrommask, coordsfromzones
 from scipy.spatial import KDTree
-from .data_utils import ensure_columns, lit_converter
+from .helpers.data import ensure_columns, lit_converter
 
 
 class Processor:
@@ -198,7 +197,7 @@ class Processor:
         if self.fulldata:
             self.minfr = int(self.fileinfo.frame_start
                              if self.fileinfo.frame_start == self.fileinfo.frame_start
-                             else self.config.track.startframe)
+                             else 1)
             self.maxfr = int(self.fileinfo.fcount
                              if self.fileinfo.frame_stop != self.fileinfo.frame_stop
                              else self.fileinfo.frame_stop)

@@ -21,17 +21,16 @@ from pythutils.mathutils import points_to_angle
 
 from ast import literal_eval
 
-from .geometry import get_coord, adjpt, geom_tocoord, fix_roi
-from .contour_utils import concom, concoords, consplit, con_lathom, coordsfrommask, coordsfromzones
-from .angles import hvflipangle
-from .trajectory import getavgvel
-from .tracking_filters import (filter_tracking_jumps, filter_contour_shape,
-                                update_shape_history, check_threshtypes,
-                                dic_exclnan, estimate_flicker_baseline)
-from .media import videowriter, make_even, framechecks
-from .data_utils import subdic, eval_func_tuple
-from .process_image import ProcessImage
-from .visualiser import Visualiser
+from .helpers.geometry import get_coord, adjpt, geom_tocoord, fix_roi, hvflipangle
+from .helpers.contours import concom, concoords, consplit, con_lathom, coordsfrommask, coordsfromzones
+from .helpers.trajectory import getavgvel
+from .helpers.filters import (filter_tracking_jumps, filter_contour_shape,
+                               update_shape_history, check_threshtypes,
+                               dic_exclnan, estimate_flicker_baseline)
+from .helpers.media import videowriter, make_even, framechecks
+from .helpers.data import subdic, eval_func_tuple
+from .helpers.detection import ProcessImage
+from .visualise import Visualiser
 
 class KeyboardInterruptError(Exception): pass
 
@@ -74,12 +73,13 @@ class Tracker:
         self.ustart = start
         self.ustop = stop
         self.suffix = "" if len(suffix)==0 else "_"+suffix
-        self.simple = self.config.track.simple
-        self.orientfrombw = self.config.track.orientfrombw
-        self.linkdisthreshold = 100 if "linkdisthreshold" not in self.config.track else self.config.track.linkdisthreshold
-        self.mergedmindist = 20 if "mergedmindist" not in self.config.track else self.config.track.mergedmindist
-        self.contour_mode = self.config.track.contour_mode if "contour_mode" in self.config.track else "static"
-        self.keep_frames = int(self.config.track.keep_frames) if "keep_frames" in self.config.track else 10
+        self.advanced = bool(getattr(self.config.track, 'advanced', False))
+        self.orientfrombw = bool(getattr(self.config.track, 'orientfrombw', False))
+        self.linkdisthreshold = getattr(self.config.track, 'link_dist', getattr(self.config.track, 'linkdisthreshold', 100))
+        self.mergedmindist = getattr(self.config.track, 'merge_dist', getattr(self.config.track, 'mergedmindist', 20))
+        _cm = getattr(self.config.track, 'contour_mode', 'static')
+        self.size_filter = bool(getattr(self.config.track, 'size_filter', _cm == 'dynamic'))
+        self.keep_frames = 10
         self.tracked = 0
         self.threshtype_override = threshtype
         self.objects_override = objects
@@ -127,11 +127,11 @@ class Tracker:
         self.pt1, self.pt2 = literal_eval(self.roi)
         self.vidw  = self.pt2[0] - self.pt1[0]
         self.vidh =  self.pt2[1] - self.pt1[1]
-        self.frame_start = self.frame_start if self.frame_start==self.frame_start else self.config.track.startframe
+        self.frame_start = self.frame_start if self.frame_start==self.frame_start else 1
         self.frame_start = self.ustart if self.ustart is not None else self.frame_start
         self.frame_stop = self.frame_stop if self.frame_stop==self.frame_stop else int(self.fcount)
         self.frame_stop = self.ustop if self.ustop is not None else self.frame_stop
-        self.fps = self.fps if hasattr(self, "fps") and pd.notnull(self.fps) and self.fps > 0 else self.config.exp.fps
+        self.fps = self.fps if hasattr(self, "fps") and pd.notnull(self.fps) and self.fps > 0 else 25
 
         # Check if all threshtypes are in threshinfo
         ## check_threshtypes turns empty cells (which are nan) into "bw" threshtype
@@ -238,7 +238,6 @@ class Tracker:
 
         # Final parameters and flags
         self.traj_length = int(self.fps * self.config.vis.traj_length)
-        self.orcheckwindow = self.fps * self.config.orient.delwindow
 
         if self.objects_override is not None:
             self.objects = self.objects_override
@@ -522,7 +521,7 @@ class Tracker:
                     if self.thresh_type.startswith("bw"):
                         PI = ProcessImage(self.img, self.img_bg, self.img_mask, self.thresh_type,
                             ti["blur"], ti["erode"], ti["blur2"], ti["threshold"], ti["min_area"], ti["max_area"],
-                            simple=self.simple, flicker_threshold=self.flicker_threshold if self.check_flicker else None,
+                            simple=not self.advanced, flicker_threshold=self.flicker_threshold if self.check_flicker else None,
                             min_aspect_ratio=min_ar, max_aspect_ratio=max_ar)
                     else:
                         if "hue_lo" in ti:
@@ -571,14 +570,14 @@ class Tracker:
 
                     # --- Dynamic shape filter: reject contours that deviate from per-ID rolling area ---
                     areas = [self.conlist["area"][i] for i in inds]
-                    if self.contour_mode == "dynamic":
-                        _area_tol = self.config.track.shape_area_tol if "shape_area_tol" in self.config.track else 0.25
+                    if self.size_filter:
+                        _area_tol = getattr(self.config.track, 'size_filter_tol', getattr(self.config.track, 'shape_area_tol', 0.25))
                         shape_accept = filter_contour_shape(
                             ids, areas, self.frame_nr, self.shape_history, area_tol=_area_tol, pr_comm=self.pr_comm)
                         for i, ok in enumerate(shape_accept):
                             if not ok:
                                 filtered_coms[i] = (np.nan, np.nan)
-                    _history_len = self.config.track.shape_history_len if "shape_history_len" in self.config.track else 500
+                    _history_len = getattr(self.config.track, 'size_filter_memory', getattr(self.config.track, 'shape_history_len', 500))
                     update_shape_history(ids, areas, filtered_coms, self.shape_history, history_len=_history_len)
 
                     # Collect overlay info for this thresh type
@@ -602,7 +601,7 @@ class Tracker:
                     self.fulldat.setdefault("cy", []).extend([c[1] for c in filtered_coms])
 
                     # Store head/tail coordinates if not simple
-                    if not self.simple:
+                    if self.advanced:
                         heads = [self.conlist["head"][i] for i in inds]
                         tails = [self.conlist["tail"][i] for i in inds]
                         self.fulldat.setdefault("hx", []).extend([h[0] if (h is not None and h == h) else np.nan for h in heads])

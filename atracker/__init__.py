@@ -1,10 +1,10 @@
 from .__version__ import __version__
 from .atracker import ATracker
-from .standalone import track_video, save_atcache, load_atcache
-from .visual_editor import manual_tracker
-from .batch_measure import batch_measure
-from .post_processor import Processor
-from .visualiser import Visualiser
+from .standalone import track_video, save_atcache, load_atcache, process_video
+from .editor import manual_tracker
+from .measure import batch_measure
+from .process import Processor
+from .visualise import Visualiser
 
 __citation__ = (
     "If you use ATracker in your research, please cite:\n"
