@@ -16,8 +16,6 @@ from ast import literal_eval
 from localconfig import LocalConfig
 import subprocess
 import threading
-import multiprocessing
-from concurrent.futures import ThreadPoolExecutor
 
 from pythutils.fileutils import listfiles
 from pythutils.sysutils import lineprint
@@ -30,7 +28,9 @@ from atracker.editor import annotation_gui
 from atracker.track import Tracker
 from atracker.process import Processor
 from atracker.helpers.media import convert_h264_to_mp4, bg_extract, find_max_working_pyframe
-from atracker.helpers.data import duplicate_row
+from atracker.helpers.data import duplicate_row, notebook
+from atracker.helpers.contours import coordsfrommask, coordsfromzones
+from atracker.helpers.pool import run_pool
 from atracker.visualise import Visualiser as _Visualiser
 
 warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
@@ -1235,39 +1235,10 @@ class ATracker:
             else:
                 self.config.vis.show_tracking = False
                 self.config.vis.waitkey = 1
-                def callback_function(output): T.inds = output
-                if not notebook():
-                    pool = multiprocessing.Pool(min(pools, len(trackfiles)))
-                    last_ind, last_video = None, "unknown"
-                    try:
-                        all_async = []
-                        while len(T.inds) > 0:
-                            ind = T.inds[0]
-                            T.inds = T.inds[1:]
-                            last_ind = ind
-                            last_video = self.overview.loc[ind]["video"]
-                            trackfile = os.path.join(self.dirs[folder], last_video + ".mp4")
-                            all_async.append(pool.apply_async(T.setuptracking,
-                                                              (ind, trackfile),
-                                                              callback=callback_function))
-                            time.sleep(0.2)
-                        for r in all_async:
-                            r.get()
-                        pool.close()
-                    except KeyboardInterrupt:
-                        lineprint("\nUser terminated tracking pool..")
-                        pool.terminate()
-                        _stop = True
-                    except Exception as e:
-                        lineprint(f"Error on row {last_ind} ({last_video}): {type(e).__name__}: {e}, terminating pool")
-                        pool.terminate()
-                        lineprint("pool is terminated")
-                    finally:
-                        pool.join()
-                        if not _stop:
-                            lineprint("Tracking completed..")
-                else:
-                    lineprint("Pooled tracking can only be run from the terminal, exiting..")
+                track_items = [(ind, os.path.join(self.dirs[folder], self.overview.loc[ind]["video"] + ".mp4"))
+                               for ind in T.inds]
+                if not run_pool(T.setuptracking, track_items, pools=pools, mode="process", label="tracking"):
+                    _stop = True
 
             self.config = cbak
 
@@ -1440,22 +1411,13 @@ class ATracker:
 
         lineprint("Processing started of " + str(len(trackedfiles)) + " files..")
 
-        if pools < 2:
-            P = Processor(**config_dict)
-            for trackedfile in trackedfiles:
-                P.setup(trackedfile, None)
-            lineprint("Processing completed..")
-        else:
-            if not notebook():
-                def _worker(f):
-                    Processor(**config_dict).setup(f, threading.get_ident())
-                with ThreadPoolExecutor(max_workers=pools) as executor:
-                    executor.map(_worker, trackedfiles)
-            else:
-                lineprint("Pooled processing can only be run from the terminal, exiting..")
+        def _proc_worker(f):
+            Processor(**config_dict).setup(f, threading.get_ident() if pools > 1 else None)
+
+        run_pool(_proc_worker, trackedfiles, pools=pools, mode="thread", label="processing")
 
 
-    def visualise(self, folder="processed", names=None, overwrite=False, **kwargs):
+    def visualise(self, folder="processed", names=None, overwrite=False, pools=1, **kwargs):
         """
         Create visualisation videos for tracked or processed CSV files.
 
@@ -1468,8 +1430,10 @@ class ATracker:
             in the folder if None.
         overwrite : bool, default False
             Overwrite existing visualisation videos.
+        pools : int, default 1
+            Number of parallel workers. 1 = sequential.
         **kwargs
-            Additional arguments forwarded to the standalone visualise() function,
+            Additional arguments forwarded to the Visualiser,
             e.g. resize, trajlength, writevideo, showvideo, drawptonmask, etc.
         """
         csvfiles = listfiles(self.dirs[folder], type=".csv", keepdir=True)
@@ -1487,13 +1451,17 @@ class ATracker:
 
         lineprint(f"Visualising {len(csvfiles)} file(s) from '{folder}'..")
 
+        def _img_path(fname):
+            if not isinstance(fname, str):
+                return None
+            p = os.path.join(self.dirs["originals"], fname)
+            return p if os.path.isfile(p) else None
+
+        vis_items = []
         for i, csvfile in enumerate(csvfiles):
             base = os.path.splitext(os.path.basename(csvfile))[0]
-
-            # Strip _F suffix for processed files to get tracking base name
             tracking_base = base[:-2] if (folder == "processed" and base.endswith("_F")) else base
 
-            # Parse video name and optional region number
             region_match = re.search(r'_R(\d+)$', tracking_base)
             if region_match:
                 region = int(region_match.group(1))
@@ -1502,35 +1470,29 @@ class ATracker:
                 region = None
                 video_name = tracking_base
 
-            # Find overview row
             rows = self.overview[self.overview["video"] == video_name]
             if "region" in rows.columns and region is not None:
                 rows = rows[rows["region"] == region]
             if len(rows) == 0:
                 lineprint(f"Video {i+1}|{len(csvfiles)} {base}: no overview row found, skipping")
                 continue
-            ind = rows.index[0]
-            row = self.overview.loc[ind]
+            row = self.overview.loc[rows.index[0]]
 
             outfile = os.path.join(self.dirs[folder], base + "_V.mp4")
             if os.path.exists(outfile) and not overwrite:
                 lineprint(f"Video {i+1}|{len(csvfiles)} {base}: already exists, skipping")
                 continue
 
-            lineprint(f"Video {i+1}|{len(csvfiles)} {base}", True, False)
-
             orig_video = os.path.join(self.dirs["originals"], f"{video_name}.mp4")
             if not os.path.isfile(orig_video):
-                lineprint(f" — original video not found, skipping")
+                lineprint(f"Video {i+1}|{len(csvfiles)} {base}: original video not found, skipping")
                 continue
 
-            # FPS from overview, overridable via kwargs
             try:
                 fps_val = float(row["fps"]) if not pd.isna(row.get("fps", np.nan)) else 25.0
             except (TypeError, ValueError):
                 fps_val = 25.0
 
-            # ROI
             roi = None
             if "roi" in self.overview.columns and isinstance(row.get("roi"), str):
                 try:
@@ -1538,59 +1500,44 @@ class ATracker:
                 except Exception:
                     pass
 
-            # Background image
-            img_bg = None
-            bgimg = row.get("bgimg")
-            if isinstance(bgimg, str):
-                _p = os.path.join(self.dirs["originals"], bgimg)
-                if os.path.isfile(_p):
-                    img_bg = cv2.imread(_p)
+            vis_items.append({
+                "csvfile": csvfile,
+                "outfile": outfile,
+                "orig_video": orig_video,
+                "fps": fps_val,
+                "roi": roi,
+                "bgimg_path": _img_path(row.get("bgimg")),
+                "maskimg_path": _img_path(row.get("maskimg")),
+                "wallimg_path": _img_path(row.get("wallimg")),
+                "zoneimg_path": _img_path(row.get("zoneimg")),
+                "config": self.config,
+                "label": f"Video {i+1}|{len(csvfiles)} {base}",
+                "kwargs": kwargs,
+            })
 
-            # Mask image
-            img_mask = None
-            maskimg = row.get("maskimg")
-            if isinstance(maskimg, str):
-                _p = os.path.join(self.dirs["originals"], maskimg)
-                if os.path.isfile(_p):
-                    img_mask = cv2.imread(_p)
-
-            # Wall contours (full-image coords; visualise() adjusts for ROI)
+        def _vis_worker(info):
+            img_bg = cv2.imread(info["bgimg_path"]) if info["bgimg_path"] else None
+            img_mask = cv2.imread(info["maskimg_path"]) if info["maskimg_path"] else None
             wallconts = None
-            wallimg = row.get("wallimg")
-            if isinstance(wallimg, str):
-                _p = os.path.join(self.dirs["originals"], wallimg)
-                wall_arr = cv2.imread(_p)
+            if info["wallimg_path"]:
+                wall_arr = cv2.imread(info["wallimg_path"])
                 if wall_arr is not None:
                     wallconts, _ = coordsfrommask(wall_arr)
-
-            # Zone coords (full-image coords; visualise() adjusts for ROI)
             zone_coords = None
-            zoneimg = row.get("zoneimg")
-            if isinstance(zoneimg, str):
-                _p = os.path.join(self.dirs["originals"], zoneimg)
-                zone_arr = cv2.imread(_p)
+            if info["zoneimg_path"]:
+                zone_arr = cv2.imread(info["zoneimg_path"])
                 if zone_arr is not None:
                     _zc = coordsfromzones(zone_arr)
                     zone_coords = _zc if _zc else None
+            lineprint(info["label"], True, False)
+            data = pd.read_csv(info["csvfile"])
+            vis = _Visualiser(wall_contours=wallconts, zone_coords=zone_coords, config=info["config"])
+            call_kwargs = dict(fps=info["fps"])
+            call_kwargs.update(info["kwargs"])
+            vis.render(data=data, videofile=info["orig_video"], img_bg=img_bg, img_mask=img_mask,
+                       roi=info["roi"], outfile=info["outfile"], **call_kwargs)
 
-            data = pd.read_csv(csvfile)
-
-            vis = _Visualiser(wall_contours=wallconts,
-                               zone_coords=zone_coords,
-                               config=self.config)
-
-            _call_kwargs = dict(fps=fps_val)
-            _call_kwargs.update(kwargs)
-
-            vis.render(
-                data=data,
-                videofile=orig_video,
-                img_bg=img_bg,
-                img_mask=img_mask,
-                roi=roi,
-                outfile=outfile,
-                **_call_kwargs,
-            )
+        run_pool(_vis_worker, vis_items, pools=pools, mode="thread", label="visualising")
 
     def centralise(self, centertype="roi", names=None):
         """
