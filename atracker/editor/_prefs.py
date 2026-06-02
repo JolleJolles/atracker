@@ -10,6 +10,8 @@ DEFAULTS = {
     "hue": 120,
     "image_transparency": 100,
     "point_opacity": 100,
+    "mask_opacity": 80,
+    "point_size": 6,
     "blackwhite": False,
     "show_mask": False,
     "invert_mask": False,
@@ -29,6 +31,8 @@ DEFAULTS = {
     "edit_mode": "draw",
     "point_type_idx": 0,
     "highlight_current": True,
+    "range_direction": "all",
+    "fade_points": False,
     "fps": 25,
 }
 

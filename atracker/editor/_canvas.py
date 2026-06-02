@@ -642,7 +642,8 @@ class PyQt5ShapeDrawer(QWidget):
 
         # --- DRAW MASK IMAGE ---
         if self.show_mask and not self.mask_image.isNull():
-            painter.setOpacity(0.8)
+            mask_opacity = self.main_window.mask_op_slider.value() / 100.0
+            painter.setOpacity(mask_opacity)
             mask_disp = self.mask_image.scaled(
                 int(self.orig_width * scale),
                 int(self.orig_height * scale),
@@ -653,6 +654,29 @@ class PyQt5ShapeDrawer(QWidget):
                 mask_disp.invertPixels()
             painter.drawImage(int(offset_x), int(offset_y), mask_disp)
             painter.setOpacity(1.0)
+
+            # Draw a thin border around the mask outline
+            try:
+                ptr = self.mask_image.bits()
+                ptr.setsize(self.mask_image.byteCount())
+                arr = np.frombuffer(ptr, np.uint8).reshape(
+                    (self.mask_image.height(), self.mask_image.width(), -1))
+                gray = cv2.cvtColor(arr, cv2.COLOR_BGR2GRAY) if arr.shape[2] >= 3 else arr[:, :, 0]
+                if self.inverted:
+                    gray = cv2.bitwise_not(gray)
+                contours, _ = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                border_pen = QPen(QColor(0, 0, 0, 200), 2)
+                painter.setPen(border_pen)
+                painter.setBrush(Qt.NoBrush)
+                for contour in contours:
+                    pts = [QPoint(
+                        int(offset_x + p[0][0] * scale),
+                        int(offset_y + p[0][1] * scale)
+                    ) for p in contour]
+                    if pts:
+                        painter.drawPolygon(QPolygon(pts))
+            except Exception:
+                pass
         
         # ZONES MODE: draw colored zone overlay and temporary shapes
         if self.main_window.opmode_combo.currentText().lower() == "zones" and self.show_zones:
@@ -753,7 +777,7 @@ class PyQt5ShapeDrawer(QWidget):
                 color.setAlphaF(self.main_window.point_opacity)
                 painter.setPen(Qt.NoPen)
                 painter.setBrush(QBrush(color))
-                painter.drawEllipse(center, 6, 6)
+                painter.drawEllipse(center, self.main_window.point_size_slider.value(), self.main_window.point_size_slider.value())
 
         elif mode == "point":
             if self.main_window and self.main_window.opmode_combo.currentText().lower() != "timepoints":
@@ -763,7 +787,7 @@ class PyQt5ShapeDrawer(QWidget):
                     color.setAlphaF(self.main_window.point_opacity)
                     painter.setPen(Qt.NoPen)
                     painter.setBrush(QBrush(color))
-                    painter.drawEllipse(center, 6, 6)
+                    painter.drawEllipse(center, self.main_window.point_size_slider.value(), self.main_window.point_size_slider.value())
 
         # --- DRAW TIMEPOINTS ---
         if self.main_window.opmode_combo.currentText().lower() == "timepoints":
@@ -781,12 +805,21 @@ class PyQt5ShapeDrawer(QWidget):
                 ptypedict = self.points_by_frame.get(id_num, {})
                 frame_dict = {int(k): v for k, v in ptypedict.get(ptype, {}).items()}
                 angle_dict = {int(k): v for k, v in ptypedict.get("a", {}).items()}
-                start_frame = max(0, cur_frame - visible_range)
-                end_frame = cur_frame + visible_range
+                if self.main_window.rb_range_past.isChecked():
+                    start_frame = max(0, cur_frame - visible_range)
+                    end_frame = cur_frame
+                elif self.main_window.rb_range_future.isChecked():
+                    start_frame = cur_frame
+                    end_frame = cur_frame + visible_range
+                else:
+                    start_frame = max(0, cur_frame - visible_range)
+                    end_frame = cur_frame + visible_range
                 frames_sorted = sorted([f for f in frame_dict if start_frame <= f <= end_frame])
                 points_in_range = [(f, frame_dict[f]) for f in frames_sorted]
 
                 # --- 1. Draw all points except current frame (if highlight is ON) ---
+                pt_radius = self.main_window.point_size_slider.value()
+                fade_enabled = self.main_window.fade_points_checkbox.isChecked()
                 if self.main_window.show_points_checkbox.isChecked():
                     for f, pt in points_in_range:
                         if f == cur_frame and self.main_window.highlight_current_checkbox.isChecked():
@@ -794,10 +827,14 @@ class PyQt5ShapeDrawer(QWidget):
                         center = self.convertToDisplay(pt)
                         color = self.main_window.tp_id_colors[id_num % len(self.main_window.tp_id_colors)]
                         color = QColor(color)
-                        color.setAlphaF(self.main_window.point_opacity)
+                        base_opacity = self.main_window.point_opacity
+                        if fade_enabled and visible_range > 0:
+                            dist_ratio = abs(f - cur_frame) / visible_range
+                            base_opacity = base_opacity * max(0.0, 1.0 - dist_ratio)
+                        color.setAlphaF(base_opacity)
                         painter.setPen(Qt.NoPen)
                         painter.setBrush(QBrush(color))
-                        painter.drawEllipse(center, 6, 6)
+                        painter.drawEllipse(center, pt_radius, pt_radius)
                         if self.main_window.show_framenrs_checkbox.isChecked():
                             painter.setPen(Qt.black)
                             painter.setFont(self.font())
@@ -853,7 +890,7 @@ class PyQt5ShapeDrawer(QWidget):
                             center = self.convertToDisplay(pt)
                             painter.setPen(Qt.NoPen)
                             painter.setBrush(Qt.black)
-                            painter.drawEllipse(center, 7, 7)  # slightly bolder
+                            painter.drawEllipse(center, pt_radius + 1, pt_radius + 1)
                             if self.main_window.show_framenrs_checkbox.isChecked():
                                 painter.setPen(Qt.black)
                                 painter.setFont(self.font())

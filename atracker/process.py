@@ -235,19 +235,23 @@ class Processor:
         self.prep()
 
         # Load reference images
-        self.bg_path   = valid_img_path(self.fileinfo, "bgimg",   self.dirs["originals"])
-        self.mask_path = valid_img_path(self.fileinfo, "maskimg", self.dirs["originals"])
-        self.wall_path = valid_img_path(self.fileinfo, "wallimg", self.dirs["originals"])
-        self.zone_path = valid_img_path(self.fileinfo, "zoneimg", self.dirs["originals"])
-        self.maskcoords = []
-        self.wallcoords = []
-        self.zonecoords = {}
+        self.bg_path       = valid_img_path(self.fileinfo, "bgimg",       self.dirs["originals"])
+        self.mask_path     = valid_img_path(self.fileinfo, "maskimg",     self.dirs["originals"])
+        self.wall_path     = valid_img_path(self.fileinfo, "wallimg",     self.dirs["originals"])
+        self.zone_path     = valid_img_path(self.fileinfo, "zoneimg",     self.dirs["originals"])
+        self.maskzone_path = valid_img_path(self.fileinfo, "maskzoneimg", self.dirs["originals"])
+        self.maskcoords     = []
+        self.wallcoords     = []
+        self.zonecoords     = {}
+        self.maskzonecoords = []
         if self.mask_path:
             _, self.maskcoords = coordsfrommask(self.mask_path)
         if self.wall_path:
             _, self.wallcoords = coordsfrommask(self.wall_path)
         if self.zone_path:
             self.zonecoords = coordsfromzones(self.zone_path)
+        if self.maskzone_path:
+            _, self.maskzonecoords = coordsfrommask(self.maskzone_path)
 
         self.process()
 
@@ -490,6 +494,10 @@ class Processor:
                 wy[valid] = pts[idxs, 1] - ymin
             final["wx"] = wx
             final["wy"] = wy
+        if self.maskzonecoords:
+            final["mzdist"] = dist_to_poly(xs_full, ys_full, self.maskzonecoords) * self.conv
+            final["inmaskzone"] = (final["mzdist"] <= 0).astype(int)
+
         for zidx, coords in self.zonecoords.items():
             d = dist_to_zone(xs_full, ys_full, coords, self.conv)
             if d is not None:
