@@ -1,19 +1,64 @@
 #! /usr/bin/env python
 
 from ._utils import *
-from ._canvas import PyQt5ShapeDrawer
+from ._canvas import PyQt5ShapeDrawer, GROUPBOX_STYLE
 from ._prefs import load_prefs, save_prefs
 from pythutils.mediautils import get_vid_params
 from atracker.helpers.media import get_media_type
 from atracker.helpers.data import load_and_convert_tracking_dataframe
 from atracker.helpers.detection import ProcessImage
+from PyQt5.QtWidgets import QMessageBox
+
+# Maps human-readable purpose labels (lowercased) to internal opmode strings
+_PURPOSE_MAP = {
+    "mask": "mask",
+    "roi": "roi",
+    "zones": "zones",
+    "frame limits": "framelimits",
+    "coordinate data": "timepoints",
+    "measurement": "measure",
+    "thresholding": "thresholding",
+    "thresholding color": "thresholding color",
+    # passthrough for existing opmode values
+    "framelimits": "framelimits",
+    "measure": "measure",
+    "points": "points",
+    "timepoints": "timepoints",
+    "default": "default",
+}
+
+_MULTI_FILE_PURPOSES = [
+    "Mask", "ROI", "Zones", "Frame limits",
+    "Coordinate data", "Measurement", "Thresholding"
+]
 
 class PyQt5ShapeDrawerWindow(QMainWindow):
     _last_esc_press_time = 0  # Class variable shared across all instances
 
-    def __init__(self, file=None, background_file=None, threshold_dict=None, mask_qimg=None, mode="default", 
-                 total_frames=1, width=1280, height=960, roi=None):
+    def __init__(self, file=None, background_file=None, threshold_dict=None, mask_qimg=None, mode="default",
+                 total_frames=1, width=1280, height=960, roi=None,
+                 file_infos=None, file_idx=0, save_callback=None):
         super().__init__()
+
+        # --- Multi-file state ---
+        self._file_infos = file_infos
+        self._file_idx = file_idx
+        self._save_callback = save_callback
+        self._file_states = {}   # {file_idx: {purpose_text: state_dict}}
+        self._unsaved = set()    # {file_idx} - modified but not stored
+        self._stored = set()     # {(file_idx, purpose_text)} - stored this session
+
+        # Override file params from file_infos[file_idx] if multi-file mode
+        if file_infos and len(file_infos) > file_idx:
+            _fi = file_infos[file_idx]
+            if _fi.get("video_path"):
+                file = _fi["video_path"]
+            if _fi.get("background_path"):
+                background_file = _fi["background_path"]
+            if roi is None and _fi.get("roi"):
+                roi = _fi["roi"]
+            if not threshold_dict and _fi.get("threshold_dict"):
+                threshold_dict = _fi["threshold_dict"]
 
         # === 0. GENERAL SETUP ===
         self.setGeometry(0, 0, 1024, 768)
@@ -87,13 +132,36 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         self.info_group.layout().addWidget(self.info_label)
         self.left_layout.addWidget(self.info_group)
 
-        # --- Operation Mode ---
-        self.opmode_group = self.makeGroupBox("Operation Mode")
+        # --- File Navigation (multi-file mode only) ---
+        if self._file_infos:
+            self.nav_group = self.makeGroupBox("File")
+            nav_h = QHBoxLayout()
+            self.btn_prev = QPushButton("← Prev")
+            self.btn_prev.setFixedWidth(65)
+            self.btn_prev.clicked.connect(lambda: self._navigate_to(self._file_idx - 1))
+            self.nav_name_label = QLabel()
+            self.nav_name_label.setAlignment(Qt.AlignCenter)
+            self.nav_name_label.setWordWrap(True)
+            self.btn_next = QPushButton("Next →")
+            self.btn_next.setFixedWidth(65)
+            self.btn_next.clicked.connect(lambda: self._navigate_to(self._file_idx + 1))
+            nav_h.addWidget(self.btn_prev)
+            nav_h.addWidget(self.nav_name_label, 1)
+            nav_h.addWidget(self.btn_next)
+            self.nav_group.layout().addLayout(nav_h)
+            self.left_layout.addWidget(self.nav_group)
+            self._update_nav_label()
+
+        # --- Purpose / Operation Mode ---
+        self.opmode_group = self.makeGroupBox("Purpose" if self._file_infos else "Operation Mode")
         self.opmode_combo = QComboBox()
-        self.opmode_combo.addItems([
-            "default", "framelimits", "measure", "roi", "mask", "zones", "points",
-            "timepoints", "thresholding", "thresholding color"
-        ])
+        if self._file_infos:
+            self.opmode_combo.addItems(_MULTI_FILE_PURPOSES)
+        else:
+            self.opmode_combo.addItems([
+                "default", "framelimits", "measure", "roi", "mask", "zones", "points",
+                "timepoints", "thresholding", "thresholding color"
+            ])
         self.opmode_combo.currentIndexChanged.connect(self.onOpModeChanged)
         self.opmode_group.layout().addWidget(self.opmode_combo)
         self.left_layout.addWidget(self.opmode_group)
@@ -213,6 +281,26 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         self.func_group.layout().addLayout(h_point_op)
         self.point_opacity = 1.0
         self.point_op_slider.valueChanged.connect(self.on_point_opacity_changed)
+
+        h_mask_op = QHBoxLayout()
+        self.mask_op_label = QLabel("Mask Opacity:")
+        h_mask_op.addWidget(self.mask_op_label)
+        self.mask_op_slider = QSlider(Qt.Horizontal)
+        self.mask_op_slider.setRange(0, 100)
+        self.mask_op_slider.setValue(80)
+        self.mask_op_slider.setFixedWidth(150)
+        h_mask_op.addWidget(self.mask_op_slider)
+        self.func_group.layout().addLayout(h_mask_op)
+
+        h_point_size = QHBoxLayout()
+        self.point_size_label = QLabel("Point Size:")
+        h_point_size.addWidget(self.point_size_label)
+        self.point_size_slider = QSlider(Qt.Horizontal)
+        self.point_size_slider.setRange(2, 20)
+        self.point_size_slider.setValue(6)
+        self.point_size_slider.setFixedWidth(150)
+        h_point_size.addWidget(self.point_size_slider)
+        self.func_group.layout().addLayout(h_point_size)
 
         h_ticks = QHBoxLayout()
         self.cb_blackwhite = QCheckBox("Image BW")
@@ -446,6 +534,22 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         self.range_value_box.editingFinished.connect(self.refocusToCanvas)
         timepoints_layout.addLayout(h_range)
 
+        # ---- RANGE DIRECTION ----
+        h_range_dir = QHBoxLayout()
+        h_range_dir.addWidget(QLabel("Direction:"))
+        self.rb_range_all = QRadioButton("All")
+        self.rb_range_all.setChecked(True)
+        self.rb_range_past = QRadioButton("Past")
+        self.rb_range_future = QRadioButton("Future")
+        self.range_dir_group = QButtonGroup()
+        self.range_dir_group.addButton(self.rb_range_all)
+        self.range_dir_group.addButton(self.rb_range_past)
+        self.range_dir_group.addButton(self.rb_range_future)
+        h_range_dir.addWidget(self.rb_range_all)
+        h_range_dir.addWidget(self.rb_range_past)
+        h_range_dir.addWidget(self.rb_range_future)
+        timepoints_layout.addLayout(h_range_dir)
+
         # ---- SCOPE RADIO BUTTONS ----
         h_scope = QHBoxLayout()
         h_scope.addWidget(QLabel("Selector:"))
@@ -532,6 +636,10 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         self.show_nearframe_checkbox = QCheckBox("Near")
         self.show_nearframe_checkbox.setChecked(False)
         h_show_options.addWidget(self.show_nearframe_checkbox)
+        self.fade_points_checkbox = QCheckBox("Fade")
+        self.fade_points_checkbox.setChecked(False)
+        self.fade_points_checkbox.setToolTip("Fade points with distance from current frame")
+        h_show_options.addWidget(self.fade_points_checkbox)
         timepoints_layout.addLayout(h_show_options)      
         self.left_layout.addWidget(self.timepoints_group)
 
@@ -578,8 +686,27 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         # self.btn_redo.clicked.connect(self.redoLastDelete)
         # h_undo.addWidget(self.btn_redo)
         timepoints_layout.addLayout(h_undo)
-        
+
         self.left_layout.addStretch()
+
+        # --- Actions (multi-file mode only) ---
+        if self._file_infos:
+            self.action_group = self.makeGroupBox("")
+            actions_h = QHBoxLayout()
+            self.btn_store = QPushButton("Store")
+            self.btn_store.setToolTip("Store current drawing for this file and purpose")
+            self.btn_store.clicked.connect(self._store_current)
+            self.btn_save_all = QPushButton("Save")
+            self.btn_save_all.setToolTip("Save all stored data and exit")
+            self.btn_save_all.clicked.connect(self._save_all)
+            self.btn_exit_editor = QPushButton("Exit")
+            self.btn_exit_editor.setToolTip("Exit without saving")
+            self.btn_exit_editor.clicked.connect(self.close)
+            actions_h.addWidget(self.btn_store)
+            actions_h.addWidget(self.btn_save_all)
+            actions_h.addWidget(self.btn_exit_editor)
+            self.action_group.layout().addLayout(actions_h)
+            self.left_layout.addWidget(self.action_group)
 
         # === 6. DRAWING AREA (RIGHT) ===
         self.drawing_group = self.makeGroupBox("Drawing Area")
@@ -619,6 +746,12 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         self.angle_show_arrows_checkbox.stateChanged.connect(self.drawing_widget.update)
         self.angle_show_lines_checkbox.stateChanged.connect(self.drawing_widget.update)
         self.bgtrans_slider.valueChanged.connect(self.drawing_widget.update)
+        self.mask_op_slider.valueChanged.connect(self.drawing_widget.update)
+        self.point_size_slider.valueChanged.connect(self.drawing_widget.update)
+        self.rb_range_all.toggled.connect(self.drawing_widget.update)
+        self.rb_range_past.toggled.connect(self.drawing_widget.update)
+        self.rb_range_future.toggled.connect(self.drawing_widget.update)
+        self.fade_points_checkbox.stateChanged.connect(self.drawing_widget.update)
         self.cb_showloop.stateChanged.connect(
             lambda state: setattr(self.drawing_widget, "loop", state == Qt.Checked) or self.drawing_widget.update()
         )
@@ -954,6 +1087,10 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         return grp
 
     def proxyUpdate(self):
+        # Track unsaved changes in multi-file mode
+        if self._file_infos and self.drawing_widget.last_click_orig is not None:
+            self._unsaved.add(self._file_idx)
+
         w = self.drawing_widget
         mouse_pt = w.convertToOriginal(w.mouse_pos)
         current_str = f"Current position: ({mouse_pt.x()}, {mouse_pt.y()})"
@@ -962,7 +1099,8 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         else:
             last_str = "Last click:"
         metric = ""
-        opmode = self.opmode_combo.currentText().lower()
+        opmode_text = self.opmode_combo.currentText().lower()
+        opmode = _PURPOSE_MAP.get(opmode_text, opmode_text)
         if opmode in ["roi", "mask", "measure"]:
             if w.start_point_orig and w.end_point_orig:
                 dx = w.end_point_orig.x() - w.start_point_orig.x()
@@ -980,7 +1118,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         if self.is_video:
             frame_info = f"Frame : {self.current_frame_idx+1} / {self.total_frames}"
 
-        if self.opmode_combo.currentText().lower().startswith("thresholding"):
+        if opmode.startswith("thresholding"):
             info_text = f"{frame_info}\n{current_str}"
             all_sz = getattr(self, "all_contour_sizes", [])
             focal_sz = getattr(self, "contour_sizes", [])
@@ -1101,7 +1239,8 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             # Always update background image
             qimg = cvMatToQImage(frame)
             self.drawing_widget.setBackgroundImage(qimg)
-            if self.opmode_combo.currentText().lower() in ["thresholding", "thresholding color"]:
+            _opmode_now = _PURPOSE_MAP.get(self.opmode_combo.currentText().lower(), self.opmode_combo.currentText().lower())
+            if _opmode_now in ["thresholding", "thresholding color"]:
                 self.updateThresholdingImage(frame)
             self.proxyUpdate()
             self.proxyUpdate()
@@ -1171,7 +1310,8 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         self.drawing_widget.update()
 
     def onOpModeChanged(self, index):
-        opmode = self.opmode_combo.itemText(index).lower()
+        opmode_text = self.opmode_combo.itemText(index).lower()
+        opmode = _PURPOSE_MAP.get(opmode_text, opmode_text)
 
         # Clear shapes and overlay if needed
         self.drawing_widget.clearCurrentShape()
@@ -1348,7 +1488,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             if mask_np.ndim == 3:
                 mask_np = cv2.cvtColor(mask_np, cv2.COLOR_RGB2GRAY)
 
-        opmode = self.opmode_combo.currentText().lower()
+        opmode = _PURPOSE_MAP.get(self.opmode_combo.currentText().lower(), self.opmode_combo.currentText().lower())
 
         # Get a fresh frame if none was passed in
         if frame is None:
@@ -1594,9 +1734,15 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             self.drawing_widget.addCurrentShapeIfNeeded()
             self.drawing_widget.update()
         elif key == Qt.Key_S:
+            # In multi-file mode, S stores the current drawing without closing
+            if self._file_infos:
+                self._store_current()
+                return
+
             self.drawing_widget.addCurrentShapeIfNeeded()
             result = None
-            opmode = self.opmode_combo.currentText().lower()
+            opmode_text = self.opmode_combo.currentText().lower()
+            opmode = _PURPOSE_MAP.get(opmode_text, opmode_text)
 
              # If user recorded event frames with the event key, return them immediately
             if getattr(self, "_event_frames", None):
@@ -1853,6 +1999,8 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         self.hue_slider.setValue(prefs.get("hue", 120))
         self.bgtrans_slider.setValue(prefs.get("image_transparency", 100))
         self.point_op_slider.setValue(prefs.get("point_opacity", 100))
+        self.mask_op_slider.setValue(prefs.get("mask_opacity", 80))
+        self.point_size_slider.setValue(prefs.get("point_size", 6))
         self.cb_blackwhite.setChecked(prefs.get("blackwhite", False))
         self.cb_showmask.setChecked(prefs.get("show_mask", False))
         self.cb_invertmask.setChecked(prefs.get("invert_mask", False))
@@ -1869,6 +2017,11 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         self.arrow_length_slider.setValue(prefs.get("arrow_length", 20))
         self.range_slider.setValue(prefs.get("visible_range", 100))
         self.highlight_current_checkbox.setChecked(prefs.get("highlight_current", True))
+        range_dir = prefs.get("range_direction", "all")
+        self.rb_range_past.setChecked(range_dir == "past")
+        self.rb_range_future.setChecked(range_dir == "future")
+        self.rb_range_all.setChecked(range_dir not in ("past", "future"))
+        self.fade_points_checkbox.setChecked(prefs.get("fade_points", False))
         self.ptype_dropdown.setCurrentIndex(prefs.get("point_type_idx", 0))
         scope = prefs.get("scope_mode", "any")
         self.rb_scope_id.setChecked(scope == "id")
@@ -1886,6 +2039,8 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             "hue": self.hue_slider.value(),
             "image_transparency": self.bgtrans_slider.value(),
             "point_opacity": self.point_op_slider.value(),
+            "mask_opacity": self.mask_op_slider.value(),
+            "point_size": self.point_size_slider.value(),
             "blackwhite": self.cb_blackwhite.isChecked(),
             "show_mask": self.cb_showmask.isChecked(),
             "invert_mask": self.cb_invertmask.isChecked(),
@@ -1902,6 +2057,9 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             "arrow_length": self.arrow_length_slider.value(),
             "visible_range": self.range_slider.value(),
             "highlight_current": self.highlight_current_checkbox.isChecked(),
+            "range_direction": ("past" if self.rb_range_past.isChecked()
+                                else "future" if self.rb_range_future.isChecked() else "all"),
+            "fade_points": self.fade_points_checkbox.isChecked(),
             "point_type_idx": self.ptype_dropdown.currentIndex(),
             "scope_mode": "id" if self.rb_scope_id.isChecked() else "any",
             "edit_mode": ("angle" if self.rb_angle.isChecked()
@@ -1912,6 +2070,340 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         return prefs
 
     def closeEvent(self, event):
+        if self._file_infos and self._unsaved:
+            reply = QMessageBox.question(
+                self, "Unsaved changes",
+                "Some files have drawing changes that haven't been stored. Exit anyway?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply == QMessageBox.No:
+                event.ignore()
+                return
         save_prefs(self._collect_prefs())
         super().closeEvent(event)
+
+    # ==================== Multi-file editor methods ====================
+
+    def _update_nav_label(self):
+        if not self._file_infos:
+            return
+        fi = self._file_infos[self._file_idx]
+        name = fi.get("video_name", f"File {self._file_idx + 1}")
+        total = len(self._file_infos)
+        self.nav_name_label.setText(f"{name}\n({self._file_idx + 1} / {total})")
+        self.btn_prev.setEnabled(self._file_idx > 0)
+        self.btn_next.setEnabled(self._file_idx < total - 1)
+
+    def _collect_state(self):
+        """Collect canvas + widget state for the current purpose into a dict."""
+        opmode_text = self.opmode_combo.currentText().lower()
+        opmode = _PURPOSE_MAP.get(opmode_text, opmode_text)
+        state = {"opmode": opmode}
+        if opmode == "mask":
+            if self.drawing_widget.mask_image and not self.drawing_widget.mask_image.isNull():
+                state["mask_qimg"] = self.drawing_widget.mask_image.copy()
+        elif opmode == "roi":
+            state["shapes"] = list(self.drawing_widget.shapes)
+        elif opmode == "zones":
+            if self.drawing_widget.zones_overlay:
+                state["zones_overlay"] = self.drawing_widget.zones_overlay.copy()
+        elif opmode == "framelimits":
+            state["frame_start"] = self.flim_start_spin.value()
+            state["frame_stop"] = self.flim_stop_spin.value()
+        elif opmode == "timepoints":
+            state["points_by_frame"] = dict(self.drawing_widget.points_by_frame)
+            state["num_ids"] = self.input_num_ids.value()
+        elif opmode == "measure":
+            state["measure_polyline"] = list(getattr(self.drawing_widget, "measure_polyline_orig", []))
+        elif opmode == "thresholding":
+            state["thresh_params"] = dict(self.thresh_params)
+        return state
+
+    def _restore_state(self, state):
+        """Restore canvas + widget state from a collected dict."""
+        if not state:
+            return
+        opmode = state.get("opmode", "mask")
+        # Find the matching combo item
+        target = None
+        for i in range(self.opmode_combo.count()):
+            item_text = self.opmode_combo.itemText(i).lower()
+            if _PURPOSE_MAP.get(item_text, item_text) == opmode:
+                target = i
+                break
+        if target is not None:
+            self.opmode_combo.blockSignals(True)
+            self.opmode_combo.setCurrentIndex(target)
+            self.opmode_combo.blockSignals(False)
+            self.onOpModeChanged(target)
+        if "mask_qimg" in state:
+            self.drawing_widget.mask_image = state["mask_qimg"].copy()
+        if "shapes" in state:
+            self.drawing_widget.shapes = list(state["shapes"])
+        if "zones_overlay" in state:
+            self.drawing_widget.zones_overlay = state["zones_overlay"].copy()
+        if "frame_start" in state:
+            self.flim_start_spin.setValue(state["frame_start"])
+        if "frame_stop" in state:
+            self.flim_stop_spin.setValue(state["frame_stop"])
+        if "points_by_frame" in state:
+            self.drawing_widget.points_by_frame = state["points_by_frame"]
+            self.input_num_ids.setValue(state.get("num_ids", 1))
+        if "measure_polyline" in state:
+            self.drawing_widget.measure_polyline_orig = list(state["measure_polyline"])
+        if "thresh_params" in state:
+            self.thresh_params = dict(state["thresh_params"])
+        self.drawing_widget.update()
+
+    def _auto_load_purpose_data(self, fi, purpose_text):
+        """Auto-load existing data from file_info for the given purpose."""
+        opmode = _PURPOSE_MAP.get(purpose_text.lower(), purpose_text.lower())
+        if opmode == "mask":
+            mask_path = fi.get("mask_path")
+            if mask_path and os.path.isfile(mask_path):
+                mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+                if mask is not None:
+                    from ._utils import numpy_to_qimage
+                    self.drawing_widget.mask_image = numpy_to_qimage(mask, force_grayscale=True)
+        elif opmode == "zones":
+            zones_path = fi.get("zones_path")
+            if zones_path and os.path.isfile(zones_path):
+                zones = cv2.imread(zones_path, cv2.IMREAD_UNCHANGED)
+                if zones is not None:
+                    from ._utils import numpy_to_qimage
+                    self.drawing_widget.zones_overlay = numpy_to_qimage(zones)
+        elif opmode == "roi":
+            roi = fi.get("roi")
+            if roi:
+                self.roi = roi
+        elif opmode == "framelimits":
+            start = fi.get("frame_start")
+            stop = fi.get("frame_stop")
+            if start:
+                self.flim_start_spin.setValue(int(start))
+            if stop:
+                self.flim_stop_spin.setValue(int(stop))
+        elif opmode == "timepoints":
+            csv_path = fi.get("tracked_csv")
+            if csv_path and os.path.isfile(csv_path):
+                from ._utils import build_points_by_frame
+                df = load_and_convert_tracking_dataframe(csv_path)
+                if df is not None and len(df) > 0:
+                    if "IDstr" in df.columns:
+                        unique_ids = sorted([s for s in df["IDstr"].unique() if pd.notna(s)], key=str)
+                        id_map = {s: i for i, s in enumerate(unique_ids)}
+                        df["ID"] = df["IDstr"].map(id_map).fillna(-1).astype(int)
+                    pbf = build_points_by_frame(df)
+                    self.drawing_widget.points_by_frame = pbf
+                    if pbf:
+                        self.input_num_ids.setValue(len(pbf))
+        self.drawing_widget.update()
+
+    def _navigate_to(self, new_idx):
+        """Navigate to a different file, saving current state."""
+        if not self._file_infos:
+            return
+        if new_idx < 0 or new_idx >= len(self._file_infos):
+            return
+        if new_idx == self._file_idx:
+            return
+
+        # Prompt if unsaved changes
+        if self._file_idx in self._unsaved:
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Navigate to new file")
+            msg.setText("You have unsaved drawing changes. What would you like to do?")
+            btn_store = msg.addButton("Store & Go", QMessageBox.AcceptRole)
+            btn_skip = msg.addButton("Skip", QMessageBox.RejectRole)
+            btn_cancel = msg.addButton("Cancel", QMessageBox.DestructiveRole)
+            msg.exec_()
+            clicked = msg.clickedButton()
+            if clicked == btn_cancel:
+                return
+            if clicked == btn_store:
+                self._store_current()
+
+        # Save current canvas state for this file+purpose
+        purpose_text = self.opmode_combo.currentText()
+        if self._file_idx not in self._file_states:
+            self._file_states[self._file_idx] = {}
+        self._file_states[self._file_idx][purpose_text] = self._collect_state()
+
+        # Release old media
+        if self.cap:
+            self.cap.release()
+            self.cap = None
+        if self.timer:
+            self.timer.stop()
+
+        self._file_idx = new_idx
+        fi = self._file_infos[new_idx]
+
+        # Load new media
+        new_file = fi.get("video_path")
+        if new_file and os.path.isfile(new_file):
+            path = os.path.expanduser(new_file)
+            media_type = get_media_type(path)
+            if media_type == "vid":
+                self.is_video = True
+                self.cap = cv2.VideoCapture(path)
+                self.fps, self.orig_width, self.orig_height, self.total_frames = get_vid_params(self.cap)
+                self.is_video = self.total_frames > 1
+            elif media_type == "img":
+                bg = QImage(path)
+                if not bg.isNull():
+                    self.drawing_widget.setBackgroundImage(bg)
+                    self.orig_width = bg.width()
+                    self.orig_height = bg.height()
+                self.cap = None
+                self.total_frames = 1
+                self.is_video = False
+
+        # Load background
+        bgpath = fi.get("background_path")
+        self.background_file = bgpath
+        if bgpath and os.path.isfile(bgpath):
+            bg = QImage(bgpath)
+            if not bg.isNull():
+                self.drawing_widget.setBackgroundImage(bg)
+
+        # Reset canvas
+        self.drawing_widget.shapes.clear()
+        self.drawing_widget.clearCurrentShape()
+        blank_mask = QImage(self.orig_width, self.orig_height, QImage.Format_Grayscale8)
+        blank_mask.fill(255)
+        self.drawing_widget.mask_image = blank_mask
+        self.drawing_widget.zones_overlay = None
+        self.drawing_widget.points_by_frame = {}
+
+        # Restore state if cached, else auto-load
+        if new_idx in self._file_states and purpose_text in self._file_states[new_idx]:
+            self._restore_state(self._file_states[new_idx][purpose_text])
+        else:
+            self._auto_load_purpose_data(fi, purpose_text)
+
+        # Update video controls
+        if hasattr(self, "video_slider"):
+            self.video_slider.setRange(0, max(0, self.total_frames - 1))
+        if hasattr(self, "frame_spin"):
+            self.frame_spin.setRange(1, max(1, self.total_frames))
+        self.current_frame_idx = 0
+        if self.cap:
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            QTimer.singleShot(0, self.nextFrame)
+
+        self._unsaved.discard(new_idx)
+        self._update_nav_label()
+        self.drawing_widget.update()
+        self.proxyUpdate()
+
+    def _get_current_purpose_data(self):
+        """Return the current drawing data for the active purpose."""
+        opmode_text = self.opmode_combo.currentText().lower()
+        opmode = _PURPOSE_MAP.get(opmode_text, opmode_text)
+
+        if opmode == "mask":
+            img = self.drawing_widget.mask_image
+            if img is None or img.isNull():
+                return None
+            arr = qimage_to_numpy(img)
+            if getattr(self.drawing_widget, "inverted", False):
+                arr = 255 - arr
+            return arr
+
+        elif opmode == "roi":
+            if self.drawing_widget.shapes:
+                shape = self.drawing_widget.shapes[-1][1]
+                return tuple(shape[i] for i in (0, 2))
+            return None
+
+        elif opmode == "zones":
+            if self.drawing_widget.zones_overlay:
+                white_bg = QImage(self.drawing_widget.zones_overlay.size(), QImage.Format_ARGB32)
+                white_bg.fill(Qt.white)
+                painter = QPainter(white_bg)
+                painter.drawImage(0, 0, self.drawing_widget.zones_overlay)
+                painter.end()
+                return qimage_to_numpy(white_bg)
+            return None
+
+        elif opmode == "framelimits":
+            return (self.flim_start_spin.value(), self.flim_stop_spin.value())
+
+        elif opmode == "timepoints":
+            data = []
+            for id_, typedict in self.drawing_widget.points_by_frame.items():
+                frames = set()
+                for typ in ["c", "h", "t", "a"]:
+                    frames.update(typedict.get(typ, {}).keys())
+                for f in sorted(frames):
+                    row = {"frame": f, "id": id_}
+                    for coord_key, pt_key in [("cx", "c"), ("hx", "h"), ("tx", "t")]:
+                        pt = typedict.get(pt_key, {}).get(f)
+                        if pt and hasattr(pt, "x"):
+                            row[coord_key] = pt.x()
+                            row[coord_key.replace("x", "y")] = pt.y()
+                        else:
+                            row[coord_key] = None
+                            row[coord_key.replace("x", "y")] = None
+                    row["angle"] = typedict.get("a", {}).get(f)
+                    data.append(row)
+            if data:
+                import pandas as pd
+                return pd.DataFrame(data).sort_values(["id", "frame"]).reset_index(drop=True)
+            return None
+
+        elif opmode == "measure":
+            pts = getattr(self.drawing_widget, "measure_polyline_orig", [])
+            if len(pts) >= 2:
+                shape = [(pt.x(), pt.y()) for pt in pts]
+                total = sum(
+                    math.hypot(shape[i + 1][0] - shape[i][0], shape[i + 1][1] - shape[i][1])
+                    for i in range(len(shape) - 1)
+                )
+                area = None
+                if len(shape) >= 4:
+                    area = abs(sum(
+                        shape[i][0] * shape[(i + 1) % len(shape)][1]
+                        - shape[(i + 1) % len(shape)][0] * shape[i][1]
+                        for i in range(len(shape))
+                    )) / 2.0
+                return (shape, int(total), int(area) if area else None)
+            return None
+
+        elif opmode == "thresholding":
+            return dict(self.thresh_params)
+
+        return None
+
+    def _store_current(self):
+        """Store the current drawing for the current file and purpose."""
+        if not self._file_infos:
+            return
+        fi = self._file_infos[self._file_idx]
+        purpose_text = self.opmode_combo.currentText()
+        opmode_text = purpose_text.lower()
+        opmode = _PURPOSE_MAP.get(opmode_text, opmode_text)
+
+        data = self._get_current_purpose_data()
+        if data is None:
+            QMessageBox.information(self, "Nothing to store",
+                f"No data drawn for purpose: {purpose_text}")
+            return
+
+        if self._save_callback:
+            self._save_callback(self._file_idx, fi.get("ind"), opmode, data)
+
+        self._stored.add((self._file_idx, opmode))
+        self._unsaved.discard(self._file_idx)
+        name = fi.get("video_name", f"File {self._file_idx + 1}")
+        print(f"Stored {purpose_text} for {name}")
+
+    def _save_all(self):
+        """Save all stored data and close."""
+        self.drawing_widget.final_output = "saved"
+        save_prefs(self._collect_prefs())
+        self.close()
+
 

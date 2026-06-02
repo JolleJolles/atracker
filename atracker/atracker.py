@@ -747,7 +747,7 @@ class ATracker:
                         walls=None, conv=None, getpts=None, conv_mm=None, threshtypes=None,
                         query=None, cats=None, ptcolnames=None, threshfile=None, events=False):
         """
-        Interactive mode for various tasks, including event annotation.
+        Interactive mode for various tasks. Deprecated — use AT.editor() for the new multi-file editor.
 
         Args:
             events (bool): If True, enables event annotation mode.
@@ -792,6 +792,8 @@ class ATracker:
                         return None
             return None
 
+        gui_state = {"was_fullscreen": False}
+
         for i, ind in enumerate(inds):
             allinds = self._get_all_inds(query, cats, ind) if query or cats else ind
             vid = os.path.join(self.dirs["originals"], f"{self.overview.loc[ind, 'video']}.mp4")
@@ -829,7 +831,7 @@ class ATracker:
             maskpath = None
             mask_column = None
             if mask: mask_column = "maskimg"
-            elif maskzone: mask_column = "zoneimg"
+            elif maskzone: mask_column = "maskzoneimg"
             elif walls: mask_column = "wallimg"
             elif zones: mask_column = "zoneimg"
             elif threshtypes: mask_column = "maskimg"
@@ -858,7 +860,9 @@ class ATracker:
                         firstframe=firstframe,
                         lastframe=lastframe,
                         fileaction=fileaction,
-                        data_file=datafile
+                        data_file=datafile,
+                        start_fullscreen=gui_state["was_fullscreen"],
+                        _state=gui_state
                     )
                     if result is None or result == "exit":
                         print(" — exited")
@@ -892,7 +896,9 @@ class ATracker:
                         firstframe=firstframe,
                         lastframe=lastframe,
                         fileaction=None,
-                        data_file=None
+                        data_file=None,
+                        start_fullscreen=gui_state["was_fullscreen"],
+                        _state=gui_state
                     )
 
                     # user requested quit from GUI
@@ -950,7 +956,9 @@ class ATracker:
                 firstframe=firstframe,
                 lastframe=lastframe,
                 fileaction=fileaction,
-                data_file=datafile
+                data_file=datafile,
+                start_fullscreen=gui_state["was_fullscreen"],
+                _state=gui_state
             )
 
             if result is None:
@@ -985,7 +993,9 @@ class ATracker:
                                 firstframe=firstframe,
                                 lastframe=lastframe,
                                 fileaction=fileaction,
-                                data_file=datafile
+                                data_file=datafile,
+                                start_fullscreen=gui_state["was_fullscreen"],
+                                _state=gui_state
                             )
                             if result is None or result == "exit":
                                 break
@@ -1024,8 +1034,10 @@ class ATracker:
                     # Determine column name
                     if mask:
                         colname = "maskimg"
+                    elif maskzone:
+                        colname = "maskzoneimg"
                     else:
-                        singular_map = {"zones": "zone", "walls": "wall", "maskzone": "zone"}
+                        singular_map = {"zones": "zone", "walls": "wall"}
                         base = singular_map.get(true_mode, true_mode)
                         colname = f"{base}img"
 
@@ -1076,6 +1088,153 @@ class ATracker:
             # final exit check for GUI result
             if result == "exit":
                 break
+
+        if overview_dirty:
+            self.save()
+
+    def editor(self, names=None, query=None, cats=None, inds=None, purpose="mask"):
+        """
+        Open the interactive editor for one or more files.
+
+        Parameters
+        ----------
+        names : list[str] | str | None
+            Video names to select. Same behaviour as track().
+        query : str | None
+            Pandas query string applied to the overview.
+        cats : str | list[str] | None
+            Category columns; rows with identical values are grouped.
+        inds : list[int] | None
+            Explicit overview row indices.
+        purpose : str
+            Initial editing purpose: "mask", "roi", "zones", "framelimits",
+            "timepoints", "measure", "thresholding". Default "mask".
+        """
+        from atracker.editor import editor_gui
+
+        # Resolve indices
+        _inds = inds
+        if names is not None:
+            _inds = self.get_inds(names)
+        resolved_inds, _ = self.get_files("originals", _inds, query, cats)
+
+        file_infos = []
+        for ind in resolved_inds:
+            row = self.overview.loc[ind]
+            vid_name = str(row.get("video", ""))
+            vid_path = os.path.join(self.dirs["originals"], vid_name + ".mp4")
+
+            bgimg = row.get("bgimg")
+            bgpath = os.path.join(self.dirs["originals"], bgimg) if isinstance(bgimg, str) else None
+
+            maskimg = row.get("maskimg")
+            maskpath = os.path.join(self.dirs["originals"], maskimg) if isinstance(maskimg, str) else None
+
+            zoneimg = row.get("zoneimg")
+            zonespath = os.path.join(self.dirs["originals"], zoneimg) if isinstance(zoneimg, str) else None
+
+            roi_val = row.get("roi")
+            roi = None
+            if isinstance(roi_val, str):
+                try:
+                    roi = literal_eval(roi_val)
+                except Exception:
+                    pass
+
+            frame_start = row.get("frame_start")
+            frame_start = None if pd.isna(frame_start) or str(frame_start).strip() == "" else int(frame_start)
+            frame_stop = row.get("frame_stop")
+            frame_stop = None if pd.isna(frame_stop) or str(frame_stop).strip() == "" else int(frame_stop)
+
+            tracked_csv = os.path.join(self.dirs["tracked"], vid_name + ".csv")
+            if not os.path.isfile(tracked_csv):
+                tracked_csv = None
+
+            thresh_types = row.get("thresh_types")
+            thresh_dict = {}
+            if isinstance(thresh_types, str):
+                for tt in thresh_types.split(","):
+                    tt = tt.strip()
+                    if tt in self.threshinfo:
+                        thresh_dict = self.threshinfo[tt]
+                        break
+
+            file_infos.append({
+                "ind": ind,
+                "video_name": vid_name,
+                "video_path": vid_path if os.path.isfile(vid_path) else None,
+                "background_path": bgpath if (bgpath and os.path.isfile(bgpath)) else None,
+                "mask_path": maskpath if (maskpath and os.path.isfile(maskpath)) else None,
+                "zones_path": zonespath if (zonespath and os.path.isfile(zonespath)) else None,
+                "roi": roi,
+                "frame_start": frame_start,
+                "frame_stop": frame_stop,
+                "tracked_csv": tracked_csv,
+                "threshold_dict": thresh_dict,
+                "dirs": self.dirs,
+            })
+
+        if not file_infos:
+            lineprint("No files found for editor.")
+            return
+
+        overview_dirty = False
+
+        def save_callback(file_idx, ind, purpose_key, data):
+            nonlocal overview_dirty
+            fi = file_infos[file_idx]
+            vid_name = fi["video_name"]
+
+            if purpose_key == "mask":
+                if isinstance(data, np.ndarray):
+                    outname = f"{vid_name}_mask.jpg"
+                    outpath = os.path.join(self.dirs["originals"], outname)
+                    cv2.imwrite(outpath, data)
+                    self.overview.loc[ind, "maskimg"] = outname
+                    overview_dirty = True
+                    lineprint(f"Stored mask: {outname}")
+
+            elif purpose_key == "roi":
+                if data:
+                    self.overview.loc[ind, "roi"] = str(data)
+                    overview_dirty = True
+                    lineprint(f"Stored ROI: {data}")
+
+            elif purpose_key == "zones":
+                if isinstance(data, np.ndarray):
+                    outname = f"{vid_name}_zone.jpg"
+                    outpath = os.path.join(self.dirs["originals"], outname)
+                    cv2.imwrite(outpath, data)
+                    if "zoneimg" not in self.overview.columns:
+                        self.overview["zoneimg"] = pd.Series(dtype=object)
+                    self.overview.loc[ind, "zoneimg"] = outname
+                    overview_dirty = True
+                    lineprint(f"Stored zones: {outname}")
+
+            elif purpose_key == "framelimits":
+                if data:
+                    self.overview.loc[ind, "frame_start"] = data[0]
+                    self.overview.loc[ind, "frame_stop"] = data[1]
+                    overview_dirty = True
+                    lineprint(f"Stored frame limits: start={data[0]}, stop={data[1]}")
+
+            elif purpose_key == "timepoints":
+                if data is not None and hasattr(data, "to_csv"):
+                    csv_path = os.path.join(self.dirs["tracked"], vid_name + ".csv")
+                    data.to_csv(csv_path, index=False)
+                    lineprint(f"Stored coordinate data: {os.path.basename(csv_path)}")
+
+            elif purpose_key == "thresholding":
+                if isinstance(data, dict):
+                    thresh_types = self.overview.loc[ind].get("thresh_types")
+                    if isinstance(thresh_types, str):
+                        tt = thresh_types.split(",")[0].strip()
+                        self.threshinfo[tt] = data
+                        with open(self.cfiles["threshinfo"], "w") as f:
+                            yaml.safe_dump(self.threshinfo, f, default_flow_style=False)
+                        lineprint(f"Stored thresholding for {tt}")
+
+        editor_gui(file_infos, purpose=purpose, save_callback=save_callback)
 
         if overview_dirty:
             self.save()

@@ -1,1 +1,1 @@
-from ._api import annotation_gui, manual_tracker
+from ._api import annotation_gui, manual_tracker, editor_gui

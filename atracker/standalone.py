@@ -593,3 +593,51 @@ def process_video(
     else:
         lineprint("Processing finished (no output produced).")
     return out_csv
+
+
+def editor(file, background=None, mask=None, mode="mask", threshold_dict=None, roi=None,
+           data_file=None, firstframe=None, lastframe=None):
+    """
+    Standalone interactive editor for a single video or image file.
+
+    Opens the drawing/annotation GUI without needing a full ATracker project.
+    Press S (or click Store) to save, Esc twice to exit without saving.
+
+    Parameters
+    ----------
+    file : str
+        Path to video or image file.
+    background : str | None
+        Path to background image (for thresholding overlay).
+    mask : str | None
+        Path to an existing mask image to pre-load.
+    mode : str
+        Initial purpose/mode: "mask", "roi", "zones", "framelimits",
+        "timepoints", "measure", "thresholding". Default "mask".
+    threshold_dict : dict | None
+        Initial threshold parameters for thresholding mode.
+    roi : tuple | None
+        Region of interest as ((x0, y0), (x1, y1)).
+    data_file : str | None
+        CSV path for loading/saving coordinate data (timepoints mode).
+    firstframe : int | None
+        First frame to include (1-based).
+    lastframe : int | None
+        Last frame to include (1-based).
+
+    Returns
+    -------
+    result : tuple | str | None
+        The GUI result, or None if cancelled.
+    """
+    return annotation_gui(
+        media_file=file,
+        background_file=background,
+        mask_file=mask,
+        mode=mode,
+        threshold_dict=threshold_dict or {},
+        roi=roi,
+        data_file=data_file,
+        firstframe=firstframe,
+        lastframe=lastframe,
+    )

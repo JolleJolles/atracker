@@ -1,16 +1,6 @@
 # Changelog
 
 ## TODO
-- set_interactive, when  working in fullscreen then stay in fullscreen when going to the next video so no need to press s to save and exit the video, and then in new video to click f to go to fullscreen again
-- integrate the maskzone in processing similar as the mask
-- visual_editor to have a way to change transparency of the mask layer, and also show a thin black border for the mask
-- visual_editor for showing points have a button or toggle or so to only show tracking points in future, past, or all
-- visual_editor, make increasingly transparent the points the further they are from current position
-- visual_editor, add a point-size slider
-- visual_editor, being able to store and recall settings of set_interactive so when opening a video it directly uses the parameters. No need for special function to set them, but handy to be able to call the config in line and change some settings manually to then open the visual editor.
-- Improve logic in names of main python files as not too messy I think, and wondering if subsetting to folders with more split python files could be good or even convention
-- make post_processor also work for a single video
-- make track_video() work with the track() function directly, just provide a single video name and then it should work as track_video.
 - Perhaps besides storing the default tracking file and tracked video for each file, we could store an associated file that has coord data of all relevant files for that video, such as of the mask, the walls, and zones.  
 
 

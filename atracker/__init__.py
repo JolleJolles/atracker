@@ -1,6 +1,6 @@
 from .__version__ import __version__
 from .atracker import ATracker
-from .standalone import track_video, save_atcache, load_atcache, process_video
+from .standalone import track_video, save_atcache, load_atcache, process_video, editor
 from .editor import manual_tracker
 from .measure import batch_measure
 from .process import Processor

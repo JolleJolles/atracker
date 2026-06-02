@@ -52,8 +52,9 @@ def load_tracking_data_from_df(df, firstframe=None, lastframe=None):
             frame_data[id_val][ptype] = new_dict
     return frame_data
 
-def annotation_gui(data_file=None, media_file=None, background_file=None, mask_file=None, mode="default", threshold_dict={}, 
-                   firstframe=None, lastframe=None, fileaction="overwrite", width=1280, height=960, roi=None):
+def annotation_gui(data_file=None, media_file=None, background_file=None, mask_file=None, mode="default",
+                   threshold_dict={}, firstframe=None, lastframe=None, fileaction="overwrite",
+                   width=1280, height=960, roi=None, start_fullscreen=False, _state=None):
     """
     Launches the interactive drawing interface.
     """
@@ -180,8 +181,11 @@ def annotation_gui(data_file=None, media_file=None, background_file=None, mask_f
                                     height=height,
                                     roi=roi)
     window.show()
-    window.raise_()          # Bring window to front
-    window.activateWindow()  # Give it focus
+    if start_fullscreen:
+        window.showFullScreen()
+        window.was_fullscreen = True
+    window.raise_()
+    window.activateWindow()
 
     # Attach ID mapping to window for UI logic (optional, but handy for colored labels etc)
     if unique_idstrs:
@@ -197,13 +201,15 @@ def annotation_gui(data_file=None, media_file=None, background_file=None, mask_f
         window.current_id_box.setMinimum(1)
         window.current_id_box.setMaximum(tp_total_ids)
 
-    # Set the starting mode 
+    # Set the starting mode
     idx = window.opmode_combo.findText(mode.lower())
     if idx >= 0:
         window.opmode_combo.setCurrentIndex(idx)
-        
+
     QTimer.singleShot(0, window.drawing_widget.setFocus)
     app.exec_()
+    if _state is not None:
+        _state["was_fullscreen"] = window.was_fullscreen
     result = window.drawing_widget.final_output
     
     # Format point output (for video)
@@ -243,7 +249,7 @@ def annotation_gui(data_file=None, media_file=None, background_file=None, mask_f
 def manual_tracker(media_file=None, background_file=None, mask_file=None, mode="timepoints",
                    threshold_dict={}, firstframe=1, lastframe=None,
                    fileaction="overwrite", data_file=None, width=1280, height=960):
-           
+
     return annotation_gui(
         media_file=media_file,
         background_file=background_file,
@@ -257,6 +263,79 @@ def manual_tracker(media_file=None, background_file=None, mask_file=None, mode="
         width=width,
         height=height
     )
+
+
+def editor_gui(file_infos, purpose="mask", save_callback=None):
+    """
+    Launch the multi-file interactive editor.
+
+    Parameters
+    ----------
+    file_infos : list[dict]
+        List of dicts with keys: video_path, background_path, mask_path,
+        zones_path, roi, frame_start, frame_stop, tracked_csv,
+        threshold_dict, ind, video_name, dirs.
+    purpose : str
+        Initial purpose: "mask", "roi", "zones", "framelimits",
+        "timepoints", "measure", "thresholding". Default "mask".
+    save_callback : callable | None
+        Called as save_callback(file_idx, ind, purpose, data) when the
+        user clicks Store.
+    """
+    from ._window import PyQt5ShapeDrawerWindow, _PURPOSE_MAP, _MULTI_FILE_PURPOSES
+
+    if not file_infos:
+        return
+
+    default_thresholds = {
+        "blur": 9, "erode": 1, "blur2": 1, "threshold": 50,
+        "min_area": 100, "max_area": 20000,
+        "hue_lo": 30, "hue_hi": 90, "sat_lo": 50, "sat_hi": 255, "val_lo": 50, "val_hi": 255,
+    }
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    app.setStyle("Fusion")
+
+    fi = file_infos[0]
+    thresholds = {**default_thresholds, **(fi.get("threshold_dict") or {})}
+
+    window = PyQt5ShapeDrawerWindow(
+        file_infos=file_infos,
+        file_idx=0,
+        save_callback=save_callback,
+        threshold_dict=thresholds,
+    )
+
+    # Set initial purpose in the combo
+    purpose_label_map = {
+        "mask": "Mask",
+        "roi": "ROI",
+        "zones": "Zones",
+        "framelimits": "Frame limits",
+        "timepoints": "Coordinate data",
+        "measure": "Measurement",
+        "thresholding": "Thresholding",
+    }
+    target_label = purpose_label_map.get(purpose.lower(), purpose.capitalize())
+    idx = window.opmode_combo.findText(target_label)
+    if idx < 0:
+        # Fallback: case-insensitive search
+        for i in range(window.opmode_combo.count()):
+            if window.opmode_combo.itemText(i).lower() == purpose.lower():
+                idx = i
+                break
+    if idx >= 0:
+        window.opmode_combo.setCurrentIndex(idx)
+
+    # Auto-load data for the initial file and purpose
+    window._auto_load_purpose_data(fi, window.opmode_combo.currentText())
+
+    window.show()
+    window.raise_()
+    window.activateWindow()
+    QTimer.singleShot(0, window.drawing_widget.setFocus)
+    app.exec_()
+    return window.drawing_widget.final_output
 
 if __name__ == '__main__':
     result = annotation_gui(
