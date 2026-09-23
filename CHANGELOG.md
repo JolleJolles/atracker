@@ -5,6 +5,7 @@
 
 
 ## Unreleased
+- Included video dimensions, FPS and OpenCV version in visualisation writer errors to help diagnose environment-specific output failures.
 - Made visualisation report the absolute output path or explicitly state that saving is disabled, and raise an error if the video writer fails to open or no output is written.
 - Fixed overlay opacity accumulating where pending zone shapes overlap; zones/previews and mask outlines are now composited before applying the shared display opacity.
 - Fixed pandas `SettingWithCopyWarning` during processed-output rounding by explicitly copying the selected output columns.

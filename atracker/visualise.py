@@ -526,7 +526,13 @@ class Visualiser:
             if vidout is None or not vidout.isOpened():
                 if cap is not None:
                     cap.release()
-                raise RuntimeError(f"Could not open video output: {os.path.abspath(outfile)}")
+                raise RuntimeError(
+                    f"Could not open video output: {os.path.abspath(outfile)} "
+                    f"(width={vidoutdims[0]!r}, height={vidoutdims[1]!r}, fps={fps!r}, "
+                    f"OpenCV={cv2.__version__}). "
+                    "Check the output folder's write permissions and the video encoder "
+                    "available in the notebook's Python environment."
+                )
             lineprint(f"Writing video to: {os.path.abspath(outfile)}")
         else:
             lineprint("Video saving disabled (writevideo=False); no output file will be created.")
