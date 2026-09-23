@@ -233,6 +233,8 @@ class Visualiser:
         """
         # 1) Crop
         if cropimg and roi is not None:
+            if isinstance(img_bg, np.ndarray) and img_bg.shape[:2] == img.shape[:2]:
+                img_bg = crop(img_bg, roi[0], roi[1])
             img = crop(img, roi[0], roi[1])
         if resizetosmooth:
             orig_dims = (img.shape[1], img.shape[0])
@@ -478,14 +480,16 @@ class Visualiser:
         # ROI-adjust scene overlays (they're in full-image coords)
         _wall_conts  = self.wall_contours
         _zone_coords = self.zone_coords
-        if roi is not None:
-            xo, yo = roi[0]
-            if _wall_conts is not None:
-                _wall_conts = [[[(c[0][0] - xo, c[0][1] - yo)] for c in cont]
-                               for cont in _wall_conts]
-            if _zone_coords is not None:
-                _zone_coords = {k: [(x - xo, y - yo) for x, y in coords]
-                                for k, coords in _zone_coords.items()}
+        xo, yo = roi[0] if roi is not None and cropimg else (0, 0)
+        if _wall_conts is not None:
+            _wall_conts = [np.rint((np.asarray(cont) - (xo, yo)) * resize).astype(np.int32)
+                           for cont in _wall_conts]
+        if _zone_coords is not None:
+            _zone_coords = {
+                k: [(int(round((x - xo) * resize)), int(round((y - yo) * resize)))
+                    for x, y in coords]
+                for k, coords in _zone_coords.items()
+            }
 
         # Crop and resize mask
         _img_mask = img_mask
@@ -521,7 +525,10 @@ class Visualiser:
             if outfile is None:
                 stem = os.path.splitext(videofile)[0] if videofile else "output"
                 outfile = stem + videosuffix + ".mp4"
-            vidoutdims = canvasdims if canvasdims is not None else (vidw, vidh)
+            frame_dims = tuple(int(v) for v in (canvasdims if canvasdims is not None else (vidw, vidh)))
+            # MP4 encoders commonly require even frame dimensions. Pad the
+            # right/bottom edge rather than cropping pixels or moving points.
+            vidoutdims = tuple(v + v % 2 for v in frame_dims)
             vidout = videowriter(outfile, vidoutdims[0], vidoutdims[1], fps)
             if vidout is None or not vidout.isOpened():
                 if cap is not None:
@@ -571,7 +578,7 @@ class Visualiser:
                     if cv2.waitKey(1) & 0xff == 27:
                         break
                 if writevideo:
-                    vidout.write(img_draw)
+                    vidout.write(_prepare_video_frame(img_draw, frame_dims))
                     frames_written += 1
         else:
             # No video: iterate over frames that have data
@@ -594,7 +601,7 @@ class Visualiser:
                     if cv2.waitKey(1) & 0xff == 27:
                         break
                 if writevideo:
-                    vidout.write(img_draw)
+                    vidout.write(_prepare_video_frame(img_draw, frame_dims))
                     frames_written += 1
 
         if cap is not None:
@@ -702,6 +709,20 @@ class Visualiser:
 # ------------------------------------------------------------------
 # Module-level helper
 # ------------------------------------------------------------------
+def _prepare_video_frame(frame, frame_dims):
+    """Validate rendered dimensions and pad odd MP4 edges without rescaling."""
+    width, height = frame_dims
+    if frame.shape[:2] != (height, width):
+        raise ValueError(
+            f"Rendered frame is {frame.shape[1]}x{frame.shape[0]}, "
+            f"but video output expects {width}x{height}."
+        )
+    if width % 2 or height % 2:
+        return cv2.copyMakeBorder(frame, 0, height % 2, 0, width % 2,
+                                  cv2.BORDER_CONSTANT, value=(0, 0, 0))
+    return frame
+
+
 def _build_frame_data(data, frame_nr, trajlength):
     """Build the frame_data dict for a single frame from the full DataFrame."""
     fd = data.loc[data["frame"] == frame_nr].to_dict("list")
