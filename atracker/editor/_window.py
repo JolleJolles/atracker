@@ -1771,6 +1771,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
                     arr = 255 - arr
                 result = ("mask", arr)
             elif opmode == "zones":
+                self.drawing_widget.commitZones()
                 if self.drawing_widget.zones_overlay:
                     # Composite on white background
                     zones_img = self.drawing_widget.zones_overlay
@@ -1953,31 +1954,8 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             print(f"Switched point type to: {self.ptype_options[self.current_ptype_idx][0]}")
             self.drawing_widget.update()         
         elif key == Qt.Key_Z:
-            if self.opmode_combo.currentText().lower() == "zones" and self.drawing_widget.shapes:
-                painter = QPainter(self.drawing_widget.zones_overlay)
-                painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
-                current_color = self.drawing_widget.zone_colors[self.drawing_widget.zone_color_index % len(self.drawing_widget.zone_colors)]
-                painter.setBrush(QBrush(QColor(current_color)))
-                painter.setPen(Qt.NoPen)
-
-                for mode, shape_data in self.drawing_widget.shapes:
-                    if mode == "rectangle":
-                        x1, y1 = shape_data[0]
-                        x2, y2 = shape_data[2]
-                        painter.drawRect(QRect(x1, y1, x2 - x1, y2 - y1))
-                    elif mode == "polygon":
-                        points = [QPoint(x, y) for x, y in shape_data]
-                        painter.drawPolygon(QPolygon(points))
-                    elif mode == "circle":
-                        (cx, cy), radius = shape_data
-                        painter.drawEllipse(QPoint(cx, cy), radius, radius)
-                    elif mode == "ellipse":
-                        (cx, cy), (rx, ry) = shape_data
-                        painter.drawEllipse(QPoint(cx, cy), rx, ry)
-                painter.end()
-                self.drawing_widget.zone_color_index += 1
-                self.drawing_widget.shapes.clear()
-                self.drawing_widget.update()
+            if self.opmode_combo.currentText().lower() == "zones":
+                self.drawing_widget.commitZones()
         elif key == Qt.Key_Space:
             if self.is_video:
                 if self.timer.isActive():
@@ -2319,6 +2297,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             return None
 
         elif opmode == "zones":
+            self.drawing_widget.commitZones()
             if self.drawing_widget.zones_overlay:
                 white_bg = QImage(self.drawing_widget.zones_overlay.size(), QImage.Format_ARGB32)
                 white_bg.fill(Qt.white)

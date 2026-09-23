@@ -135,42 +135,53 @@ class PyQt5ShapeDrawer(QWidget):
         self.update()
 
     def updateZonesOverlay(self):
-        # Only refresh temporary preview – do NOT clear existing zone drawings
-        if not self.zones_overlay:
+        # Pending shapes are painted separately by paintEvent, never into saved zones.
+        self.update()
+
+    def nextZoneColor(self):
+        """Choose an unused palette hue, allowing for JPEG colour variation."""
+        if self.zones_overlay is not None and not self.zones_overlay.isNull():
+            rgba = qimage_to_numpy(self.zones_overlay, to_bgr=False)
+            hsv = cv2.cvtColor(rgba[:, :, :3], cv2.COLOR_RGB2HSV)
+            visible = (rgba[:, :, 3] > 0) & (hsv[:, :, 1] >= 100) & (hsv[:, :, 2] >= 100)
+            hues = hsv[:, :, 0][visible].astype(np.int16)
+            for index, color in enumerate(self.zone_colors):
+                hue = QColor(color).hue() / 2
+                distance = np.abs(hues - hue)
+                if not np.any(np.minimum(distance, 180 - distance) <= 10):
+                    self.zone_color_index = index
+                    return color
+        return self.zone_colors[self.zone_color_index % len(self.zone_colors)]
+
+    def commitZones(self):
+        """Colour pending shapes as one zone, preserving the existing overlay."""
+        self.addCurrentShapeIfNeeded()
+        if not self.shapes:
+            return
+        if self.zones_overlay is None or self.zones_overlay.isNull():
             self.zones_overlay = QImage(self.orig_width, self.orig_height, QImage.Format_ARGB32)
-            self.zones_overlay.fill(QColor(255, 255, 255))  # white background
-
-        # Create a transparent layer for temporary shapes only
-        temp_overlay = QImage(self.orig_width, self.orig_height, QImage.Format_ARGB32)
-        temp_overlay.fill(QColor(0, 0, 0, 0))  # fully transparent
-
-        painter = QPainter(temp_overlay)
+            self.zones_overlay.fill(Qt.transparent)
+        current_color = self.nextZoneColor()
+        painter = QPainter(self.zones_overlay)
+        painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+        painter.setBrush(QBrush(QColor(current_color)))
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QBrush(QColor(0, 0, 0, 200)))  # semi-transparent black
-
         for mode, shape_data in self.shapes:
             if mode == "rectangle":
                 x1, y1 = shape_data[0]
                 x2, y2 = shape_data[2]
                 painter.drawRect(QRect(x1, y1, x2 - x1, y2 - y1))
             elif mode == "polygon":
-                points = [QPoint(x, y) for (x, y) in shape_data]
-                painter.drawPolygon(QPolygon(points))
+                painter.drawPolygon(QPolygon([QPoint(x, y) for x, y in shape_data]))
             elif mode == "circle":
                 (cx, cy), radius = shape_data
                 painter.drawEllipse(QPoint(cx, cy), radius, radius)
             elif mode == "ellipse":
                 (cx, cy), (rx, ry) = shape_data
                 painter.drawEllipse(QPoint(cx, cy), rx, ry)
-
         painter.end()
-
-        # Composite: zones_overlay + temp_overlay (to show both confirmed and temporary zones)
-        combined = QPainter(self.zones_overlay)
-        combined.setCompositionMode(QPainter.CompositionMode_SourceOver)
-        combined.drawImage(0, 0, temp_overlay)
-        combined.end()
-
+        self.zone_color_index += 1
+        self.shapes.clear()
         self.update()
 
     def draw_mouse_loop(self, painter):
@@ -1013,5 +1024,4 @@ class PyQt5ShapeDrawer(QWidget):
         self.draw_mouse_loop(painter)
 
         painter.end()
-
 

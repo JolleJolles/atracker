@@ -5,6 +5,7 @@
 
 
 ## Unreleased
+- Fixed adding zones to saved images to select an unused palette colour; saving now colours pending shapes automatically instead of storing dark previews.
 - Fixed saved zones images appearing blank when reopened with `set_interactive(zones=True)` by converting loaded RGB images to the canvas's ARGB format.
 - Video frames are now written in a separate thread via AsyncVideoWriter, preventing video writing from blocking the tracking loop.
 - Fixed race condition where shared Tracker instance attributes were overwritten by concurrent workers, causing missing or misplaced output files and CSVs.
