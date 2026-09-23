@@ -105,4 +105,4 @@ Place points consistently on the same part of the animal. Prioritise identity sw
 
 Sparse manual annotation needs special care during processing: isolated points may be removed by `min_traj_len`, and long gaps may remain unfilled. Pilot a short annotated interval and inspect its output before scoring an entire experiment. The old animal-state shortcuts and `statevar` argument are not supported by the current interface; keep separate event annotations if your analysis needs explicit refuge states.
 
-The editor remembers its drawing tool, window geometry and display preferences in `~/.atracker/editor_prefs.json`, outside your package. Return to [Processing tracking data](4-processing_data.md#choose-settings-for-your-experiment) when the saved coordinates are ready.
+The editor remembers its drawing tool, window geometry and display preferences in `~/.atracker/editor_prefs.json`, outside your package. Return to [Processing tracking data](4-processing_data.md#5-choose-settings-for-your-experiment) when the saved coordinates are ready.
