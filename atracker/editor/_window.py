@@ -8,6 +8,7 @@ from atracker.helpers.media import get_media_type
 from atracker.helpers.data import load_and_convert_tracking_dataframe
 from atracker.helpers.detection import ProcessImage
 from PyQt5.QtWidgets import QMessageBox
+from PyQt5.QtCore import QByteArray
 
 # Maps human-readable purpose labels (lowercased) to internal opmode strings
 _PURPOSE_MAP = {
@@ -1310,6 +1311,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         self.drawing_widget.update()
 
     def onOpModeChanged(self, index):
+        drawing_mode = self.mode_combo.currentText()
         opmode_text = self.opmode_combo.itemText(index).lower()
         opmode = _PURPOSE_MAP.get(opmode_text, opmode_text)
 
@@ -1461,6 +1463,10 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         else:
             if hasattr(self, "mode_combo"):
                 self.mode_combo.setEnabled(True)
+
+        # Rebuilding the available tools must not reset the user's selection.
+        if opmode in ("default", "roi", "mask", "zones") and self.mode_combo.findText(drawing_mode) >= 0:
+            self.mode_combo.setCurrentText(drawing_mode)
 
         # Trigger redraw
         self.drawing_widget.update()
@@ -1971,6 +1977,12 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             self.default_geometry = self.geometry()
 
     def _apply_prefs(self, prefs):
+        geometry = prefs.get("window_geometry")
+        if isinstance(geometry, str):
+            try:
+                self.restoreGeometry(QByteArray.fromHex(geometry.encode("ascii")))
+            except (ValueError, UnicodeError):
+                pass
         idx = self.mode_combo.findText(prefs.get("drawing_mode", "rectangle"))
         if idx >= 0:
             self.mode_combo.setCurrentIndex(idx)
@@ -2013,6 +2025,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
 
     def _collect_prefs(self):
         prefs = {
+            "window_geometry": bytes(self.saveGeometry().toHex()).decode("ascii"),
             "drawing_mode": self.mode_combo.currentText(),
             "hue": self.hue_slider.value(),
             "image_transparency": self.bgtrans_slider.value(),
@@ -2058,6 +2071,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             if reply == QMessageBox.No:
                 event.ignore()
                 return
+        self.was_fullscreen = self.isFullScreen()
         save_prefs(self._collect_prefs())
         super().closeEvent(event)
 

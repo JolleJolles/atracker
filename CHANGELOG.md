@@ -5,6 +5,7 @@
 
 
 ## Unreleased
+- Fixed the interactive editor resetting the last-used drawing tool when opening the next video; window size, position and maximized/fullscreen state are now saved with personal editor preferences.
 - Extended the mask opacity slider to zones and pending zone previews, and renamed it "Mask / Zones Opacity".
 - Fixed adding zones to saved images to select an unused palette colour; saving now colours pending shapes automatically instead of storing dark previews.
 - Fixed saved zones images appearing blank when reopened with `set_interactive(zones=True)` by converting loaded RGB images to the canvas's ARGB format.
