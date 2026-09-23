@@ -663,9 +663,8 @@ class PyQt5ShapeDrawer(QWidget):
             )
             if self.inverted:
                 mask_disp.invertPixels()
-            painter.drawImage(int(offset_x), int(offset_y), mask_disp)
-            painter.setOpacity(1.0)
-
+            # Draw the outline into the layer before applying opacity.
+            mask_painter = QPainter(mask_disp)
             # Draw a thin border around the mask outline
             try:
                 ptr = self.mask_image.bits()
@@ -677,51 +676,51 @@ class PyQt5ShapeDrawer(QWidget):
                     gray = cv2.bitwise_not(gray)
                 contours, _ = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 border_pen = QPen(QColor(0, 0, 0, 200), 2)
-                painter.setPen(border_pen)
-                painter.setBrush(Qt.NoBrush)
+                mask_painter.setPen(border_pen)
+                mask_painter.setBrush(Qt.NoBrush)
                 for contour in contours:
                     pts = [QPoint(
-                        int(offset_x + p[0][0] * scale),
-                        int(offset_y + p[0][1] * scale)
+                        int(p[0][0] * scale),
+                        int(p[0][1] * scale)
                     ) for p in contour]
                     if pts:
-                        painter.drawPolygon(QPolygon(pts))
+                        mask_painter.drawPolygon(QPolygon(pts))
             except Exception:
                 pass
-        
-        # ZONES MODE: draw colored zone overlay and temporary shapes
-        if self.main_window.currentOperationMode() == "zones" and self.show_zones:
-            painter.setOpacity(self.main_window.mask_op_slider.value() / 100.0)
-            if self.zones_overlay:
-                scaled_overlay = self.zones_overlay.scaled(
-                    int(self.orig_width * scale),
-                    int(self.orig_height * scale),
-                    Qt.IgnoreAspectRatio,
-                    Qt.SmoothTransformation
-                )
-                painter.drawImage(int(offset_x), int(offset_y), scaled_overlay)
+            mask_painter.end()
+            painter.drawImage(int(offset_x), int(offset_y), mask_disp)
+            painter.setOpacity(1.0)
 
-            # Draw currently drawn shapes as semi-transparent black
-            painter.setPen(Qt.NoPen)
-            painter.setBrush(QBrush(QColor(0, 0, 0, 200)))
+        # Composite zones and pending shapes before applying display opacity.
+        if self.main_window.currentOperationMode() == "zones" and self.show_zones:
+            if self.zones_overlay is not None and not self.zones_overlay.isNull():
+                overlay = self.zones_overlay.convertToFormat(QImage.Format_ARGB32)
+            else:
+                overlay = QImage(self.orig_width, self.orig_height, QImage.Format_ARGB32)
+                overlay.fill(Qt.transparent)
+            overlay_painter = QPainter(overlay)
+            overlay_painter.setPen(Qt.NoPen)
+            overlay_painter.setBrush(QBrush(Qt.black))
             for mode, shape_data in self.shapes:
                 if mode == "rectangle":
-                    x1, y1 = shape_data[0]
-                    x2, y2 = shape_data[2]
-                    p1 = self.convertToDisplay(QPoint(x1, y1))
-                    p2 = self.convertToDisplay(QPoint(x2, y2))
-                    painter.drawRect(QRect(p1, p2))
+                    p1 = QPoint(*shape_data[0])
+                    p2 = QPoint(*shape_data[2])
+                    overlay_painter.drawRect(QRect(p1, p2).normalized())
                 elif mode == "polygon":
-                    points = [self.convertToDisplay(QPoint(x, y)) for (x, y) in shape_data]
-                    painter.drawPolygon(QPolygon(points))
+                    overlay_painter.drawPolygon(QPolygon([QPoint(x, y) for x, y in shape_data]))
                 elif mode == "circle":
                     (cx, cy), radius = shape_data
-                    center = self.convertToDisplay(QPoint(cx, cy))
-                    painter.drawEllipse(center, radius, radius)
+                    overlay_painter.drawEllipse(QPoint(cx, cy), radius, radius)
                 elif mode == "ellipse":
                     (cx, cy), (rx, ry) = shape_data
-                    center = self.convertToDisplay(QPoint(cx, cy))
-                    painter.drawEllipse(center, rx, ry)
+                    overlay_painter.drawEllipse(QPoint(cx, cy), rx, ry)
+            overlay_painter.end()
+            scaled_overlay = overlay.scaled(
+                int(self.orig_width * scale), int(self.orig_height * scale),
+                Qt.IgnoreAspectRatio, Qt.SmoothTransformation
+            )
+            painter.setOpacity(self.main_window.mask_op_slider.value() / 100.0)
+            painter.drawImage(int(offset_x), int(offset_y), scaled_overlay)
             painter.setOpacity(1.0)
 
         # Other drawing overlay (e.g., mask shapes)

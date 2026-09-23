@@ -5,6 +5,7 @@
 
 
 ## Unreleased
+- Fixed overlay opacity accumulating where pending zone shapes overlap; zones/previews and mask outlines are now composited before applying the shared display opacity.
 - Fixed pandas `SettingWithCopyWarning` during processed-output rounding by explicitly copying the selected output columns.
 - Fixed tracked points and point-editing controls not appearing/working in the multi-file editor's "Coordinate data" mode; moved filenames above navigation buttons and added full-name tooltips/window titles.
 - Fixed signed ROI-distance comparisons so `roi_edge_margin` targets positions near/outside the boundary instead of the arena interior, for centroid gap handling and head/tail filtering. Short gaps still join according to `max_traj_gap`.
