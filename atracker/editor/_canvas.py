@@ -69,9 +69,9 @@ class PyQt5ShapeDrawer(QWidget):
         self.arrow_tip_hover_thresh = 14  # Pixels for detecting arrow tip hover
         
         if mode == "zones":
-            # Only use mask_qimg as zones overlay if it is actually a zones mask, else start blank
-            if mask_qimg is not None and mask_qimg.width() == self.orig_width and mask_qimg.height() == self.orig_height and mask_qimg.format() == QImage.Format_ARGB32:
-                self.zones_overlay = mask_qimg
+            # Saved JPEG zones load as RGB888; normalize them for painting.
+            if mask_qimg is not None and mask_qimg.width() == self.orig_width and mask_qimg.height() == self.orig_height:
+                self.zones_overlay = mask_qimg.convertToFormat(QImage.Format_ARGB32)
             else:
                 self.zones_overlay = QImage(self.orig_width, self.orig_height, QImage.Format_ARGB32)
                 self.zones_overlay.fill(QColor(0, 0, 0, 0))  # transparent

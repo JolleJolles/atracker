@@ -5,6 +5,7 @@
 
 
 ## Unreleased
+- Fixed saved zones images appearing blank when reopened with `set_interactive(zones=True)` by converting loaded RGB images to the canvas's ARGB format.
 - Video frames are now written in a separate thread via AsyncVideoWriter, preventing video writing from blocking the tracking loop.
 - Fixed race condition where shared Tracker instance attributes were overwritten by concurrent workers, causing missing or misplaced output files and CSVs.
 - Added skip_frames parameter to track(). Set to 0 (default) to process every frame, or higher to skip frames and increase tracking speed (e.g. skip_frames=1 processes every 2nd frame).
