@@ -691,6 +691,7 @@ class PyQt5ShapeDrawer(QWidget):
         
         # ZONES MODE: draw colored zone overlay and temporary shapes
         if self.main_window.opmode_combo.currentText().lower() == "zones" and self.show_zones:
+            painter.setOpacity(self.main_window.mask_op_slider.value() / 100.0)
             if self.zones_overlay:
                 scaled_overlay = self.zones_overlay.scaled(
                     int(self.orig_width * scale),
@@ -698,9 +699,7 @@ class PyQt5ShapeDrawer(QWidget):
                     Qt.IgnoreAspectRatio,
                     Qt.SmoothTransformation
                 )
-                painter.setOpacity(0.5)
                 painter.drawImage(int(offset_x), int(offset_y), scaled_overlay)
-                painter.setOpacity(1.0)
 
             # Draw currently drawn shapes as semi-transparent black
             painter.setPen(Qt.NoPen)
@@ -723,6 +722,7 @@ class PyQt5ShapeDrawer(QWidget):
                     (cx, cy), (rx, ry) = shape_data
                     center = self.convertToDisplay(QPoint(cx, cy))
                     painter.drawEllipse(center, rx, ry)
+            painter.setOpacity(1.0)
 
         # Other drawing overlay (e.g., mask shapes)
         elif self.drawing_overlay and self.main_window.cb_showoverlay.isChecked():
@@ -1024,4 +1024,3 @@ class PyQt5ShapeDrawer(QWidget):
         self.draw_mouse_loop(painter)
 
         painter.end()
-

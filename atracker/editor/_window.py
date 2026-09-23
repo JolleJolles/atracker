@@ -283,7 +283,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         self.point_op_slider.valueChanged.connect(self.on_point_opacity_changed)
 
         h_mask_op = QHBoxLayout()
-        self.mask_op_label = QLabel("Mask Opacity:")
+        self.mask_op_label = QLabel("Mask / Zones Opacity:")
         h_mask_op.addWidget(self.mask_op_label)
         self.mask_op_slider = QSlider(Qt.Horizontal)
         self.mask_op_slider.setRange(0, 100)
