@@ -5,6 +5,7 @@
 
 
 ## Unreleased
+- Added an imageio/FFmpeg H.264 fallback when OpenCV cannot open visualisation output, with encoder errors reporting the target path and video resources released on rendering errors.
 - Aligned full-frame backgrounds and wall/zone overlays with cropped, resized visualisation videos.
 - Padded odd-sized visualisation frames to even MP4 dimensions (for example, a half-size ROI of 316 × 485 becomes 316 × 486) and added a frame-size check to prevent silent writer mismatches.
 - Included video dimensions, FPS and OpenCV version in visualisation writer errors to help diagnose environment-specific output failures.

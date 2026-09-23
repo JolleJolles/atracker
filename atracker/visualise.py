@@ -529,17 +529,12 @@ class Visualiser:
             # MP4 encoders commonly require even frame dimensions. Pad the
             # right/bottom edge rather than cropping pixels or moving points.
             vidoutdims = tuple(v + v % 2 for v in frame_dims)
-            vidout = videowriter(outfile, vidoutdims[0], vidoutdims[1], fps)
-            if vidout is None or not vidout.isOpened():
+            try:
+                vidout = _open_video_writer(outfile, vidoutdims, fps)
+            except Exception:
                 if cap is not None:
                     cap.release()
-                raise RuntimeError(
-                    f"Could not open video output: {os.path.abspath(outfile)} "
-                    f"(width={vidoutdims[0]!r}, height={vidoutdims[1]!r}, fps={fps!r}, "
-                    f"OpenCV={cv2.__version__}). "
-                    "Check the output folder's write permissions and the video encoder "
-                    "available in the notebook's Python environment."
-                )
+                raise
             lineprint(f"Writing video to: {os.path.abspath(outfile)}")
         else:
             lineprint("Video saving disabled (writevideo=False); no output file will be created.")
@@ -553,64 +548,67 @@ class Visualiser:
         frame_nr = startfr
         frames_written = 0
 
-        if cap is not None:
-            # Video-driven frame loop
-            while cap.isOpened():
-                frameOK, img = cap.read()
-                stop, skip, frame_nr = framechecks(
-                    cap, frameOK, framelist, stopfr, displaystep)
-                if stop:
-                    break
-                if skip:
-                    continue
-
-                frame_data = _build_frame_data(data, frame_nr, trajlength)
-                img_draw = self.draw_frame(
-                    img, frame_data,
-                    img_bg=img_bg, img_mask=_img_mask,
-                    roi=roi, cropimg=cropimg, resizeimg=resize,
-                    wall_contours=_wall_conts, zone_coords=_zone_coords,
-                    canvasdims=canvasdims, logo=logo, logooffsets=logooffsets,
-                    **draw_kwargs)
-
-                if showvideo:
-                    cv2.imshow("Video", img_draw)
-                    if cv2.waitKey(1) & 0xff == 27:
+        try:
+            if cap is not None:
+                # Video-driven frame loop
+                while cap.isOpened():
+                    frameOK, img = cap.read()
+                    stop, skip, frame_nr = framechecks(
+                        cap, frameOK, framelist, stopfr, displaystep)
+                    if stop:
                         break
-                if writevideo:
-                    vidout.write(_prepare_video_frame(img_draw, frame_dims))
-                    frames_written += 1
-        else:
-            # No video: iterate over frames that have data
-            for frame_nr in sorted(data["frame"].unique()):
-                frame_nr = int(frame_nr)
-                if frame_nr < startfr or frame_nr > stopfr:
-                    continue
-                img = np.zeros((vidh, vidw, 3), dtype="uint8")
-                frame_data = _build_frame_data(data, frame_nr, trajlength)
-                img_draw = self.draw_frame(
-                    img, frame_data,
-                    img_bg=img_bg, img_mask=_img_mask,
-                    roi=None, cropimg=False, resizeimg=1,
-                    wall_contours=_wall_conts, zone_coords=_zone_coords,
-                    canvasdims=canvasdims, logo=logo, logooffsets=logooffsets,
-                    **draw_kwargs)
+                    if skip:
+                        continue
 
-                if showvideo:
-                    cv2.imshow("Video", img_draw)
-                    if cv2.waitKey(1) & 0xff == 27:
-                        break
-                if writevideo:
-                    vidout.write(_prepare_video_frame(img_draw, frame_dims))
-                    frames_written += 1
+                    frame_data = _build_frame_data(data, frame_nr, trajlength)
+                    img_draw = self.draw_frame(
+                        img, frame_data,
+                        img_bg=img_bg, img_mask=_img_mask,
+                        roi=roi, cropimg=cropimg, resizeimg=resize,
+                        wall_contours=_wall_conts, zone_coords=_zone_coords,
+                        canvasdims=canvasdims, logo=logo, logooffsets=logooffsets,
+                        **draw_kwargs)
 
-        if cap is not None:
-            cap.release()
-        if showvideo:
-            cv2.destroyAllWindows()
-            cv2.waitKey(1)
+                    if showvideo:
+                        cv2.imshow("Video", img_draw)
+                        if cv2.waitKey(1) & 0xff == 27:
+                            break
+                    if writevideo:
+                        vidout.write(_prepare_video_frame(img_draw, frame_dims))
+                        frames_written += 1
+            else:
+                # No video: iterate over frames that have data
+                for frame_nr in sorted(data["frame"].unique()):
+                    frame_nr = int(frame_nr)
+                    if frame_nr < startfr or frame_nr > stopfr:
+                        continue
+                    img = np.zeros((vidh, vidw, 3), dtype="uint8")
+                    frame_data = _build_frame_data(data, frame_nr, trajlength)
+                    img_draw = self.draw_frame(
+                        img, frame_data,
+                        img_bg=img_bg, img_mask=_img_mask,
+                        roi=None, cropimg=False, resizeimg=1,
+                        wall_contours=_wall_conts, zone_coords=_zone_coords,
+                        canvasdims=canvasdims, logo=logo, logooffsets=logooffsets,
+                        **draw_kwargs)
+
+                    if showvideo:
+                        cv2.imshow("Video", img_draw)
+                        if cv2.waitKey(1) & 0xff == 27:
+                            break
+                    if writevideo:
+                        vidout.write(_prepare_video_frame(img_draw, frame_dims))
+                        frames_written += 1
+
+        finally:
+            if cap is not None:
+                cap.release()
+            if showvideo:
+                cv2.destroyAllWindows()
+                cv2.waitKey(1)
+            if writevideo:
+                vidout.release()
         if writevideo:
-            vidout.release()
             if frames_written == 0 or not os.path.isfile(outfile) or os.path.getsize(outfile) == 0:
                 raise RuntimeError(f"No video output was written: {os.path.abspath(outfile)}")
             lineprint(f"Saved video ({frames_written} frames submitted): {os.path.abspath(outfile)}")
@@ -709,6 +707,48 @@ class Visualiser:
 # ------------------------------------------------------------------
 # Module-level helper
 # ------------------------------------------------------------------
+class _FFmpegVideoWriter:
+    """Adapt imageio's FFmpeg writer to the OpenCV write/release interface."""
+
+    def __init__(self, outfile, fps):
+        import imageio.v2 as imageio
+        self.outfile = os.path.abspath(outfile)
+        self.writer = imageio.get_writer(
+            self.outfile, format="FFMPEG", fps=float(fps), codec="libx264",
+            pixelformat="yuv420p", macro_block_size=1,
+        )
+
+    def write(self, frame):
+        try:
+            self.writer.append_data(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        except Exception as exc:
+            raise RuntimeError(f"FFmpeg could not write video output {self.outfile}: {exc}") from exc
+
+    def release(self):
+        self.writer.close()
+
+
+def _open_video_writer(outfile, dimensions, fps):
+    """Use OpenCV when available, otherwise fall back to bundled FFmpeg."""
+    try:
+        writer = videowriter(outfile, dimensions[0], dimensions[1], fps)
+        if writer is not None and writer.isOpened():
+            return writer
+        if writer is not None:
+            writer.release()
+    except (cv2.error, OSError) as exc:
+        lineprint(f"OpenCV writer error: {exc}")
+    lineprint("OpenCV MP4 writer unavailable; trying imageio/FFmpeg (H.264).")
+    try:
+        return _FFmpegVideoWriter(outfile, fps)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Could not open video output: {os.path.abspath(outfile)} "
+            f"(width={dimensions[0]}, height={dimensions[1]}, fps={fps}, "
+            f"OpenCV={cv2.__version__}). FFmpeg fallback failed: {exc}"
+        ) from exc
+
+
 def _prepare_video_frame(frame, frame_dims):
     """Validate rendered dimensions and pad odd MP4 edges without rescaling."""
     width, height = frame_dims
