@@ -147,8 +147,9 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             self.btn_next.setFixedWidth(65)
             self.btn_next.clicked.connect(lambda: self._navigate_to(self._file_idx + 1))
             nav_h.addWidget(self.btn_prev)
-            nav_h.addWidget(self.nav_name_label, 1)
+            nav_h.addStretch(1)
             nav_h.addWidget(self.btn_next)
+            self.nav_group.layout().addWidget(self.nav_name_label)
             self.nav_group.layout().addLayout(nav_h)
             self.left_layout.addWidget(self.nav_group)
             self._update_nav_label()
@@ -458,7 +459,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         # ---- TIMEPOINTS ENHANCEMENTS ----
         self.tp_show_lines = False
         self.tp_total_ids = 1
-        self.tp_current_id = 1
+        self.tp_current_id = 0
         self.tp_visible_range = 100
 
         # ---- POINT TYPE SELECTION + HIGHLIGHT CURRENT ----
@@ -1100,7 +1101,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         else:
             last_str = "Last click:"
         metric = ""
-        opmode_text = self.opmode_combo.currentText().lower()
+        opmode_text = self.currentOperationMode()
         opmode = _PURPOSE_MAP.get(opmode_text, opmode_text)
         if opmode in ["roi", "mask", "measure"]:
             if w.start_point_orig and w.end_point_orig:
@@ -1240,7 +1241,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             # Always update background image
             qimg = cvMatToQImage(frame)
             self.drawing_widget.setBackgroundImage(qimg)
-            _opmode_now = _PURPOSE_MAP.get(self.opmode_combo.currentText().lower(), self.opmode_combo.currentText().lower())
+            _opmode_now = _PURPOSE_MAP.get(self.currentOperationMode(), self.currentOperationMode())
             if _opmode_now in ["thresholding", "thresholding color"]:
                 self.updateThresholdingImage(frame)
             self.proxyUpdate()
@@ -1309,6 +1310,11 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
     def onHueChanged(self, value):
         self.drawing_widget.drawing_color = QColor.fromHsv(value, 255, 255)
         self.drawing_widget.update()
+
+    def currentOperationMode(self):
+        """Return the internal mode for either editor's displayed label."""
+        label = self.opmode_combo.currentText().lower()
+        return _PURPOSE_MAP.get(label, label)
 
     def onOpModeChanged(self, index):
         drawing_mode = self.mode_combo.currentText()
@@ -1494,7 +1500,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             if mask_np.ndim == 3:
                 mask_np = cv2.cvtColor(mask_np, cv2.COLOR_RGB2GRAY)
 
-        opmode = _PURPOSE_MAP.get(self.opmode_combo.currentText().lower(), self.opmode_combo.currentText().lower())
+        opmode = _PURPOSE_MAP.get(self.currentOperationMode(), self.currentOperationMode())
 
         # Get a fresh frame if none was passed in
         if frame is None:
@@ -1747,7 +1753,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
 
             self.drawing_widget.addCurrentShapeIfNeeded()
             result = None
-            opmode_text = self.opmode_combo.currentText().lower()
+            opmode_text = self.currentOperationMode()
             opmode = _PURPOSE_MAP.get(opmode_text, opmode_text)
 
              # If user recorded event frames with the event key, return them immediately
@@ -1867,7 +1873,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             self.close()
         elif key == Qt.Key_D:
             draw_mode = self.drawing_widget.drawing_mode
-            opmode = self.opmode_combo.currentText().lower()
+            opmode = self.currentOperationMode()
             if draw_mode == "polygon" or opmode == "measure":  # Treat "measure" as "polygon"
                 if opmode == "measure" and self.drawing_widget.measure_polyline_orig:
                     self.drawing_widget.measure_polyline_orig.pop()
@@ -1942,13 +1948,13 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
                 self.rb_draw.setChecked(True)
                 print("Mode: Draw points")
         elif key == Qt.Key_I:
-            if self.opmode_combo.currentText().lower() == "timepoints" and self.tp_total_ids > 1:
+            if self.currentOperationMode() == "timepoints" and self.tp_total_ids > 1:
                 new_val = (self.current_id_box.value() - 2) % self.tp_total_ids + 1  # subtract 2 because value() is 1-based
                 self.current_id_box.setValue(new_val)
                 print(f"Switched to ID: {new_val}")
 
         elif key == Qt.Key_O:
-            if self.opmode_combo.currentText().lower() == "timepoints" and self.tp_total_ids > 1:
+            if self.currentOperationMode() == "timepoints" and self.tp_total_ids > 1:
                 new_val = (self.current_id_box.value()) % self.tp_total_ids + 1  # value() is 1-based
                 self.current_id_box.setValue(new_val)
                 print(f"Switched to ID: {new_val}")
@@ -1960,7 +1966,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             print(f"Switched point type to: {self.ptype_options[self.current_ptype_idx][0]}")
             self.drawing_widget.update()         
         elif key == Qt.Key_Z:
-            if self.opmode_combo.currentText().lower() == "zones":
+            if self.currentOperationMode() == "zones":
                 self.drawing_widget.commitZones()
         elif key == Qt.Key_Space:
             if self.is_video:
@@ -2084,12 +2090,14 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         name = fi.get("video_name", f"File {self._file_idx + 1}")
         total = len(self._file_infos)
         self.nav_name_label.setText(f"{name}\n({self._file_idx + 1} / {total})")
+        self.nav_name_label.setToolTip(name)
+        self.setWindowTitle(f"ATracker - {name}")
         self.btn_prev.setEnabled(self._file_idx > 0)
         self.btn_next.setEnabled(self._file_idx < total - 1)
 
     def _collect_state(self):
         """Collect canvas + widget state for the current purpose into a dict."""
-        opmode_text = self.opmode_combo.currentText().lower()
+        opmode_text = self.currentOperationMode()
         opmode = _PURPOSE_MAP.get(opmode_text, opmode_text)
         state = {"opmode": opmode}
         if opmode == "mask":
@@ -2190,6 +2198,9 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
                     self.drawing_widget.points_by_frame = pbf
                     if pbf:
                         self.input_num_ids.setValue(len(pbf))
+                        self.current_id_box.setValue(1)
+                        self.updateCurrentID(1)
+                        self.drawing_widget.tp_current_id = 0
         self.drawing_widget.update()
 
     def _navigate_to(self, new_idx):
@@ -2292,7 +2303,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
 
     def _get_current_purpose_data(self):
         """Return the current drawing data for the active purpose."""
-        opmode_text = self.opmode_combo.currentText().lower()
+        opmode_text = self.currentOperationMode()
         opmode = _PURPOSE_MAP.get(opmode_text, opmode_text)
 
         if opmode == "mask":

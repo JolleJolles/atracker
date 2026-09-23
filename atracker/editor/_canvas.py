@@ -34,7 +34,7 @@ class PyQt5ShapeDrawer(QWidget):
         self.main_window = None
         self.test_points = []
         self.scope_mode = "any"
-        self.tp_current_id = 1
+        self.tp_current_id = 0
         self.show_loop = False
         self.loop = False
         self.LOOP_SIZE = 80
@@ -60,7 +60,7 @@ class PyQt5ShapeDrawer(QWidget):
 
         # --- Timepoints mode state ---
         self.tp_total_ids = 1
-        self.tp_current_id = 1
+        self.tp_current_id = 0
         self.tp_show_lines = False
         self.tp_line_window = 50  # Default frame window
         self.tp_id_colors = {}  # id -> QColor
@@ -280,7 +280,7 @@ class PyQt5ShapeDrawer(QWidget):
 
         # --- Angle tip click: Jump to angle's frame ---
         if (
-            self.main_window.opmode_combo.currentText().lower() == "timepoints" and
+            self.main_window.currentOperationMode() == "timepoints" and
             self.main_window.show_nearframe_checkbox.isChecked() and
             hasattr(self, "hovered_arrow") and
             self.hovered_arrow is not None and
@@ -304,7 +304,7 @@ class PyQt5ShapeDrawer(QWidget):
             return
         
         # ANGLE MODE: change angle by click (show angles/arrows/lines enabled)
-        if getattr(self, "angle_mode_active", False) and self.main_window and self.main_window.opmode_combo.currentText().lower() == "timepoints":
+        if getattr(self, "angle_mode_active", False) and self.main_window and self.main_window.currentOperationMode() == "timepoints":
             cur_frame = self.main_window.current_frame_idx + 1 if self.main_window.is_video else 1
             id_ = self.main_window.tp_current_id if self.main_window.tp_total_ids > 1 else 1
             ptype = "c"
@@ -349,10 +349,10 @@ class PyQt5ShapeDrawer(QWidget):
         if event.button() == Qt.LeftButton:
             orig_pos = self.convertToOriginal(event.pos())
             # In ROI mode, force rectangle.
-            if self.main_window and self.main_window.opmode_combo.currentText().lower() == "roi":
+            if self.main_window and self.main_window.currentOperationMode() == "roi":
                 self.drawing_mode = "rectangle"
             # --- MEASURE MODE: Polyline drawing ---
-            if self.main_window and self.main_window.opmode_combo.currentText().lower() == "measure":
+            if self.main_window and self.main_window.currentOperationMode() == "measure":
                 self.measure_polyline_orig.append(orig_pos)
                 self.last_click_orig = orig_pos
                 self.update()
@@ -369,7 +369,7 @@ class PyQt5ShapeDrawer(QWidget):
                 self.points_orig.append(orig_pos)
             elif self.drawing_mode == "point":
                 orig_pos = self.convertToOriginal(event.pos())
-                if self.main_window and self.main_window.opmode_combo.currentText().lower() == "timepoints":
+                if self.main_window and self.main_window.currentOperationMode() == "timepoints":
                     cur_frame = self.main_window.current_frame_idx + 1 if self.main_window.is_video else 1
                     id_ = self.main_window.tp_current_id
                     cur_ptype = getattr(self.main_window, "current_ptype", "c")
@@ -559,10 +559,10 @@ class PyQt5ShapeDrawer(QWidget):
             self.shapes.append((mode, shape_data))
             # In mask (default) mode, update the mask.
             if (self.main_window and 
-                self.main_window.opmode_combo.currentText().lower() == "mask"):
+                self.main_window.currentOperationMode() == "mask"):
                 self.addShapeToMask(mode, shape_data)
             if (self.main_window and 
-                self.main_window.opmode_combo.currentText().lower() == "zones" and 
+                self.main_window.currentOperationMode() == "zones" and
                 self.main_window.cb_showzones.isChecked()):
                 self.updateZonesOverlay()
             self.clearCurrentShape()
@@ -690,7 +690,7 @@ class PyQt5ShapeDrawer(QWidget):
                 pass
         
         # ZONES MODE: draw colored zone overlay and temporary shapes
-        if self.main_window.opmode_combo.currentText().lower() == "zones" and self.show_zones:
+        if self.main_window.currentOperationMode() == "zones" and self.show_zones:
             painter.setOpacity(self.main_window.mask_op_slider.value() / 100.0)
             if self.zones_overlay:
                 scaled_overlay = self.zones_overlay.scaled(
@@ -740,7 +740,7 @@ class PyQt5ShapeDrawer(QWidget):
         mode = self.drawing_mode
 
         # --- DRAW MEASURE POLYLINE ---
-        if self.main_window and self.main_window.opmode_combo.currentText().lower() == "measure":
+        if self.main_window and self.main_window.currentOperationMode() == "measure":
             if self.measure_polyline_orig:
                 pts_disp = [self.convertToDisplay(pt) for pt in self.measure_polyline_orig]
                 if len(pts_disp) >= 2:
@@ -791,7 +791,7 @@ class PyQt5ShapeDrawer(QWidget):
                 painter.drawEllipse(center, self.main_window.point_size_slider.value(), self.main_window.point_size_slider.value())
 
         elif mode == "point":
-            if self.main_window and self.main_window.opmode_combo.currentText().lower() != "timepoints":
+            if self.main_window and self.main_window.currentOperationMode() != "timepoints":
                 for pt in self.points_orig:
                     center = self.convertToDisplay(pt)
                     color = QColor(self.drawing_color)
@@ -801,7 +801,7 @@ class PyQt5ShapeDrawer(QWidget):
                     painter.drawEllipse(center, self.main_window.point_size_slider.value(), self.main_window.point_size_slider.value())
 
         # --- DRAW TIMEPOINTS ---
-        if self.main_window.opmode_combo.currentText().lower() == "timepoints":
+        if self.main_window.currentOperationMode() == "timepoints":
             cur_frame = self.main_window.current_frame_idx + 1 if self.main_window.is_video else 1
             visible_range = self.main_window.tp_visible_range
             ptype = self.main_window.current_ptype if self.main_window else "c"
