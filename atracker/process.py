@@ -364,7 +364,8 @@ class Processor:
 
             # Blank head/tail within roi_edge_margin of the ROI boundary
             borderdist = calc_borderdistdf(tf, newroi)
-            tf.loc[borderdist < self.roi_edge_margin, ["fx", "fy", "tx", "ty"]] = np.nan
+            # Negative inside: only blank positions near or outside the edge.
+            tf.loc[borderdist > -self.roi_edge_margin, ["fx", "fy", "tx", "ty"]] = np.nan
 
             # Remove isolated head/tail detections shorter than min_traj_len
             alones = getalones(tf, "fx", self.min_traj_len)

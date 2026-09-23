@@ -174,7 +174,9 @@ def fillmissing(series, colpair, mask, roi, win=5, nearmaskdis=25, edgedis=10, l
                 aftxy = (series.at[indsec[1] + 1, colpair[0]], series.at[indsec[1] + 1, colpair[1]])
                 befout = calc_borderdist(befxy, roi)
                 aftout = calc_borderdist(aftxy, roi)
-                if befout < edgedis and aftout < edgedis:
+                # Signed distances are negative inside the ROI. Keep gaps
+                # near/outside its boundary separate from interior dropouts.
+                if befout > -edgedis and aftout > -edgedis:
                     series.loc[indsec[0]:indsec[1], "inroi"] = 0
                     dellist.append(i)
             indsecs = [ind for i, ind in enumerate(indsecs) if i not in dellist]

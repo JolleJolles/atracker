@@ -5,6 +5,7 @@
 
 
 ## Unreleased
+- Fixed signed ROI-distance comparisons so `roi_edge_margin` targets positions near/outside the boundary instead of the arena interior, for centroid gap handling and head/tail filtering. Short gaps still join according to `max_traj_gap`.
 - Clarified the processing guide with ATracker-native file selection, a complete default settings dictionary and explanations of every `process()` parameter.
 - Split manual tracking into its own guide and rewrote processing documentation around the current API, with runnable examples, parameter-selection advice and output-unit caveats.
 - Fixed the interactive editor resetting the last-used drawing tool when opening the next video; window size, position and maximized/fullscreen state are now saved with personal editor preferences.
