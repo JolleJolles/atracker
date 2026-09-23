@@ -563,7 +563,8 @@ class Processor:
                            key=lambda c: int(re.findall(r"z(\d+)dist", c)[0]))
         pt_cols = sorted([c for c in final.columns if re.match(r"pt\d+dist", c)],
                          key=lambda c: int(re.findall(r"pt(\d+)dist", c)[0]))
-        final = final[[c for c in ordered + zone_cols + pt_cols if c in final.columns]]
+        # Own the selected columns before rounding them in place.
+        final = final[[c for c in ordered + zone_cols + pt_cols if c in final.columns]].copy()
 
         # Rounding
         round_map = {
