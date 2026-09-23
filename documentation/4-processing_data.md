@@ -190,3 +190,27 @@ AT.process(**settings)
 ```
 
 Record any justified differences between experimental setups. Increase `pools` only after the single-file results are satisfactory.
+
+
+## Preview the processed tracking
+
+```python
+AT.visualise(
+    folder="processed",
+    names=["your_video_name_F"],  # processed CSV basename, without .csv
+    overwrite=True,
+    startframe=1000, stopframe=1500,
+    resize=1,                  # preserve resolution; 0.5 halves both dimensions
+    trajlength=50,
+    draw_centroid=True, draw_id=True, draw_orient=True,
+    draw_scene=True,           # show all pieces of each zone
+    writevideo=True, showvideo=False,
+    pools=1,
+)
+```
+
+The output is saved beside the processed CSV as `<name>_V.mp4`. If OpenCV cannot open the writer, ATracker uses FFmpeg H.264 at CRF 18. Resizing down and then enlarging the player window reduces apparent sharpness regardless of the encoder.
+
+Heading arrows automatically detect whether the stored headings use upward- or downward-increasing y coordinates from the trajectory's pixel motion. For a very short or stationary selection where this cannot be inferred, pass `heading_y_up=True` for y-up headings or `heading_y_up=False` for image-coordinate headings. This does not change stored tracking data.
+
+Each disconnected piece of a zone colour is displayed and included when calculating zone distances. Reprocess older CSVs to update their zone distances.

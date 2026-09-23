@@ -1686,7 +1686,7 @@ class ATracker:
             if info["zoneimg_path"]:
                 zone_arr = cv2.imread(info["zoneimg_path"])
                 if zone_arr is not None:
-                    _zc = coordsfromzones(zone_arr)
+                    _zc = coordsfromzones(zone_arr, all_parts=True)
                     zone_coords = _zc if _zc else None
             lineprint(info["label"], True, False)
             data = pd.read_csv(info["csvfile"])

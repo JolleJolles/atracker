@@ -227,7 +227,7 @@ class Tracker:
             if _zone_img is not None:
                 _zone_img = crop(_zone_img, self.pt1, self.pt2)
                 _zone_img = cv2.resize(_zone_img, (self.vidw, self.vidh), interpolation=cv2.INTER_AREA)
-                self.zone_coords = coordsfromzones(_zone_img)
+                self.zone_coords = coordsfromzones(_zone_img, all_parts=True)
 
         # Set up video window (optional GUI)
         if self.config.vis.show_tracking and self.pools < 2:

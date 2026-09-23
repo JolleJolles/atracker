@@ -126,17 +126,23 @@ class Visualiser:
         if zc is not None:
             overlay = img_draw.copy()
             font = cv2.FONT_HERSHEY_SIMPLEX
+            visible = []
             for zone_idx, coords in zc.items():
-                contour = np.array([[[x, y]] for x, y in coords], dtype=np.int32)
                 col = _ZONE_COLORS[(zone_idx - 1) % len(_ZONE_COLORS)]
-                cv2.drawContours(overlay, [contour], -1, col, -1)
+                for contour in _zone_parts(coords):
+                    mask = np.zeros(img_draw.shape[:2], dtype=np.uint8)
+                    cv2.drawContours(mask, [contour], -1, 255, -1)
+                    if not np.any(mask):
+                        continue
+                    overlay[mask > 0] = col
+                    # Label the visible part, including zones crossing the ROI.
+                    distance = cv2.distanceTransform(
+                        np.pad(mask, 1), cv2.DIST_L2, 3)[1:-1, 1:-1]
+                    _, _, _, centre = cv2.minMaxLoc(distance)
+                    visible.append((zone_idx, contour, col, centre))
             cv2.addWeighted(overlay, 0.18, img_draw, 0.82, 0, img_draw)
-            for zone_idx, coords in zc.items():
-                contour = np.array([[[x, y]] for x, y in coords], dtype=np.int32)
-                col = _ZONE_COLORS[(zone_idx - 1) % len(_ZONE_COLORS)]
+            for zone_idx, contour, col, (cx, cy) in visible:
                 cv2.drawContours(img_draw, [contour], -1, col, 2)
-                cx = int(np.mean([x for x, _ in coords]))
-                cy = int(np.mean([y for _, y in coords]))
                 cv2.putText(img_draw, f"Z{zone_idx}", (cx - 9, cy + 5),
                             font, 0.4, (0, 0, 0), 2, cv2.LINE_AA)
                 cv2.putText(img_draw, f"Z{zone_idx}", (cx - 9, cy + 5),
@@ -340,9 +346,12 @@ class Visualiser:
                 elif i < len(headings) and headings[i] == headings[i]:
                     angle = headings[i]
                 if angle is not None:
-                    tip = get_coord(com[0], com[1], angle,
-                                    int(self.orient_length * resizeimg), True)
-                    cv2.arrowedLine(img_draw, com, tip, self.col_orient,
+                    gap = (max(1, int(6 * resizeimg)) + self.orient_lwidth
+                           if draw_centroid or draw_id else 0)
+                    start = get_coord(*com, angle, gap, True)
+                    tip = get_coord(*com, angle,
+                                    gap + max(1, int(self.orient_length * resizeimg)), True)
+                    cv2.arrowedLine(img_draw, start, tip, self.col_orient,
                                     self.orient_lwidth, tipLength=0.4 * resizeimg)
 
         # 16) ROI outline
@@ -432,7 +441,7 @@ class Visualiser:
                writevideo=True, showvideo=False,
                videosuffix="_V", canvasdims=None,
                logo=None, logooffsets=(10, 10),
-               framestep=1, displaystep=25, cropimg=True,
+               framestep=1, displaystep=25, cropimg=True, heading_y_up=None,
                **draw_kwargs):
         """
         Create a visualisation video from CSV data.
@@ -442,10 +451,26 @@ class Visualiser:
         data      : DataFrame or path to CSV.
         videofile : path to original video; None → draw on a blank canvas.
         outfile   : output path; default is videofile stem + videosuffix + .mp4.
+        heading_y_up : None infers the heading convention from pixel motion;
+                       True means y-up, False means image y-down.
         **draw_kwargs : forwarded to draw_frame() for every frame.
         """
         if isinstance(data, str):
             data = pd.read_csv(data)
+
+        data = data.copy()
+        # Heading can use image y-down or converted y-up coordinates. Infer
+        # its convention from within-trajectory pixel motion before slicing.
+        if "heading" in data and "cy" in data:
+            if heading_y_up is None:
+                keys = [k for k in ("ID", "id", "traj") if k in data]
+                ordered = data.sort_values("frame")
+                dy = (ordered.groupby(keys)["cy"].diff() if keys
+                      else ordered["cy"].diff())
+                agreement = (dy * np.cos(np.radians(ordered["heading"]))).sum()
+                heading_y_up = agreement <= 0
+            if not heading_y_up:
+                data["heading"] = (180 - data["heading"] + 180) % 360 - 180
 
         startfr = int(data.frame.min()) if startframe is None else int(startframe)
         stopfr  = int(data.frame.max()) if stopframe  is None else int(stopframe)
@@ -486,8 +511,8 @@ class Visualiser:
                            for cont in _wall_conts]
         if _zone_coords is not None:
             _zone_coords = {
-                k: [(int(round((x - xo) * resize)), int(round((y - yo) * resize)))
-                    for x, y in coords]
+                k: [np.rint((part.reshape(-1, 2) - (xo, yo)) * resize).astype(np.int32)
+                    for part in _zone_parts(coords)]
                 for k, coords in _zone_coords.items()
             }
 
@@ -707,6 +732,16 @@ class Visualiser:
 # ------------------------------------------------------------------
 # Module-level helper
 # ------------------------------------------------------------------
+def _zone_parts(coords):
+    """Accept legacy single polygons and multipart zone geometry."""
+    if not len(coords):
+        return []
+    if np.asarray(coords[0]).ndim == 1:
+        coords = [coords]
+    return [np.asarray(part, dtype=np.int32).reshape(-1, 1, 2)
+            for part in coords if len(part) >= 3]
+
+
 class _FFmpegVideoWriter:
     """Adapt imageio's FFmpeg writer to the OpenCV write/release interface."""
 
@@ -715,7 +750,8 @@ class _FFmpegVideoWriter:
         self.outfile = os.path.abspath(outfile)
         self.writer = imageio.get_writer(
             self.outfile, format="FFMPEG", fps=float(fps), codec="libx264",
-            pixelformat="yuv420p", macro_block_size=1,
+            pixelformat="yuv420p", macro_block_size=1, quality=None,
+            output_params=["-crf", "18"],
         )
 
     def write(self, frame):

@@ -169,8 +169,8 @@ def coordsfrommask(maskfile, epsilon=4.0):
     return maskconts, maskcoords
 
 
-def coordsfromzones(imgfile, palette_hues=None, tol=20, min_sat=200, min_val=200, epsilon=2.0):
-    """For each zone (color) in the image, return a simplified polygon as a list of (x, y) tuples."""
+def coordsfromzones(imgfile, palette_hues=None, tol=20, min_sat=200, min_val=200, epsilon=2.0, all_parts=False):
+    """Return each colour's largest polygon, or all polygons with all_parts=True."""
     if palette_hues is None:
         palette_hues = list(range(0, 360, 36))
     if isinstance(imgfile, np.ndarray):
@@ -189,12 +189,14 @@ def coordsfromzones(imgfile, palette_hues=None, tol=20, min_sat=200, min_val=200
         upper = np.array([(h + tol) // 2, 255, 255])
         mask = cv2.inRange(img_hsv, lower, upper)
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-        if contours:
-            cnt = max(contours, key=cv2.contourArea)
+        parts = []
+        for cnt in sorted(contours, key=cv2.contourArea, reverse=True):
             approx = cv2.approxPolyDP(cnt, epsilon, True)
             coords = [tuple(pt[0]) for pt in approx]
             if len(coords) > 2 and coords[0] == coords[-1]:
                 coords = coords[:-1]
-            if len(coords) >= 3:
-                zone_coords[i + 1] = coords
+            if len(coords) >= 3 and cv2.contourArea(approx) > 0:
+                parts.append(coords)
+        if parts:
+            zone_coords[i + 1] = parts if all_parts else parts[0]
     return zone_coords

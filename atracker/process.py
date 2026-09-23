@@ -249,7 +249,7 @@ class Processor:
         if self.wall_path:
             _, self.wallcoords = coordsfrommask(self.wall_path)
         if self.zone_path:
-            self.zonecoords = coordsfromzones(self.zone_path)
+            self.zonecoords = coordsfromzones(self.zone_path, all_parts=True)
         if self.maskzone_path:
             _, self.maskzonecoords = coordsfrommask(self.maskzone_path)
 
@@ -500,7 +500,8 @@ class Processor:
             final["inmaskzone"] = (final["mzdist"] <= 0).astype(int)
 
         for zidx, coords in self.zonecoords.items():
-            d = dist_to_zone(xs_full, ys_full, coords, self.conv)
+            d = np.minimum.reduce([dist_to_zone(xs_full, ys_full, part, self.conv)
+                                   for part in coords])
             if d is not None:
                 final[f"z{zidx}dist"] = d
 
