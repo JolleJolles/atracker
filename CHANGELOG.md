@@ -5,6 +5,7 @@
 
 
 ## Unreleased
+- Made visualisation report the absolute output path or explicitly state that saving is disabled, and raise an error if the video writer fails to open or no output is written.
 - Fixed overlay opacity accumulating where pending zone shapes overlap; zones/previews and mask outlines are now composited before applying the shared display opacity.
 - Fixed pandas `SettingWithCopyWarning` during processed-output rounding by explicitly copying the selected output columns.
 - Fixed tracked points and point-editing controls not appearing/working in the multi-file editor's "Coordinate data" mode; moved filenames above navigation buttons and added full-name tooltips/window titles.

@@ -523,6 +523,13 @@ class Visualiser:
                 outfile = stem + videosuffix + ".mp4"
             vidoutdims = canvasdims if canvasdims is not None else (vidw, vidh)
             vidout = videowriter(outfile, vidoutdims[0], vidoutdims[1], fps)
+            if vidout is None or not vidout.isOpened():
+                if cap is not None:
+                    cap.release()
+                raise RuntimeError(f"Could not open video output: {os.path.abspath(outfile)}")
+            lineprint(f"Writing video to: {os.path.abspath(outfile)}")
+        else:
+            lineprint("Video saving disabled (writevideo=False); no output file will be created.")
 
         if showvideo:
             cv2.namedWindow("Video", cv2.WINDOW_NORMAL)
@@ -531,6 +538,7 @@ class Visualiser:
         print("starting frameloop..", end=" ")
         t1 = time.time()
         frame_nr = startfr
+        frames_written = 0
 
         if cap is not None:
             # Video-driven frame loop
@@ -558,6 +566,7 @@ class Visualiser:
                         break
                 if writevideo:
                     vidout.write(img_draw)
+                    frames_written += 1
         else:
             # No video: iterate over frames that have data
             for frame_nr in sorted(data["frame"].unique()):
@@ -580,6 +589,7 @@ class Visualiser:
                         break
                 if writevideo:
                     vidout.write(img_draw)
+                    frames_written += 1
 
         if cap is not None:
             cap.release()
@@ -588,6 +598,9 @@ class Visualiser:
             cv2.waitKey(1)
         if writevideo:
             vidout.release()
+            if frames_written == 0 or not os.path.isfile(outfile) or os.path.getsize(outfile) == 0:
+                raise RuntimeError(f"No video output was written: {os.path.abspath(outfile)}")
+            lineprint(f"Saved video ({frames_written} frames submitted): {os.path.abspath(outfile)}")
 
         timediff = time.time() - t1
         speed = round((frame_nr - startfr) / max(timediff, 0.001), 1)
