@@ -48,6 +48,9 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         self._save_callback = save_callback
         self._file_states = {}   # {file_idx: {purpose_text: state_dict}}
         self._saved_states = {}
+        self._threshold_drafts = {}  # Shared across videos, keyed by configuration name.
+        self._saved_thresholds = {}
+        self._threshold_selection = {}
         self._active_purpose = None
         self._unsaved = set()    # {(file_idx, purpose)} - modified but not saved
         self._stored = set()     # {(file_idx, purpose_text)} - stored this session
@@ -1594,6 +1597,8 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
                 self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame_idx)
                 self.nextFrame()
             state = self._file_states.get(self._file_idx, {}).get(purpose)
+            if opmode in ("thresholding", "thresholding color"):
+                state = None  # Named threshold drafts take precedence over per-video state.
             if state is not None:
                 self._restore_state(state)
             else:
@@ -1603,6 +1608,11 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             self.updateThresholdingImage()
         if self._file_infos and state is None:
             self._saved_states[(self._file_idx, purpose)] = self._collect_state(purpose)
+            if opmode in ("thresholding", "thresholding color"):
+                name = self._file_infos[self._file_idx].get("threshold_type")
+                if name is not None:
+                    self._threshold_drafts.setdefault(name, dict(self.thresh_params))
+                    self._saved_thresholds.setdefault(name, dict(self.thresh_params))
         # Trigger redraw
         self.drawing_widget.update()
         self.proxyUpdate()
@@ -2239,6 +2249,16 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             return
         purpose = self._active_purpose
         state = self._collect_state(purpose)
+        if state["opmode"] in ("thresholding", "thresholding color") and state.get("threshold_type"):
+            name = state["threshold_type"]
+            params = dict(state["thresh_params"])
+            self._threshold_drafts[name] = params
+            key = ("threshold", name)
+            if params != self._saved_thresholds.get(name):
+                self._unsaved.add(key)
+            else:
+                self._unsaved.discard(key)
+            return
         self._file_states.setdefault(self._file_idx, {})[purpose] = state
         key = (self._file_idx, purpose)
         if state != self._saved_states.get(key):
@@ -2386,22 +2406,29 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
                         self.drawing_widget.tp_current_id = 0
         elif opmode in ("thresholding", "thresholding color"):
             options = fi.get("threshold_options", {})
-            selected = fi.get("threshold_type")
-            if len(options) > 1:
+            selected = self._threshold_selection.get(opmode)
+            if selected in options:
+                pass
+            elif len(options) > 1:
                 selected, ok = QInputDialog.getItem(self, "Threshold configuration",
                     "Configuration to edit:", list(options), 0, False)
                 if not ok:
                     selected = None
             elif options:
                 selected = next(iter(options))
+            else:
+                selected = None
             fi["threshold_type"] = selected
+            if selected is not None:
+                self._threshold_selection[opmode] = selected
             params = options.get(selected, fi.get("threshold_dict", {}))
             # New configurations must start from defaults, not the previous video's settings.
             defaults = {"blur": 9, "erode": 1, "blur2": 1, "threshold": 50,
                 "min_area": 100, "max_area": 20000, "gamma": 1.0,
                 "hue_lo": 30, "hue_hi": 90, "sat_lo": 50, "sat_hi": 255,
                 "val_lo": 50, "val_hi": 255}
-            self._restore_state({"thresh_params": {**defaults, **params}})
+            params = self._threshold_drafts.get(selected, {**defaults, **params})
+            self._restore_state({"thresh_params": params})
         self.drawing_widget.update()
 
     def _navigate_to(self, new_idx):
@@ -2594,6 +2621,8 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             return
 
         self._stored.add((self._file_idx, opmode))
+        if opmode in ("thresholding", "thresholding color") and fi.get("threshold_type"):
+            self._saved_thresholds[fi["threshold_type"]] = dict(self.thresh_params)
         self._saved_states[(self._file_idx, purpose_text)] = self._collect_state(purpose_text)
         self._remember_current()
         name = fi.get("output_basename", fi.get("video_name", f"File {self._file_idx + 1}"))

@@ -53,6 +53,8 @@ An existing `bwdark` entry is loaded; a new entry starts from defaults. **S / Sa
 
 The editor retains existing coordinate ID labels when saving, while showing numeric IDs for editing. It still writes coordinate columns rather than preserving every automated-tracker metadata column.
 
+When tuning a named threshold configuration across videos, **Next / Prev keep the current settings active**, including unsaved changes. Revisiting a video uses the latest settings for that configuration, not an older per-video copy. The selected configuration follows navigation whenever it is available for the next video; different configuration names retain separate settings. **S / Save current** writes the shared configuration to YAML without closing or advancing. Navigation itself never writes it; closing with unsaved threshold changes prompts before discarding them.
+
 For the older, one-window-per-video workflow:
 
 ```python
