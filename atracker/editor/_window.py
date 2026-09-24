@@ -274,17 +274,18 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         self.func_group.layout().addLayout(h_trans)
 
         h_gamma = QHBoxLayout()
-        self.gamma_label = QLabel("Brightness (gamma): 1.00")
+        self.gamma_label = QLabel("Gamma: 1.00")
         h_gamma.addWidget(self.gamma_label)
         self.gamma_slider = QSlider(Qt.Horizontal)
         self.gamma_slider.setRange(25, 400)
         self.gamma_slider.setValue(100)
-        self.gamma_slider.setFixedWidth(150)
+        self.gamma_slider.setMinimumWidth(80)
         self.gamma_slider.setToolTip(
             "Display brightness only: 1.00 is normal; higher values brighten dark areas."
         )
-        h_gamma.addWidget(self.gamma_slider)
+        h_gamma.addWidget(self.gamma_slider, 1)
         self.gamma_reset = QPushButton("Reset")
+        self.gamma_reset.setFixedWidth(50)
         self.gamma_reset.clicked.connect(lambda: self.gamma_slider.setValue(100))
         h_gamma.addWidget(self.gamma_reset)
         self.func_group.layout().addLayout(h_gamma)
@@ -885,7 +886,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         self.current_id_box.setEnabled(not enabled)
 
     def onGammaChanged(self, value):
-        self.gamma_label.setText(f"Brightness (gamma): {value / 100.0:.2f}")
+        self.gamma_label.setText(f"Gamma: {value / 100.0:.2f}")
         self.drawing_widget.update()
 
     def on_point_opacity_changed(self, value):

@@ -5,6 +5,7 @@
 
 
 ## Unreleased
+- Shortened the Editor brightness label to "Gamma" and made the slider width flexible with a compact Reset button to avoid crowding the control.
 - Added a "Use visible range" toggle to the Editor tracking timeline, expanding the existing All/Past/Future range across the bar with actual frame labels; the view stays fixed while dragging and follows the current frame after release.
 - Added a collapsible Editor tracking-coverage timeline with one row per ID for the selected point type, present/missing/outside-interval colours, and a draggable frame playhead. Coverage follows coordinate edits and Undo; compressed pixels flag any missing frame. Corrected the video slider and coordinate deletion controls to use the displayed frame consistently.
 - Added an Editor brightness (gamma) slider with a reset button and remembered setting to make dark videos and backgrounds easier to view; adjustments affect only the display, preserving source images, tracking thresholds, and annotations.
