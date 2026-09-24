@@ -38,6 +38,10 @@ Draw the ROI and press **S**, choose **Mask** and draw/save it, then choose **Co
 
 **Measurement** saves calibration: draw a polyline, press **S**, and enter its known length in millimetres. **Thresholding** and **Thresholding color** load the video's configured threshold settings; when several configurations are available, choose which one to edit. Saving updates that named configuration.
 
+For dark footage, open `AT.editor(names="your_video", purpose="thresholding")` and adjust **Tracking gamma** in the threshold controls. The default **1.00** leaves detection unchanged; higher values brighten shadows before background subtraction and blur. Both the video frame and background receive the same correction. Retune the threshold while inspecting the detection preview, then press **S** to save `gamma` with the selected threshold configuration. Subsequent tracking uses that setting for every video using the configuration. Colour thresholding also supports tracking gamma. Existing configurations without `gamma` use 1.0.
+
+The separate **Gamma** control under Drawing functions only changes the displayed image and has no effect on tracking. Tracking gamma does not alter source videos or saved backgrounds.
+
 The editor retains existing coordinate ID labels when saving, while showing numeric IDs for editing. It still writes coordinate columns rather than preserving every automated-tracker metadata column.
 
 For the older, one-window-per-video workflow:

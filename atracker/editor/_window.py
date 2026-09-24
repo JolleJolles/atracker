@@ -8,7 +8,7 @@ from pythutils.mediautils import get_vid_params
 from atracker.helpers.media import get_media_type
 from atracker.helpers.data import load_and_convert_tracking_dataframe
 from atracker.helpers.detection import ProcessImage
-from PyQt5.QtWidgets import QMessageBox, QInputDialog
+from PyQt5.QtWidgets import QMessageBox, QInputDialog, QDoubleSpinBox
 from PyQt5.QtCore import QByteArray
 
 # Maps human-readable purpose labels (lowercased) to internal opmode strings
@@ -364,6 +364,24 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         self.slider_labels = {}
         self.sliders_bw_widgets = []
         self.sliders_color_widgets = []
+        tracking_gamma_row = QHBoxLayout()
+        tracking_gamma_row.addWidget(QLabel("Tracking gamma:"))
+        self.tracking_gamma_value = QDoubleSpinBox()
+        self.tracking_gamma_value.setRange(0.25, 4.0)
+        self.tracking_gamma_value.setDecimals(2)
+        self.tracking_gamma_value.setSingleStep(0.05)
+        self.tracking_gamma_value.setValue(self.thresh_params.get("gamma", 1.0))
+        self.sl_tracking_gamma = QSlider(Qt.Horizontal)
+        self.sl_tracking_gamma.setRange(25, 400)
+        self.sl_tracking_gamma.setValue(round(self.tracking_gamma_value.value() * 100))
+        self.sl_tracking_gamma.setToolTip(
+            "Detection gamma before subtraction and blur. 1.00 is unchanged; higher values brighten shadows."
+        )
+        self.sl_tracking_gamma.valueChanged.connect(lambda value: self.tracking_gamma_value.setValue(value / 100.0))
+        self.tracking_gamma_value.valueChanged.connect(lambda value: self.sl_tracking_gamma.setValue(round(value * 100)))
+        tracking_gamma_row.addWidget(self.tracking_gamma_value)
+        tracking_gamma_row.addWidget(self.sl_tracking_gamma, 1)
+        self.thresh_group.layout().addLayout(tracking_gamma_row)
         # B/W Sliders
         _frame_px = self.orig_width * self.orig_height
         for label_text, max_val in [
@@ -464,6 +482,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
                 self.sl_val_hi = slider
 
         self.left_layout.addWidget(self.thresh_group)
+        self.sl_tracking_gamma.valueChanged.connect(lambda _: self.updateThresholdingImage())
 
         # Thresholded Image group
         self.thresh_img_group = self.makeGroupBox("Thresholded Image")
@@ -1592,6 +1611,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         if getattr(self, "_restoring_threshold", False) or getattr(self, "_switching_purpose", False):
             return
         self.thresh_params = {
+            "gamma": self.tracking_gamma_value.value(),
             "blur": self.sl_blur.value(),
             "erode": self.sl_erode.value(),
             "blur2": self.sl_blur2.value(),
@@ -1652,7 +1672,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
                 frame, bg, mask_np, "bw",
                 params["blur"], params["erode"], params["blur2"],
                 params["threshold"], params["min_area"], params["max_area"],
-                simple=True
+                simple=True, gamma=params["gamma"]
             )
 
         elif opmode == "thresholding color":
@@ -1661,7 +1681,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             PI = ProcessImage(
                 frame, bg, mask_np, "color",
                 blur=params["blur"], min_area=params["min_area"], max_area=params["max_area"],
-                colmin=colmin, colmax=colmax, simple=True
+                colmin=colmin, colmax=colmax, simple=True, gamma=params["gamma"]
             )
         else:
             return  # Not a thresholding mode
@@ -2298,6 +2318,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
                 self._file_infos[self._file_idx]["threshold_type"] = state["threshold_type"]
             self.thresh_params = dict(state["thresh_params"])
             self._restoring_threshold = True
+            self.sl_tracking_gamma.setValue(round(float(self.thresh_params.get("gamma", 1.0)) * 100))
             for key, value in self.thresh_params.items():
                 attr = {"threshold": "thresh", "min_area": "minarea", "max_area": "maxarea"}.get(key, key)
                 slider = getattr(self, "sl_" + attr, None)
@@ -2375,8 +2396,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
                 selected = next(iter(options))
             fi["threshold_type"] = selected
             params = options.get(selected, fi.get("threshold_dict", {}))
-            if params:
-                self._restore_state({"thresh_params": params})
+            self._restore_state({"thresh_params": {**params, "gamma": params.get("gamma", 1.0)}})
         self.drawing_widget.update()
 
     def _navigate_to(self, new_idx):

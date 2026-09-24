@@ -2,6 +2,7 @@
 
 import cv2
 import numpy as np
+from functools import lru_cache
 from scipy.spatial import KDTree
 from scipy.spatial.distance import cdist
 from shapely.geometry import LineString, Polygon
@@ -25,16 +26,31 @@ def warp_barcode_patch(gray_img, contour, size=15):
     return patch
 
 
+@lru_cache(maxsize=32)
+def _gamma_lut(gamma):
+    """8-bit correction: gamma > 1 brightens shadows. Reuse across frames."""
+    return np.round(255.0 * (np.arange(256) / 255.0) ** (1.0 / gamma)).astype(np.uint8)
+
+
 class ProcessImage:
 
     def __init__(self, img, img_bg=None, img_mask=None, threshtype="bw", blur=9,
         erode=1, blur2=1, threshold=50, min_area=100, max_area=10000, croppad=20,
         colmin=None, colmax=None, simple=True,
         tags=None, tag_ids=None, barcode_size=15, barcode_tol=1,
-        flicker_threshold=None, min_aspect_ratio=1.4, max_aspect_ratio=10):
+        flicker_threshold=None, min_aspect_ratio=1.4, max_aspect_ratio=10, gamma=1.0):
 
         self.img = np.asarray(img)
         self.img_bg = np.asarray(img_bg)
+        self.gamma = float(gamma)
+        if not np.isfinite(self.gamma) or self.gamma <= 0:
+            raise ValueError("Tracking gamma must be a finite positive number")
+        if self.gamma != 1.0:
+            lut = _gamma_lut(self.gamma)
+            # Correct copies before subtraction/blur; never change source frames or masks.
+            self.img = cv2.LUT(self.img, lut)
+            if img_bg is not None:
+                self.img_bg = cv2.LUT(self.img_bg, lut)
         self.img_mask = img_mask
         self.threshtype = threshtype
         self.blur = max(1, blur | 1)

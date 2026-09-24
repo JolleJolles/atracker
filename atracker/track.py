@@ -560,7 +560,7 @@ class Tracker:
                         PI = ProcessImage(self.img, self.img_bg, self.img_mask, self.thresh_type,
                             ti["blur"], ti["erode"], ti["blur2"], ti["threshold"], ti["min_area"], ti["max_area"],
                             simple=not self.advanced, flicker_threshold=self.flicker_threshold if self.check_flicker else None,
-                            min_aspect_ratio=min_ar, max_aspect_ratio=max_ar)
+                            min_aspect_ratio=min_ar, max_aspect_ratio=max_ar, gamma=ti.get("gamma", 1.0))
                     else:
                         if "hue_lo" in ti:
                             colmin = (ti["hue_lo"], ti["sat_lo"], ti["val_lo"])
@@ -572,7 +572,7 @@ class Tracker:
                             ti["blur"], min_area=ti["min_area"], max_area=ti["max_area"],
                             colmin=colmin, colmax=colmax,
                             simple=True, flicker_threshold=self.flicker_threshold if self.check_flicker else None,
-                            min_aspect_ratio=min_ar, max_aspect_ratio=max_ar)
+                            min_aspect_ratio=min_ar, max_aspect_ratio=max_ar, gamma=ti.get("gamma", 1.0))
                     self.img_thresh, self.allcons, self.conlist = PI.process()
                     if PI.flicker:
                         continue
