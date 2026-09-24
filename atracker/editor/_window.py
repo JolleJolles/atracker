@@ -272,6 +272,22 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         h_trans.addWidget(self.bgtrans_slider)
         self.func_group.layout().addLayout(h_trans)
 
+        h_gamma = QHBoxLayout()
+        self.gamma_label = QLabel("Brightness (gamma): 1.00")
+        h_gamma.addWidget(self.gamma_label)
+        self.gamma_slider = QSlider(Qt.Horizontal)
+        self.gamma_slider.setRange(25, 400)
+        self.gamma_slider.setValue(100)
+        self.gamma_slider.setFixedWidth(150)
+        self.gamma_slider.setToolTip(
+            "Display brightness only: 1.00 is normal; higher values brighten dark areas."
+        )
+        h_gamma.addWidget(self.gamma_slider)
+        self.gamma_reset = QPushButton("Reset")
+        self.gamma_reset.clicked.connect(lambda: self.gamma_slider.setValue(100))
+        h_gamma.addWidget(self.gamma_reset)
+        self.func_group.layout().addLayout(h_gamma)
+
         h_point_op = QHBoxLayout()
         self.point_op_label = QLabel("Points Opacity:")
         h_point_op.addWidget(self.point_op_label)
@@ -748,6 +764,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         self.angle_show_arrows_checkbox.stateChanged.connect(self.drawing_widget.update)
         self.angle_show_lines_checkbox.stateChanged.connect(self.drawing_widget.update)
         self.bgtrans_slider.valueChanged.connect(self.drawing_widget.update)
+        self.gamma_slider.valueChanged.connect(self.onGammaChanged)
         self.mask_op_slider.valueChanged.connect(self.drawing_widget.update)
         self.point_size_slider.valueChanged.connect(self.drawing_widget.update)
         self.rb_range_all.toggled.connect(self.drawing_widget.update)
@@ -821,6 +838,10 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
     def toggleEditPointMode(self, enabled):
         self.input_num_ids.setEnabled(not enabled)
         self.current_id_box.setEnabled(not enabled)
+
+    def onGammaChanged(self, value):
+        self.gamma_label.setText(f"Brightness (gamma): {value / 100.0:.2f}")
+        self.drawing_widget.update()
 
     def on_point_opacity_changed(self, value):
         self.point_opacity = value / 100.0
@@ -1994,6 +2015,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             self.mode_combo.setCurrentIndex(idx)
         self.hue_slider.setValue(prefs.get("hue", 120))
         self.bgtrans_slider.setValue(prefs.get("image_transparency", 100))
+        self.gamma_slider.setValue(prefs.get("display_gamma", 100))
         self.point_op_slider.setValue(prefs.get("point_opacity", 100))
         self.mask_op_slider.setValue(prefs.get("mask_opacity", 80))
         self.point_size_slider.setValue(prefs.get("point_size", 6))
@@ -2035,6 +2057,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             "drawing_mode": self.mode_combo.currentText(),
             "hue": self.hue_slider.value(),
             "image_transparency": self.bgtrans_slider.value(),
+            "display_gamma": self.gamma_slider.value(),
             "point_opacity": self.point_op_slider.value(),
             "mask_opacity": self.mask_op_slider.value(),
             "point_size": self.point_size_slider.value(),
@@ -2409,5 +2432,4 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         self.drawing_widget.final_output = "saved"
         save_prefs(self._collect_prefs())
         self.close()
-
 

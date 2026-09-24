@@ -32,6 +32,8 @@ class PyQt5ShapeDrawer(QWidget):
         self.drawing_overlay = None  # Optional extra layer (e.g. contour drawing)
         self.shapes = []  # List of (mode, shape_data)
         self.main_window = None
+        self._display_gamma = None
+        self._gamma_lut = None
         self.test_points = []
         self.scope_mode = "any"
         self.tp_current_id = 0
@@ -635,7 +637,22 @@ class PyQt5ShapeDrawer(QWidget):
         scale, _, _ = self.currentScaleAndOffset()
         w = int(bg.width() * scale)
         h = int(bg.height() * scale)
-        return bg.scaled(w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        bg = bg.scaled(w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        gamma = self.main_window.gamma_slider.value() / 100.0 if self.main_window else 1.0
+        if gamma != 1.0 and not bg.isNull():
+            if gamma != self._display_gamma:
+                self._gamma_lut = np.round(
+                    255.0 * (np.arange(256) / 255.0) ** (1.0 / gamma)
+                ).astype(np.uint8)
+                self._display_gamma = gamma
+            # Adjust a display copy only, preserving alpha and the source image.
+            bg = bg.convertToFormat(QImage.Format_RGBA8888).copy()
+            ptr = bg.bits()
+            ptr.setsize(bg.byteCount())
+            pixels = np.frombuffer(ptr, np.uint8).reshape(bg.height(), bg.bytesPerLine())
+            rgba = pixels[:, :bg.width() * 4].reshape(bg.height(), bg.width(), 4)
+            rgba[:, :, :3] = self._gamma_lut[rgba[:, :, :3]]
+        return bg
     
     def paintEvent(self, event):
         painter = QPainter(self)
