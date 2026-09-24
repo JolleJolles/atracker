@@ -8,7 +8,7 @@ from pythutils.mediautils import get_vid_params
 from atracker.helpers.media import get_media_type
 from atracker.helpers.data import load_and_convert_tracking_dataframe
 from atracker.helpers.detection import ProcessImage
-from PyQt5.QtWidgets import QMessageBox
+from PyQt5.QtWidgets import QMessageBox, QInputDialog
 from PyQt5.QtCore import QByteArray
 
 # Maps human-readable purpose labels (lowercased) to internal opmode strings
@@ -31,7 +31,7 @@ _PURPOSE_MAP = {
 
 _MULTI_FILE_PURPOSES = [
     "Mask", "ROI", "Zones", "Frame limits",
-    "Coordinate data", "Measurement", "Thresholding"
+    "Coordinate data", "Measurement", "Thresholding", "Thresholding color"
 ]
 
 class PyQt5ShapeDrawerWindow(QMainWindow):
@@ -47,7 +47,9 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         self._file_idx = file_idx
         self._save_callback = save_callback
         self._file_states = {}   # {file_idx: {purpose_text: state_dict}}
-        self._unsaved = set()    # {file_idx} - modified but not stored
+        self._saved_states = {}
+        self._active_purpose = None
+        self._unsaved = set()    # {(file_idx, purpose)} - modified but not saved
         self._stored = set()     # {(file_idx, purpose_text)} - stored this session
 
         # Override file params from file_infos[file_idx] if multi-file mode
@@ -713,18 +715,14 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         if self._file_infos:
             self.action_group = self.makeGroupBox("")
             actions_h = QHBoxLayout()
-            self.btn_store = QPushButton("Store")
+            self.btn_store = QPushButton("Save current")
             self.btn_store.setToolTip("Store current drawing for this file and purpose")
             self.btn_store.clicked.connect(self._store_current)
-            self.btn_save_all = QPushButton("Save")
-            self.btn_save_all.setToolTip("Save all stored data and exit")
+            self.btn_save_all = QPushButton("Close")
+            self.btn_save_all.setToolTip("Close the editor; prompt if edits remain unsaved")
             self.btn_save_all.clicked.connect(self._save_all)
-            self.btn_exit_editor = QPushButton("Exit")
-            self.btn_exit_editor.setToolTip("Exit without saving")
-            self.btn_exit_editor.clicked.connect(self.close)
             actions_h.addWidget(self.btn_store)
             actions_h.addWidget(self.btn_save_all)
-            actions_h.addWidget(self.btn_exit_editor)
             self.action_group.layout().addLayout(actions_h)
             self.left_layout.addWidget(self.action_group)
 
@@ -1162,8 +1160,6 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
     def proxyUpdate(self):
         self.syncTimeline()
         # Track unsaved changes in multi-file mode
-        if self._file_infos and self.drawing_widget.last_click_orig is not None:
-            self._unsaved.add(self._file_idx)
 
         w = self.drawing_widget
         mouse_pt = w.convertToOriginal(w.mouse_pos)
@@ -1396,15 +1392,20 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         return _PURPOSE_MAP.get(label, label)
 
     def onOpModeChanged(self, index):
+        if self._file_infos and self._active_purpose is not None:
+            self._remember_current()
+        self._switching_purpose = True
         drawing_mode = self.mode_combo.currentText()
         opmode_text = self.opmode_combo.itemText(index).lower()
         opmode = _PURPOSE_MAP.get(opmode_text, opmode_text)
+        self._undo_buffer = {}
 
         # Clear shapes and overlay if needed
         self.drawing_widget.clearCurrentShape()
         self.drawing_widget.shapes.clear()
         if opmode not in ["thresholding", "thresholding color"]:
             self.drawing_widget.drawing_overlay = None
+        self.drawing_widget.drawing_allowed = True
 
         # Show everything first
         self.mode_group.setVisible(True)
@@ -1444,6 +1445,8 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             self.hue_slider.setVisible(True)
             self.drawing_widget.setEnabled(True)
             self.drawing_widget.drawing_mode = "rectangle"
+            self.mode_combo.clear()
+            self.mode_combo.addItem("rectangle")
 
         elif opmode == "measure":
             self.func_group.setVisible(True)
@@ -1553,11 +1556,41 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         if opmode in ("default", "roi", "mask", "zones") and self.mode_combo.findText(drawing_mode) >= 0:
             self.mode_combo.setCurrentText(drawing_mode)
 
+        if self._file_infos:
+            purpose = self.opmode_combo.itemText(index)
+            self._active_purpose = purpose
+            fi = self._file_infos[self._file_idx]
+            # Setup drawings use full-frame coordinates; tracked points use ROI coordinates.
+            self.roi = fi.get("roi") if opmode in ("timepoints", "thresholding", "thresholding color") else None
+            if opmode != "mask":
+                mask = QImage(fi.get("mask_path") or "")
+                if mask.isNull():
+                    mask = QImage(self.orig_width, self.orig_height, QImage.Format_Grayscale8)
+                    mask.fill(255)
+                if self.roi:
+                    (x0, y0), (x1, y1) = self.roi
+                    mask = mask.copy(x0, y0, x1 - x0, y1 - y0)
+                self.drawing_widget.mask_image = mask
+            if self.cap and hasattr(self, "video_slider"):
+                self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame_idx)
+                self.nextFrame()
+            state = self._file_states.get(self._file_idx, {}).get(purpose)
+            if state is not None:
+                self._restore_state(state)
+            else:
+                self._auto_load_purpose_data(fi, purpose)
+        self._switching_purpose = False
+        if opmode in ("thresholding", "thresholding color"):
+            self.updateThresholdingImage()
+        if self._file_infos and state is None:
+            self._saved_states[(self._file_idx, purpose)] = self._collect_state(purpose)
         # Trigger redraw
         self.drawing_widget.update()
         self.proxyUpdate()
 
     def updateThresholdingImage(self, frame=None):
+        if getattr(self, "_restoring_threshold", False) or getattr(self, "_switching_purpose", False):
+            return
         self.thresh_params = {
             "blur": self.sl_blur.value(),
             "erode": self.sl_erode.value(),
@@ -1605,6 +1638,9 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             bg_qimg = QImage(self.background_file)
             if not bg_qimg.isNull():
                 bg = qimage_to_numpy(bg_qimg)
+                if self.roi is not None:
+                    (x0, y0), (x1, y1) = self.roi
+                    bg = bg[y0:y1, x0:x1]
                 if len(bg.shape) == 2 or (len(bg.shape) == 3 and bg.shape[2] != 3):
                     bg = cv2.cvtColor(bg, cv2.COLOR_GRAY2BGR)
 
@@ -2148,10 +2184,12 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         return prefs
 
     def closeEvent(self, event):
+        if self._file_infos:
+            self._remember_current()
         if self._file_infos and self._unsaved:
             reply = QMessageBox.question(
                 self, "Unsaved changes",
-                "Some files have drawing changes that haven't been stored. Exit anyway?",
+                "Some video/purpose edits have not been saved. Discard them and close?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No
             )
@@ -2168,7 +2206,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         if not self._file_infos:
             return
         fi = self._file_infos[self._file_idx]
-        name = fi.get("video_name", f"File {self._file_idx + 1}")
+        name = fi.get("output_basename", fi.get("video_name", f"File {self._file_idx + 1}"))
         total = len(self._file_infos)
         self.nav_name_label.setText(f"{name}\n({self._file_idx + 1} / {total})")
         self.nav_name_label.setToolTip(name)
@@ -2176,11 +2214,32 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         self.btn_prev.setEnabled(self._file_idx > 0)
         self.btn_next.setEnabled(self._file_idx < total - 1)
 
-    def _collect_state(self):
+    def _remember_current(self):
+        if self._active_purpose is None:
+            return
+        purpose = self._active_purpose
+        state = self._collect_state(purpose)
+        self._file_states.setdefault(self._file_idx, {})[purpose] = state
+        key = (self._file_idx, purpose)
+        if state != self._saved_states.get(key):
+            self._unsaved.add(key)
+        else:
+            self._unsaved.discard(key)
+
+    def _collect_state(self, purpose=None):
         """Collect canvas + widget state for the current purpose into a dict."""
-        opmode_text = self.currentOperationMode()
+        opmode_text = (purpose or self.currentOperationMode()).lower()
         opmode = _PURPOSE_MAP.get(opmode_text, opmode_text)
         state = {"opmode": opmode}
+        w = self.drawing_widget
+        if opmode in ("roi", "mask", "zones"):
+            state["shapes"] = list(w.shapes)
+            pending_mode = w.drawing_mode if (w.start_point_orig is not None or
+                w.end_point_orig is not None or w.polygon_points_orig) else None
+            state["pending"] = (pending_mode,
+                QPoint(w.start_point_orig) if w.start_point_orig is not None else None,
+                QPoint(w.end_point_orig) if w.end_point_orig is not None else None,
+                [QPoint(p) for p in w.polygon_points_orig])
         if opmode == "mask":
             if self.drawing_widget.mask_image and not self.drawing_widget.mask_image.isNull():
                 state["mask_qimg"] = self.drawing_widget.mask_image.copy()
@@ -2193,35 +2252,32 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             state["frame_start"] = self.flim_start_spin.value()
             state["frame_stop"] = self.flim_stop_spin.value()
         elif opmode == "timepoints":
-            state["points_by_frame"] = dict(self.drawing_widget.points_by_frame)
+            state["points_by_frame"] = {i: {t: {f: QPoint(p) if isinstance(p, QPoint) else p
+                for f, p in frames.items()} for t, frames in types.items()}
+                for i, types in w.points_by_frame.items()}
             state["num_ids"] = self.input_num_ids.value()
         elif opmode == "measure":
             state["measure_polyline"] = list(getattr(self.drawing_widget, "measure_polyline_orig", []))
-        elif opmode == "thresholding":
+        elif opmode in ("thresholding", "thresholding color"):
             state["thresh_params"] = dict(self.thresh_params)
+            state["threshold_type"] = self._file_infos[self._file_idx].get("threshold_type")
         return state
 
     def _restore_state(self, state):
         """Restore canvas + widget state from a collected dict."""
         if not state:
             return
-        opmode = state.get("opmode", "mask")
-        # Find the matching combo item
-        target = None
-        for i in range(self.opmode_combo.count()):
-            item_text = self.opmode_combo.itemText(i).lower()
-            if _PURPOSE_MAP.get(item_text, item_text) == opmode:
-                target = i
-                break
-        if target is not None:
-            self.opmode_combo.blockSignals(True)
-            self.opmode_combo.setCurrentIndex(target)
-            self.opmode_combo.blockSignals(False)
-            self.onOpModeChanged(target)
         if "mask_qimg" in state:
             self.drawing_widget.mask_image = state["mask_qimg"].copy()
         if "shapes" in state:
             self.drawing_widget.shapes = list(state["shapes"])
+        if "pending" in state:
+            mode, start, end, polygon = state["pending"]
+            if mode is not None:
+                self.mode_combo.setCurrentText(mode)
+            self.drawing_widget.start_point_orig = QPoint(start) if start is not None else None
+            self.drawing_widget.end_point_orig = QPoint(end) if end is not None else None
+            self.drawing_widget.polygon_points_orig = [QPoint(p) for p in polygon]
         if "zones_overlay" in state:
             self.drawing_widget.zones_overlay = state["zones_overlay"].copy()
         if "frame_start" in state:
@@ -2229,18 +2285,40 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         if "frame_stop" in state:
             self.flim_stop_spin.setValue(state["frame_stop"])
         if "points_by_frame" in state:
-            self.drawing_widget.points_by_frame = state["points_by_frame"]
-            self.timeline.invalidate()
+            self.drawing_widget.points_by_frame = {i: {t: {f: QPoint(p) if isinstance(p, QPoint) else p
+                for f, p in frames.items()} for t, frames in types.items()}
+                for i, types in state["points_by_frame"].items()}
+            if hasattr(self, "timeline"):
+                self.timeline.invalidate()
             self.input_num_ids.setValue(state.get("num_ids", 1))
         if "measure_polyline" in state:
             self.drawing_widget.measure_polyline_orig = list(state["measure_polyline"])
         if "thresh_params" in state:
+            if "threshold_type" in state:
+                self._file_infos[self._file_idx]["threshold_type"] = state["threshold_type"]
             self.thresh_params = dict(state["thresh_params"])
+            self._restoring_threshold = True
+            for key, value in self.thresh_params.items():
+                attr = {"threshold": "thresh", "min_area": "minarea", "max_area": "maxarea"}.get(key, key)
+                slider = getattr(self, "sl_" + attr, None)
+                if slider is not None:
+                    slider.setValue(int(value))
+            self._restoring_threshold = False
+            self.updateThresholdingImage()
         self.drawing_widget.update()
 
     def _auto_load_purpose_data(self, fi, purpose_text):
         """Auto-load existing data from file_info for the given purpose."""
         opmode = _PURPOSE_MAP.get(purpose_text.lower(), purpose_text.lower())
+        if opmode == "mask":
+            self.drawing_widget.mask_image = QImage(self.orig_width, self.orig_height, QImage.Format_Grayscale8)
+            self.drawing_widget.mask_image.fill(255)
+        elif opmode == "zones":
+            self.drawing_widget.zones_overlay = None
+        elif opmode == "timepoints":
+            self.drawing_widget.points_by_frame = {}
+            self.input_num_ids.setValue(1)
+            fi["id_labels"] = {}
         if opmode == "mask":
             mask_path = fi.get("mask_path")
             if mask_path and os.path.isfile(mask_path):
@@ -2254,11 +2332,12 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
                 zones = cv2.imread(zones_path, cv2.IMREAD_UNCHANGED)
                 if zones is not None:
                     from ._utils import numpy_to_qimage
-                    self.drawing_widget.zones_overlay = numpy_to_qimage(zones)
+                    self.drawing_widget.zones_overlay = numpy_to_qimage(zones).convertToFormat(QImage.Format_ARGB32)
         elif opmode == "roi":
             roi = fi.get("roi")
             if roi:
-                self.roi = roi
+                (x0, y0), (x1, y1) = roi
+                self.drawing_widget.shapes = [("rectangle", ((x0, y0), (x1, y0), (x1, y1), (x0, y1)))]
         elif opmode == "framelimits":
             start = fi.get("frame_start")
             stop = fi.get("frame_stop")
@@ -2275,6 +2354,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
                     if "IDstr" in df.columns:
                         unique_ids = sorted([s for s in df["IDstr"].unique() if pd.notna(s)], key=str)
                         id_map = {s: i for i, s in enumerate(unique_ids)}
+                        fi["id_labels"] = {i: s for s, i in id_map.items()}
                         df["ID"] = df["IDstr"].map(id_map).fillna(-1).astype(int)
                     pbf = build_points_by_frame(df)
                     self.drawing_widget.points_by_frame = pbf
@@ -2283,6 +2363,20 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
                         self.current_id_box.setValue(1)
                         self.updateCurrentID(1)
                         self.drawing_widget.tp_current_id = 0
+        elif opmode in ("thresholding", "thresholding color"):
+            options = fi.get("threshold_options", {})
+            selected = fi.get("threshold_type")
+            if len(options) > 1:
+                selected, ok = QInputDialog.getItem(self, "Threshold configuration",
+                    "Configuration to edit:", list(options), 0, False)
+                if not ok:
+                    selected = None
+            elif options:
+                selected = next(iter(options))
+            fi["threshold_type"] = selected
+            params = options.get(selected, fi.get("threshold_dict", {}))
+            if params:
+                self._restore_state({"thresh_params": params})
         self.drawing_widget.update()
 
     def _navigate_to(self, new_idx):
@@ -2294,26 +2388,9 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         if new_idx == self._file_idx:
             return
 
-        # Prompt if unsaved changes
-        if self._file_idx in self._unsaved:
-            msg = QMessageBox(self)
-            msg.setWindowTitle("Navigate to new file")
-            msg.setText("You have unsaved drawing changes. What would you like to do?")
-            btn_store = msg.addButton("Store & Go", QMessageBox.AcceptRole)
-            btn_skip = msg.addButton("Skip", QMessageBox.RejectRole)
-            btn_cancel = msg.addButton("Cancel", QMessageBox.DestructiveRole)
-            msg.exec_()
-            clicked = msg.clickedButton()
-            if clicked == btn_cancel:
-                return
-            if clicked == btn_store:
-                self._store_current()
-
-        # Save current canvas state for this file+purpose
-        purpose_text = self.opmode_combo.currentText()
-        if self._file_idx not in self._file_states:
-            self._file_states[self._file_idx] = {}
-        self._file_states[self._file_idx][purpose_text] = self._collect_state()
+        # Navigation retains each purpose's pending work without writing it.
+        self._remember_current()
+        self._active_purpose = None
 
         # Release old media
         if self.cap:
@@ -2367,12 +2444,6 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             self._set_timeline_limits(limits)
         self.timeline.invalidate()
 
-        # Restore state if cached, else auto-load
-        if new_idx in self._file_states and purpose_text in self._file_states[new_idx]:
-            self._restore_state(self._file_states[new_idx][purpose_text])
-        else:
-            self._auto_load_purpose_data(fi, purpose_text)
-
         # Update video controls
         if hasattr(self, "video_slider"):
             self.video_slider.setRange(0, max(0, self.total_frames - 1))
@@ -2383,7 +2454,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
             QTimer.singleShot(0, self.nextFrame)
 
-        self._unsaved.discard(new_idx)
+        self.onOpModeChanged(self.opmode_combo.currentIndex())
         self._update_nav_label()
         self.drawing_widget.update()
         self.proxyUpdate()
@@ -2432,7 +2503,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
                     row = {"frame": f, "id": id_}
                     for coord_key, pt_key in [("cx", "c"), ("hx", "h"), ("tx", "t")]:
                         pt = typedict.get(pt_key, {}).get(f)
-                        if pt and hasattr(pt, "x"):
+                        if pt is not None and hasattr(pt, "x"):
                             row[coord_key] = pt.x()
                             row[coord_key.replace("x", "y")] = pt.y()
                         else:
@@ -2440,10 +2511,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
                             row[coord_key.replace("x", "y")] = None
                     row["angle"] = typedict.get("a", {}).get(f)
                     data.append(row)
-            if data:
-                import pandas as pd
-                return pd.DataFrame(data).sort_values(["id", "frame"]).reset_index(drop=True)
-            return None
+            return pd.DataFrame(data, columns=["frame", "id", "cx", "cy", "hx", "hy", "tx", "ty", "angle"]).sort_values(["id", "frame"]).reset_index(drop=True)
 
         elif opmode == "measure":
             pts = getattr(self.drawing_widget, "measure_polyline_orig", [])
@@ -2460,10 +2528,10 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
                         - shape[(i + 1) % len(shape)][0] * shape[i][1]
                         for i in range(len(shape))
                     )) / 2.0
-                return (shape, int(total), int(area) if area else None)
+                return (shape, total, area)
             return None
 
-        elif opmode == "thresholding":
+        elif opmode in ("thresholding", "thresholding color"):
             return dict(self.thresh_params)
 
         return None
@@ -2472,6 +2540,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         """Store the current drawing for the current file and purpose."""
         if not self._file_infos:
             return
+        self.drawing_widget.addCurrentShapeIfNeeded()
         fi = self._file_infos[self._file_idx]
         purpose_text = self.opmode_combo.currentText()
         opmode_text = purpose_text.lower()
@@ -2483,16 +2552,31 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
                 f"No data drawn for purpose: {purpose_text}")
             return
 
-        if self._save_callback:
-            self._save_callback(self._file_idx, fi.get("ind"), opmode, data)
+        if opmode == "measure":
+            mm, ok = QInputDialog.getDouble(self, "Calibration", "Known length (mm):", 1.0, 0.000001, 1e9, 6)
+            if not ok:
+                return
+            if data[1] <= 0:
+                QMessageBox.warning(self, "Invalid measurement", "Draw a line with nonzero length.")
+                return
+            data = mm / data[1]
+        try:
+            if self._save_callback:
+                self._save_callback(self._file_idx, fi.get("ind"), opmode, data)
+        except Exception as exc:
+            QMessageBox.warning(self, "Save failed", str(exc))
+            self._remember_current()
+            return
 
         self._stored.add((self._file_idx, opmode))
-        self._unsaved.discard(self._file_idx)
-        name = fi.get("video_name", f"File {self._file_idx + 1}")
-        print(f"Stored {purpose_text} for {name}")
+        self._saved_states[(self._file_idx, purpose_text)] = self._collect_state(purpose_text)
+        self._remember_current()
+        name = fi.get("output_basename", fi.get("video_name", f"File {self._file_idx + 1}"))
+        self.statusBar().showMessage(f"Saved {purpose_text} for {name}")
+        print(f"Saved {purpose_text} for {name}")
 
     def _save_all(self):
-        """Save all stored data and close."""
+        """Close, letting closeEvent check all video/purpose edits."""
         self.drawing_widget.final_output = "saved"
         save_prefs(self._collect_prefs())
         self.close()

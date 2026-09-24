@@ -5,6 +5,7 @@
 
 
 ## Unreleased
+- Kept `AT.editor()` as the project interface and made Save current / S persist the active task without closing or advancing, including immediate overview saves. Purpose switches and video navigation retain separate pending edits; Close checks all video/purpose states. Added automatic purpose-specific loading, tracker-consistent region filenames, calibration saving, explicit threshold configuration selection and colour-threshold editing, and preserved existing coordinate ID labels on save. Setup drawings use full-frame coordinates while coordinate editing uses the saved ROI.
 - Added the local run date to the ATracker startup message, alongside the existing version and Git commit information.
 - Shortened the Editor brightness label to "Gamma" and made the slider width flexible with a compact Reset button to avoid crowding the control.
 - Added a "Use visible range" toggle to the Editor tracking timeline, expanding the existing All/Past/Future range across the bar with actual frame labels; the view stays fixed while dragging and follows the current frame after release.

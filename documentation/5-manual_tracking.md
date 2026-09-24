@@ -2,7 +2,7 @@
 
 Use the interactive editor to correct local tracking errors or annotate positions from scratch. For widespread detection failures, improve automated tracking first. Run [data processing](4-processing_data.md) after checking and saving the coordinates.
 
-The current interfaces are `AT.editor(purpose="timepoints")`, `AT.check_interactive()` and the standalone `manual_tracker()` function. Older examples using `AT.process(manfix=True, manonly=True)`, `Tracker_man`, `man_types` or `statevar` do not apply to the current API.
+Use `AT.editor(purpose="timepoints")` for project work. `AT.check_interactive()` remains available for older notebooks, and the standalone `manual_tracker()` function works without a project. Older examples using `AT.process(manfix=True, manonly=True)`, `Tracker_man`, `man_types` or `statevar` do not apply to the current API.
 
 ## Correct files in an ATracker project
 
@@ -24,11 +24,21 @@ AT.editor(
 )
 ```
 
-This opens the original video and loads its coordinate file from `AT.dirs["tracked"]/<video>.csv`, if present. Without an existing CSV, you can start annotating from scratch. Avoid `cats` when you intend to correct every video: it selects representatives of category combinations.
+This opens the original video and loads its coordinate file from `AT.dirs["tracked"]/<video>.csv`, if present. When the overview has multiple regions for a video, the Editor uses `<video>_R<region>.csv`, matching the tracker. Select a specific region with its overview index or `names="your_video_R2"`. Without an existing CSV, you can start annotating from scratch. Avoid `cats` when you intend to correct every video: it selects representatives of category combinations.
 
-**Store** (or **S**) writes the current coordinate data to that tracked CSV, replacing its contents. Keep a backup before editing. Use **Next** and **Prev** to move between videos, and store each corrected file. **Save** closes the editor after your Store operations; it does not itself write pending coordinate edits. Press **Store** or **S** before leaving each file.
+**Save current** (or **S**) writes the current task immediately and stays on the same video. For coordinates, this replaces the tracked CSV. **Next** and **Prev** navigate separately and retain pending work. **Close** checks for unsaved edits across all visited videos and purposes; it does not save them automatically.
 
-The editor writes coordinate columns rather than preserving every automated-tracker metadata column. It also uses numeric editing IDs, so verify the saved identity mapping against the overview before analysing multi-animal data.
+You can complete several tasks without leaving the window:
+
+```python
+AT.editor(names="your_video", purpose="roi")
+```
+
+Draw the ROI and press **S**, choose **Mask** and draw/save it, then choose **Coordinate data** to load and edit the matching tracked CSV. Switching purposes retains unfinished drawings and coordinate edits separately. Return to a purpose to resume its pending work; on first use, its existing project data is loaded. ROI and frame-limit saves update the overview spreadsheet immediately. Masks and zones are saved as full-frame images; coordinates are edited against the saved ROI.
+
+**Measurement** saves calibration: draw a polyline, press **S**, and enter its known length in millimetres. **Thresholding** and **Thresholding color** load the video's configured threshold settings; when several configurations are available, choose which one to edit. Saving updates that named configuration.
+
+The editor retains existing coordinate ID labels when saving, while showing numeric IDs for editing. It still writes coordinate columns rather than preserving every automated-tracker metadata column.
 
 For the older, one-window-per-video workflow:
 
@@ -36,7 +46,7 @@ For the older, one-window-per-video workflow:
 AT.check_interactive(inds=[0, 1], fileaction="overwrite")
 ```
 
-This also edits tracked CSVs while displaying original videos. For region-specific filenames, check the CSV selected by this interface before saving; the newer `AT.editor()` currently uses the plain video basename.
+This also edits tracked CSVs while displaying original videos, but uses the older per-video window and filename handling. Prefer `AT.editor()` for region-aware, multi-purpose work.
 
 ## Add, move and delete positions
 
@@ -46,7 +56,7 @@ In the editor, choose the animal ID and point type (**Centroid**, **Head** or **
 2. Select **(re)Draw point at current frame** and click the desired body position to add or replace a point.
 3. To adjust an existing point, select **Move point nearest to mouse** and drag it.
 4. To remove several points, choose a rectangle or polygon, draw around them, and use **In shape**. Set the visible frame range and **Current ID** scope first to limit the selection.
-5. Review the corrected interval, then press **S** to store it.
+5. Review the corrected interval, then press **S** to save it.
 
 The **Last**, **In shape**, **Visible** and **Undo** buttons provide deletion controls. Check the selected point type, ID scope and visible range before deleting. The **Change angle of nearest point** mode edits an angle associated with an existing point; it is separate from moving its head or tail.
 
@@ -58,8 +68,8 @@ The **Last**, **In shape**, **Visible** and **Undo** buttons provide deletion co
 | W / T | Jump backward/forward by the displayed FPS step. |
 | I / O | Previous/next animal ID when multiple IDs are configured. |
 | P | Cycle Centroid, Head and Tail point types. |
-| S | Store in the multi-file editor; save and close in the standalone/older interface. |
-| Escape twice quickly | Exit the window; already stored files remain saved. |
+| S | Save current and stay in the project editor; save and close in the standalone/older interface. |
+| Escape twice quickly | Close the window, prompting about pending project edits; already saved files remain saved. |
 
 Choose the number of IDs with the editor's ID-count control when starting a new annotation. Use the point display, frame labels and visible-range controls to inspect a manageable interval rather than the entire trajectory at once.
 

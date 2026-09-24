@@ -328,9 +328,6 @@ def editor_gui(file_infos, purpose="mask", save_callback=None):
     if idx >= 0:
         window.opmode_combo.setCurrentIndex(idx)
 
-    # Auto-load data for the initial file and purpose
-    window._auto_load_purpose_data(fi, window.opmode_combo.currentText())
-
     window.show()
     window.raise_()
     window.activateWindow()
