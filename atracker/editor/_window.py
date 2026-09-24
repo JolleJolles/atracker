@@ -799,6 +799,11 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         self.timeline_group.setCheckable(True)
         self.timeline_group.setChecked(True)
         timeline_layout = QVBoxLayout(self.timeline_group)
+        self.timeline_use_range = QCheckBox("Use visible range")
+        self.timeline_use_range.setToolTip(
+            "Expand the visible frame range across the timeline, using All / Past / Future."
+        )
+        timeline_layout.addWidget(self.timeline_use_range)
         self.timeline_scroll = QScrollArea()
         self.timeline_scroll.setWidgetResizable(True)
         self.timeline_scroll.setMaximumHeight(180)
@@ -807,6 +812,11 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         self.timeline_scroll.setWidget(self.timeline)
         timeline_layout.addWidget(self.timeline_scroll)
         self.timeline_group.toggled.connect(self.timeline_scroll.setVisible)
+        self.timeline_group.toggled.connect(self.timeline_use_range.setVisible)
+        self.timeline_use_range.toggled.connect(self.timeline.update)
+        self.range_slider.valueChanged.connect(self.timeline.update)
+        for button in (self.rb_range_all, self.rb_range_past, self.rb_range_future):
+            button.toggled.connect(self.timeline.update)
         self.flim_start_spin.valueChanged.connect(self.timeline.invalidate)
         self.flim_stop_spin.valueChanged.connect(self.timeline.invalidate)
         outer_layout = QVBoxLayout()
