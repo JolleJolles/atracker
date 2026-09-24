@@ -5,6 +5,7 @@
 
 
 ## Unreleased
+- Made tracking video encoding configurable through `video_codec`, `video_preset`, and `video_crf`; added output-only `video_resize` to reduce encoded video dimensions and writing cost without reducing tracking resolution.
 - Fixed visualisation dropping disconnected pieces of zones, placed zone labels inside visible areas, corrected y-down heading arrows, and moved arrow starts outside centroid markers. Increased FFmpeg export quality (H.264 CRF 18). Zone distances now also include every disconnected piece; existing distances require reprocessing.
 - Added an imageio/FFmpeg H.264 fallback when OpenCV cannot open visualisation output, with encoder errors reporting the target path and video resources released on rendering errors.
 - Aligned full-frame backgrounds and wall/zone overlays with cropped, resized visualisation videos.

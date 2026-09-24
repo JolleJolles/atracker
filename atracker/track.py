@@ -27,7 +27,7 @@ from .helpers.trajectory import getavgvel
 from .helpers.filters import (filter_tracking_jumps, filter_contour_shape,
                                update_shape_history, check_threshtypes,
                                dic_exclnan, estimate_flicker_baseline)
-from .helpers.media import videowriter, make_even, framechecks
+from .helpers.media import videowriter, framechecks
 from .helpers.data import subdic, eval_func_tuple
 from .helpers.detection import ProcessImage
 from .visualise import Visualiser
@@ -38,23 +38,54 @@ class AsyncVideoWriter:
     def __init__(self, vidout):
         self.vidout = vidout
         self.q = queue.Queue(maxsize=64)
+        self.error = None
+        self.closed = False
         self.thread = threading.Thread(target=self._writer, daemon=True)
         self.thread.start()
 
     def _writer(self):
+        try:
+            while True:
+                frame = self.q.get()
+                if frame is None:
+                    break
+                self.vidout.append_data(frame)
+        except Exception as exc:
+            self.error = exc
+        finally:
+            try:
+                self.vidout.close()
+            except Exception as exc:
+                if self.error is None:
+                    self.error = exc
+
+    def _check_error(self):
+        if self.error is not None:
+            raise RuntimeError("Tracking video writer failed") from self.error
+
+    def _put(self, frame):
         while True:
-            frame = self.q.get()
-            if frame is None:  # poison pill to stop
+            self._check_error()
+            try:
+                self.q.put(frame, timeout=0.1)
                 break
-            self.vidout.append_data(frame)
+            except queue.Full:
+                continue
+        self._check_error()
 
     def write(self, frame):
-        self.q.put(frame)
+        if self.closed:
+            raise RuntimeError("Tracking video writer is closed")
+        self._put(frame)
 
     def close(self):
-        self.q.put(None)  # signal stop
-        self.thread.join()  # wait for all frames to be written
-        self.vidout.close()
+        if not self.closed:
+            self.closed = True
+            try:
+                self._put(None)
+            finally:
+                self.thread.join()
+        self._check_error()
 
 class Tracker:
 
@@ -280,7 +311,7 @@ class Tracker:
             cv2.destroyAllWindows()
             for i in range(5):
                 cv2.waitKey(1)
-        if self.config.track.create_vid:
+        if self.vidout is not None:
             self.vidout.close()
         self.cap.release()
 
@@ -457,16 +488,23 @@ class Tracker:
         filename = self.filename
         create_vid = self.config.track.create_vid
         create_dat = self.config.track.create_dat
+        video_resize = float(getattr(self.config.track, "video_resize", 1.0))
+        if not 0 < video_resize <= 1:
+            raise ValueError("video_resize must be greater than 0 and no greater than 1")
 
-        # Set up video writer
+        # Set up video writer; a failed writer must not leave tracking waiting.
+        self.vidout = None
         if create_vid:
-            self.vidout = AsyncVideoWriter(videowriter(trackedfile, self.vidw, self.vidh, self.fps))
-            try:
-                    if self.vidout is None or (hasattr(self.vidout, 'isOpened') and not self.vidout.isOpened()):
-                        raise ValueError("Video writer failed")
-            except Exception:
+            writer = videowriter(
+                trackedfile, self.vidw, self.vidh, self.fps,
+                codec=getattr(self.config.track, "video_codec", "libx264"),
+                preset=getattr(self.config.track, "video_preset", "ultrafast"),
+                crf=getattr(self.config.track, "video_crf", 23))
+            if writer is None:
                 create_vid = False
                 lineprint(self.pr_comm + "Warning: video writer could not be created. Video output disabled.")
+            else:
+                self.vidout = AsyncVideoWriter(writer)
 
         newline = False if self.pools<2 else True
         lineprint(self.pr_comm+"tracking started..", newline=newline)
@@ -657,12 +695,18 @@ class Tracker:
                 img_mask_draw = self.img_mask if isinstance(self.maskimg, str) else None
                 vis.draw_info_overlay(self.img_draw, img_mask_draw, self.frame_nr, _frame_info)
 
-                # Write video to file
-                if self.config.track.create_vid:
+                # Convert once before queueing, as in previous ATracker versions.
+                if create_vid:
                     frame_rgb = cv2.cvtColor(self.img_draw, cv2.COLOR_BGR2RGB)
-                    even_w, even_h = make_even(self.vidw), make_even(self.vidh)
-                    if (frame_rgb.shape[1], frame_rgb.shape[0]) != (even_w, even_h):
-                        frame_rgb = cv2.resize(frame_rgb, (even_w, even_h))
+                    if video_resize != 1:
+                        width = max(2, int(round(frame_rgb.shape[1] * video_resize)))
+                        height = max(2, int(round(frame_rgb.shape[0] * video_resize)))
+                        frame_rgb = cv2.resize(
+                            frame_rgb, (width, height), interpolation=cv2.INTER_AREA)
+                    if frame_rgb.shape[1] % 2 or frame_rgb.shape[0] % 2:
+                        frame_rgb = cv2.copyMakeBorder(
+                            frame_rgb, 0, frame_rgb.shape[0] % 2,
+                            0, frame_rgb.shape[1] % 2, cv2.BORDER_REPLICATE)
                     self.vidout.write(frame_rgb)
 
                 # Display video

@@ -479,6 +479,15 @@ class ATracker:
             Maximum pixel distance per frame before a detection is rejected as a jump.
         track_merges : bool, default False
             If merge/split detection should be attempted.
+        video_codec : str, default "libx264"
+            FFmpeg video encoder used for tracking videos.
+        video_preset : str, default "ultrafast"
+            FFmpeg encoder preset. Faster presets use more storage.
+        video_crf : int, default 23
+            Constant-rate-factor quality setting for FFmpeg encoders.
+        video_resize : float, default 1.0
+            Output-only scale factor for tracking videos. Values below 1 reduce
+            video size and encoding cost while tracking remains full resolution.
         show_tracking : bool, default True
             If tracking should be shown live.
         vid_displaysize : float, default 1
@@ -552,6 +561,10 @@ class ATracker:
             "skip_frames": "skip_frames",
             "max_framedist": "max_framedist",
             "track_merges": "track_merges",
+            "video_codec": "video_codec",
+            "video_preset": "video_preset",
+            "video_crf": "video_crf",
+            "video_resize": "video_resize",
         }
         for k, attr in _track_map.items():
             if k in kwargs:

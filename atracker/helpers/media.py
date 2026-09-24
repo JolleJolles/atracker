@@ -18,21 +18,16 @@ def make_even(x):
     return x if x % 2 == 0 else x + 1
 
 
-def videowriter(filein, w, h, fps):
-    """Compact and safe video writer using imageio + ffmpeg."""
+def videowriter(filein, w, h, fps, codec="libx264", preset="ultrafast", crf=23):
+    """Create an imageio FFmpeg writer with configurable encoder settings."""
     fileout = filein if filein.endswith(".mp4") else filein + ".mp4"
-    w, h = make_even(w), make_even(h)
     try:
         return imageio.get_writer(
-            fileout,
-            fps=fps,
-            codec='libx264',
-            macro_block_size=None,
-            quality=8,
-            ffmpeg_params=['-crf', '23', '-preset', 'ultrafast']
-        )
-    except Exception as e:
-        print(f"[ERROR] Could not create video writer for {fileout}: {e}")
+            fileout, fps=fps, codec=str(codec), macro_block_size=None,
+            quality=None, ffmpeg_params=[
+                "-crf", str(crf), "-preset", str(preset)])
+    except Exception as exc:
+        print(f"[ERROR] Could not create video writer for {fileout}: {exc}")
         return None
 
 
