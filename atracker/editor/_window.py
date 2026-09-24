@@ -3,6 +3,7 @@
 from ._utils import *
 from ._canvas import PyQt5ShapeDrawer, GROUPBOX_STYLE
 from ._prefs import load_prefs, save_prefs
+from ._timeline import TrackingTimeline
 from pythutils.mediautils import get_vid_params
 from atracker.helpers.media import get_media_type
 from atracker.helpers.data import load_and_convert_tracking_dataframe
@@ -794,13 +795,47 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         main_layout = QHBoxLayout()
         main_layout.addWidget(self.left_widget)
         main_layout.addWidget(self.drawing_group, 1)
+        self.timeline_group = QGroupBox("Tracking coverage — click or drag to seek")
+        self.timeline_group.setCheckable(True)
+        self.timeline_group.setChecked(True)
+        timeline_layout = QVBoxLayout(self.timeline_group)
+        self.timeline_scroll = QScrollArea()
+        self.timeline_scroll.setWidgetResizable(True)
+        self.timeline_scroll.setMaximumHeight(180)
+        self.timeline_scroll.setMinimumHeight(90)
+        self.timeline = TrackingTimeline(self)
+        self.timeline_scroll.setWidget(self.timeline)
+        timeline_layout.addWidget(self.timeline_scroll)
+        self.timeline_group.toggled.connect(self.timeline_scroll.setVisible)
+        self.flim_start_spin.valueChanged.connect(self.timeline.invalidate)
+        self.flim_stop_spin.valueChanged.connect(self.timeline.invalidate)
+        outer_layout = QVBoxLayout()
+        outer_layout.addLayout(main_layout, 1)
+        outer_layout.addWidget(self.timeline_group)
         central = QWidget()
-        central.setLayout(main_layout)
+        central.setLayout(outer_layout)
         self.setCentralWidget(central)
+        if self._file_infos:
+            self._set_timeline_limits(self._file_infos[self._file_idx])
+        self.syncTimeline()
 
         # === 9. LOAD SAVED PREFERENCES ===
         self._apply_prefs(load_prefs())
 
+
+    def _set_timeline_limits(self, info):
+        total = max(1, self.total_frames)
+        self.flim_start_spin.setRange(1, total)
+        self.flim_stop_spin.setRange(1, total)
+        for spin, key, default in [(self.flim_start_spin, "frame_start", 1),
+                                   (self.flim_stop_spin, "frame_stop", total)]:
+            value = info.get(key)
+            spin.setValue(int(value) if value is not None and pd.notna(value) else default)
+
+    def syncTimeline(self):
+        if hasattr(self, "timeline"):
+            self.timeline_group.setVisible(self.currentOperationMode() == "timepoints")
+            self.timeline.sync()
 
     def updateIDButtons(self):
         # Remove old buttons from the layout
@@ -848,6 +883,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         self.update()  # or self.proxyUpdate() if you have it
 
     def undoLastDelete(self):
+        self.timeline.invalidate()
         buf = getattr(self, "_undo_buffer", {})
         if not buf:
             print("Nothing to undo.")
@@ -927,6 +963,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
 
 
     def deleteCroppedPoints(self):
+        self.timeline.invalidate()
         mode = self.drawing_widget.drawing_mode
         shape_data = None
 
@@ -978,7 +1015,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             print("Switch to rectangle, polygon, circle, or ellipse mode to draw a shape.")
             return
 
-        cur_frame = self.current_frame_idx
+        cur_frame = self.current_frame_idx + 1
         visible_range = self.tp_visible_range
         cur_ptype = self.current_ptype if hasattr(self, "current_ptype") else "c"
         scope = getattr(self, "edit_scope", None)
@@ -1029,7 +1066,8 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
 
 
     def deleteCurrentPoint(self):
-        cur_frame = self.current_frame_idx
+        self.timeline.invalidate()
+        cur_frame = self.current_frame_idx + 1
         cur_ptype = self.current_ptype if hasattr(self, "current_ptype") else "c"
         scope = getattr(self, "edit_scope", None)
         deleted = []
@@ -1061,7 +1099,8 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
 
 
     def deleteVisiblePoints(self):
-        cur_frame = self.current_frame_idx
+        self.timeline.invalidate()
+        cur_frame = self.current_frame_idx + 1
         visible_range = self.tp_visible_range
         start = max(0, cur_frame - visible_range)
         end = cur_frame + visible_range
@@ -1110,6 +1149,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         return grp
 
     def proxyUpdate(self):
+        self.syncTimeline()
         # Track unsaved changes in multi-file mode
         if self._file_infos and self.drawing_widget.last_click_orig is not None:
             self._unsaved.add(self._file_idx)
@@ -1199,13 +1239,19 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
     
     # ---------- Video Methods ----------
     def onVideoSliderChanged(self, value):
+        value = min(max(0, value), max(0, self.total_frames - 1))
         self.current_frame_idx = value
+        if hasattr(self, "frame_spin"):
+            self.frame_spin.setValue(value + 1)
+        if hasattr(self, "video_slider"):
+            self.video_slider.blockSignals(True)
+            self.video_slider.setValue(value)
+            self.video_slider.blockSignals(False)
         if self.cap:
             self.timer.stop()
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, value)
             self.nextFrame()
         else:
-            self.frame_spin.setValue(self.current_frame_idx + 1)
             self.proxyUpdate()
 
     def onPlayClicked(self):
@@ -1256,8 +1302,9 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             # ===============================
 
             self.current_frame_idx = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
+            self.frame_spin.setValue(self.current_frame_idx + 1)
             self.video_slider.blockSignals(True)
-            self.video_slider.setValue(self.current_frame_idx + 1)
+            self.video_slider.setValue(self.current_frame_idx)
             self.video_slider.blockSignals(False)
             # Always update background image
             qimg = cvMatToQImage(frame)
@@ -2172,6 +2219,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             self.flim_stop_spin.setValue(state["frame_stop"])
         if "points_by_frame" in state:
             self.drawing_widget.points_by_frame = state["points_by_frame"]
+            self.timeline.invalidate()
             self.input_num_ids.setValue(state.get("num_ids", 1))
         if "measure_polyline" in state:
             self.drawing_widget.measure_polyline_orig = list(state["measure_polyline"])
@@ -2302,6 +2350,11 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         self.drawing_widget.mask_image = blank_mask
         self.drawing_widget.zones_overlay = None
         self.drawing_widget.points_by_frame = {}
+        self._set_timeline_limits(fi)
+        limits = self._file_states.get(new_idx, {}).get("Frame limits", {})
+        if limits:
+            self._set_timeline_limits(limits)
+        self.timeline.invalidate()
 
         # Restore state if cached, else auto-load
         if new_idx in self._file_states and purpose_text in self._file_states[new_idx]:
@@ -2432,4 +2485,3 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         self.drawing_widget.final_output = "saved"
         save_prefs(self._collect_prefs())
         self.close()
-

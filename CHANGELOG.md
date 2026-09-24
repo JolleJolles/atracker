@@ -5,6 +5,7 @@
 
 
 ## Unreleased
+- Added a collapsible Editor tracking-coverage timeline with one row per ID for the selected point type, present/missing/outside-interval colours, and a draggable frame playhead. Coverage follows coordinate edits and Undo; compressed pixels flag any missing frame. Corrected the video slider and coordinate deletion controls to use the displayed frame consistently.
 - Added an Editor brightness (gamma) slider with a reset button and remembered setting to make dark videos and backgrounds easier to view; adjustments affect only the display, preserving source images, tracking thresholds, and annotations.
 - Made tracking video encoding configurable through `video_codec`, `video_preset`, and `video_crf`; added output-only `video_resize` to reduce encoded video dimensions and writing cost without reducing tracking resolution.
 - Fixed visualisation dropping disconnected pieces of zones, placed zone labels inside visible areas, corrected y-down heading arrows, and moved arrow starts outside centroid markers. Increased FFmpeg export quality (H.264 CRF 18). Zone distances now also include every disconnected piece; existing distances require reprocessing.

@@ -331,6 +331,7 @@ class PyQt5ShapeDrawer(QWidget):
 
                 # Set new angle
                 self.points_by_frame[id_]['a'][cur_frame] = angle
+                self.main_window.timeline.invalidate()
                 self.last_click_orig = click
                 self.update()
                 if self.main_window:
@@ -390,6 +391,7 @@ class PyQt5ShapeDrawer(QWidget):
                         }
 
                     self.points_by_frame[id_][cur_ptype][cur_frame] = orig_pos
+                    self.main_window.timeline.invalidate()
                 else:
                     # Non-timepoints mode, behave as before
                     self.points_orig.append(orig_pos)
@@ -419,6 +421,7 @@ class PyQt5ShapeDrawer(QWidget):
             if not hasattr(self, "_angle_undo_prev_value") or self._angle_undo_prev_value is None:
                 self._angle_undo_prev_value = self.points_by_frame[id_]['a'].get(frame, None)
             self.points_by_frame[id_]['a'][frame] = angle
+            self.main_window.timeline.invalidate()
             # You can print feedback if wanted:
             # print(f"Set angle for ID={id_}, frame={frame}: {angle:.1f} deg")
             self.update()
@@ -449,6 +452,7 @@ class PyQt5ShapeDrawer(QWidget):
                         self._move_undo_buffer_active = True
                 # Move point
                 self.points_by_frame[id_][cur_ptype][frame] = pt
+                self.main_window.timeline.invalidate()
                 self.update()
                 self.main_window.proxyUpdate()
             return
@@ -655,6 +659,8 @@ class PyQt5ShapeDrawer(QWidget):
         return bg
     
     def paintEvent(self, event):
+        if self.main_window:
+            self.main_window.syncTimeline()
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         scale, offset_x, offset_y = self.currentScaleAndOffset()

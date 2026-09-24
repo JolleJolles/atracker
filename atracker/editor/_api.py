@@ -180,6 +180,7 @@ def annotation_gui(data_file=None, media_file=None, background_file=None, mask_f
                                     width=width,
                                     height=height,
                                     roi=roi)
+    window._set_timeline_limits({"frame_start": firstframe, "frame_stop": lastframe})
     window.show()
     if start_fullscreen:
         window.showFullScreen()
