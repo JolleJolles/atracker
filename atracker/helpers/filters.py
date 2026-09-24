@@ -5,6 +5,7 @@ import numpy as np
 from collections import deque
 
 from pythutils.mediautils import crop
+from .detection_settings import gamma_correct
 
 
 def point_near_mask(x, y, mask, edge_margin=50):
@@ -78,21 +79,29 @@ def update_shape_history(ids, areas, filtered_coms, shape_history, history_len=5
             shape_history.setdefault(id, deque(maxlen=history_len)).append(areas[i])
 
 
-def estimate_flicker_baseline(cap, img_bg, pt1, pt2, n_frames=100, multiplier=20):
-    """Sample frames and compute median mean-diff as flicker baseline."""
+def estimate_flicker_baseline(cap, img_bg, pt1, pt2, n_frames=100, multiplier=20, gamma=1.0):
+    """Sample gamma-corrected darkening in the ROI, preserving capture position."""
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    sample_inds = np.linspace(0, total - 1, n_frames, dtype=int)
+    if total <= 0 or n_frames <= 0:
+        raise ValueError("Flicker estimation requires readable video frames")
+    sample_inds = np.unique(np.linspace(0, total - 1, min(n_frames, total), dtype=int))
+    position = cap.get(cv2.CAP_PROP_POS_FRAMES)
+    background = gamma_correct(img_bg, gamma)
     means = []
-    for i in sample_inds:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, i)
-        ret, frame = cap.read()
-        if not ret:
-            continue
-        frame = crop(frame, pt1, pt2)
-        diff = cv2.subtract(img_bg, frame)
-        gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
-        means.append(np.mean(gray))
-    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+    try:
+        for i in sample_inds:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(i))
+            ret, frame = cap.read()
+            if not ret:
+                continue
+            frame = gamma_correct(crop(frame, pt1, pt2), gamma)
+            diff = cv2.subtract(background, frame)
+            gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
+            means.append(np.mean(gray))
+    finally:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, position)
+    if not means:
+        raise ValueError("Could not read any frames for flicker estimation")
     baseline = np.median(means)
     return baseline * multiplier
 

@@ -31,6 +31,7 @@ from .helpers.media import videowriter, framechecks
 from .helpers.data import subdic, eval_func_tuple
 from .helpers.detection import ProcessImage
 from .visualise import Visualiser
+from .helpers.detection_settings import aspect_limits
 
 class KeyboardInterruptError(Exception): pass
 
@@ -528,10 +529,16 @@ class Tracker:
                          config=self.config)
 
         try:
+            self.flicker_thresholds = {}
             if self.check_flicker:
-                self.flicker_threshold = estimate_flicker_baseline(
-                    self.cap, self.img_bg, self.pt1, self.pt2)
-                lineprint(f"Flicker threshold set at: {self.flicker_threshold:.2f}")
+                for ttype in self.thresh_types:
+                    if not ttype.startswith("bw"):
+                        continue
+                    gamma = float(self.threshinfo[ttype].get("gamma", 1.0))
+                    if gamma not in self.flicker_thresholds:
+                        self.flicker_thresholds[gamma] = estimate_flicker_baseline(
+                            self.cap, self.img_bg, self.pt1, self.pt2, gamma=gamma)
+                    lineprint(f"Flicker threshold ({ttype}, gamma={gamma:g}): {self.flicker_thresholds[gamma]:.2f}")
             
             while self.cap.isOpened():
                 frameOK, self.img = self.cap.read()
@@ -554,12 +561,11 @@ class Tracker:
                     ti = self.threshinfo[self.thresh_type]
                     if "blur2" not in ti:
                         ti["blur2"] = 1
-                    min_ar = ti.get("min_aspect_ratio", 1.4)
-                    max_ar = ti.get("max_aspect_ratio", 10)
+                    min_ar, max_ar = aspect_limits(ti, self.config.track)
                     if self.thresh_type.startswith("bw"):
                         PI = ProcessImage(self.img, self.img_bg, self.img_mask, self.thresh_type,
                             ti["blur"], ti["erode"], ti["blur2"], ti["threshold"], ti["min_area"], ti["max_area"],
-                            simple=not self.advanced, flicker_threshold=self.flicker_threshold if self.check_flicker else None,
+                            simple=not self.advanced, flicker_threshold=self.flicker_thresholds.get(float(ti.get("gamma", 1.0))),
                             min_aspect_ratio=min_ar, max_aspect_ratio=max_ar, gamma=ti.get("gamma", 1.0))
                     else:
                         if "hue_lo" in ti:
@@ -571,7 +577,7 @@ class Tracker:
                         PI = ProcessImage(self.img, self.img_bg, self.img_mask, self.thresh_type,
                             ti["blur"], min_area=ti["min_area"], max_area=ti["max_area"],
                             colmin=colmin, colmax=colmax,
-                            simple=True, flicker_threshold=self.flicker_threshold if self.check_flicker else None,
+                            simple=True,
                             min_aspect_ratio=min_ar, max_aspect_ratio=max_ar, gamma=ti.get("gamma", 1.0))
                     self.img_thresh, self.allcons, self.conlist = PI.process()
                     if PI.flicker:

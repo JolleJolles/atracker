@@ -8,6 +8,7 @@ from pythutils.mediautils import get_vid_params
 from atracker.helpers.media import get_media_type
 from atracker.helpers.data import load_and_convert_tracking_dataframe
 from atracker.helpers.detection import ProcessImage
+from atracker.helpers.detection_settings import aspect_limits
 from PyQt5.QtWidgets import QMessageBox, QInputDialog, QDoubleSpinBox
 from PyQt5.QtCore import QByteArray
 
@@ -82,11 +83,15 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         self._event_frames = []
 
         # --- Threshold parameters ---
-        self.thresh_params = threshold_dict if threshold_dict else {
+        self.thresh_params = {
             "blur": 9, "erode": 1, "blur2": 1, "threshold": 50,
             "min_area": 100, "max_area": 5000,
-            "hue_lo": 30, "hue_hi": 90, "sat_lo": 50, "sat_hi": 255, "val_lo": 50, "val_hi": 255
+            "hue_lo": 30, "hue_hi": 90, "sat_lo": 50, "sat_hi": 255, "val_lo": 50, "val_hi": 255,
+            "min_aspect_ratio": 1.4, "max_aspect_ratio": 10.0,
         }
+        if self._file_infos:
+            self.thresh_params.update(self._file_infos[self._file_idx].get("threshold_defaults", {}))
+        self.thresh_params.update(threshold_dict or {})
         self.img_thresh = None
         self.background_file = background_file
         self.edit_drag_active = False
@@ -385,6 +390,19 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         tracking_gamma_row.addWidget(self.tracking_gamma_value)
         tracking_gamma_row.addWidget(self.sl_tracking_gamma, 1)
         self.thresh_group.layout().addLayout(tracking_gamma_row)
+        min_ar, max_ar = aspect_limits(self.thresh_params)
+        for name, value in (("min", min_ar), ("max", max_ar)):
+            row = QHBoxLayout()
+            row.addWidget(QLabel(f"{name.capitalize()} aspect ratio:"))
+            spin = QDoubleSpinBox()
+            spin.setRange(0.0, max(10000.0, value))
+            spin.setDecimals(3)
+            spin.setSingleStep(0.1)
+            spin.setValue(value)
+            spin.setToolTip("Rotated bounding box: long side / short side. Both limits are strict.")
+            setattr(self, name + "_aspect_value", spin)
+            row.addWidget(spin)
+            self.thresh_group.layout().addLayout(row)
         # B/W Sliders
         _frame_px = self.orig_width * self.orig_height
         for label_text, max_val in [
@@ -486,6 +504,8 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
 
         self.left_layout.addWidget(self.thresh_group)
         self.sl_tracking_gamma.valueChanged.connect(lambda _: self.updateThresholdingImage())
+        self.min_aspect_value.valueChanged.connect(lambda _: self.updateThresholdingImage())
+        self.max_aspect_value.valueChanged.connect(lambda _: self.updateThresholdingImage())
 
         # Thresholded Image group
         self.thresh_img_group = self.makeGroupBox("Thresholded Image")
@@ -1620,8 +1640,10 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
     def updateThresholdingImage(self, frame=None):
         if getattr(self, "_restoring_threshold", False) or getattr(self, "_switching_purpose", False):
             return
-        self.thresh_params = {
+        self.thresh_params.update({
             "gamma": self.tracking_gamma_value.value(),
+            "min_aspect_ratio": self.min_aspect_value.value(),
+            "max_aspect_ratio": self.max_aspect_value.value(),
             "blur": self.sl_blur.value(),
             "erode": self.sl_erode.value(),
             "blur2": self.sl_blur2.value(),
@@ -1634,7 +1656,11 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             "sat_hi": self.sl_sat_hi.value(),
             "val_lo": self.sl_val_lo.value(),
             "val_hi": self.sl_val_hi.value(),
-        }
+        })
+        if self.min_aspect_value.value() >= self.max_aspect_value.value():
+            self.thresh_img_label.clear()
+            self.statusBar().showMessage("Minimum aspect ratio must be smaller than maximum.")
+            return
 
         mask_np = None
         if self.drawing_widget.mask_image and not self.drawing_widget.mask_image.isNull():
@@ -1682,7 +1708,8 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
                 frame, bg, mask_np, "bw",
                 params["blur"], params["erode"], params["blur2"],
                 params["threshold"], params["min_area"], params["max_area"],
-                simple=True, gamma=params["gamma"]
+                simple=True, gamma=params["gamma"],
+                min_aspect_ratio=params["min_aspect_ratio"], max_aspect_ratio=params["max_aspect_ratio"]
             )
 
         elif opmode == "thresholding color":
@@ -1691,7 +1718,8 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             PI = ProcessImage(
                 frame, bg, mask_np, "color",
                 blur=params["blur"], min_area=params["min_area"], max_area=params["max_area"],
-                colmin=colmin, colmax=colmax, simple=True, gamma=params["gamma"]
+                colmin=colmin, colmax=colmax, simple=True, gamma=params["gamma"],
+                min_aspect_ratio=params["min_aspect_ratio"], max_aspect_ratio=params["max_aspect_ratio"]
             )
         else:
             return  # Not a thresholding mode
@@ -2339,6 +2367,14 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             self.thresh_params = dict(state["thresh_params"])
             self._restoring_threshold = True
             self.sl_tracking_gamma.setValue(round(float(self.thresh_params.get("gamma", 1.0)) * 100))
+            # Preserve temporarily crossed limits in unsaved drafts; preview/save
+            # validation lets the user correct them after navigating back.
+            min_ar = float(self.thresh_params.get("min_aspect_ratio", 1.4))
+            max_ar = float(self.thresh_params.get("max_aspect_ratio", 10.0))
+            self.min_aspect_value.setMaximum(max(self.min_aspect_value.maximum(), min_ar))
+            self.max_aspect_value.setMaximum(max(self.max_aspect_value.maximum(), max_ar))
+            self.min_aspect_value.setValue(min_ar)
+            self.max_aspect_value.setValue(max_ar)
             for key, value in self.thresh_params.items():
                 attr = {"threshold": "thresh", "min_area": "minarea", "max_area": "maxarea"}.get(key, key)
                 slider = getattr(self, "sl_" + attr, None)
@@ -2428,6 +2464,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
                 "hue_lo": 30, "hue_hi": 90, "sat_lo": 50, "sat_hi": 255,
                 "val_lo": 50, "val_hi": 255}
             params = self._threshold_drafts.get(selected, {**defaults, **params})
+            params = {**fi.get("threshold_defaults", {}), **params}
             self._restore_state({"thresh_params": params})
         self.drawing_widget.update()
 
@@ -2599,6 +2636,12 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         opmode = _PURPOSE_MAP.get(opmode_text, opmode_text)
 
         data = self._get_current_purpose_data()
+        if opmode in ("thresholding", "thresholding color"):
+            try:
+                aspect_limits(data)
+            except ValueError as exc:
+                QMessageBox.warning(self, "Invalid aspect-ratio limits", str(exc))
+                return
         if data is None:
             QMessageBox.information(self, "Nothing to store",
                 f"No data drawn for purpose: {purpose_text}")

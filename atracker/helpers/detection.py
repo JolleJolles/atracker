@@ -2,7 +2,6 @@
 
 import cv2
 import numpy as np
-from functools import lru_cache
 from scipy.spatial import KDTree
 from scipy.spatial.distance import cdist
 from shapely.geometry import LineString, Polygon
@@ -14,6 +13,7 @@ from pythutils.datutils import contour_to_tuple
 from .geometry import adjpt, get_coord, geom_tocoord
 from .contours import concom, con_lathom
 from .filters import dic_exclnan
+from .detection_settings import gamma_correct, aspect_limits
 
 
 def warp_barcode_patch(gray_img, contour, size=15):
@@ -24,12 +24,6 @@ def warp_barcode_patch(gray_img, contour, size=15):
     M = cv2.getPerspectiveTransform(pts, dst)
     patch = cv2.warpPerspective(gray_img, M, (size, size))
     return patch
-
-
-@lru_cache(maxsize=32)
-def _gamma_lut(gamma):
-    """8-bit correction: gamma > 1 brightens shadows. Reuse across frames."""
-    return np.round(255.0 * (np.arange(256) / 255.0) ** (1.0 / gamma)).astype(np.uint8)
 
 
 class ProcessImage:
@@ -43,14 +37,9 @@ class ProcessImage:
         self.img = np.asarray(img)
         self.img_bg = np.asarray(img_bg)
         self.gamma = float(gamma)
-        if not np.isfinite(self.gamma) or self.gamma <= 0:
-            raise ValueError("Tracking gamma must be a finite positive number")
-        if self.gamma != 1.0:
-            lut = _gamma_lut(self.gamma)
-            # Correct copies before subtraction/blur; never change source frames or masks.
-            self.img = cv2.LUT(self.img, lut)
-            if img_bg is not None:
-                self.img_bg = cv2.LUT(self.img_bg, lut)
+        self.img = gamma_correct(self.img, self.gamma)
+        if img_bg is not None:
+            self.img_bg = gamma_correct(self.img_bg, self.gamma)
         self.img_mask = img_mask
         self.threshtype = threshtype
         self.blur = max(1, blur | 1)
@@ -66,8 +55,8 @@ class ProcessImage:
         self.simple = simple
         self.flicker_threshold = flicker_threshold
         self.flicker = False
-        self.min_aspect_ratio = min_aspect_ratio
-        self.max_aspect_ratio = max_aspect_ratio
+        self.min_aspect_ratio, self.max_aspect_ratio = aspect_limits(
+            {"min_aspect_ratio": min_aspect_ratio, "max_aspect_ratio": max_aspect_ratio})
 
         # Barcoding
         self.tags = tags  # array of barcode templates
@@ -83,7 +72,7 @@ class ProcessImage:
         self.img = cv2.subtract(self.img_bg, self.img)  # only darker-than-background survives
         
         if self.flicker_threshold is not None:
-            gray = cv2.cvtColor(self.img, cv2.COLOR_RGB2GRAY)
+            gray = cv2.cvtColor(self.img, cv2.COLOR_BGR2GRAY)
             if np.mean(gray) > self.flicker_threshold:
                 self.flicker = True
                 self.img_thresh = np.zeros(gray.shape, np.uint8)

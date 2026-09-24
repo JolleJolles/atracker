@@ -468,11 +468,14 @@ class ATracker:
             Minimum distance previous contours must be from a potential merged
             contour for it to be flagged as a merge.
         min_aspect_ratio : float, default 1.4
-            Minimum contour aspect ratio accepted as a valid detection.
+            Project default for the minimum rotated-box long/short side ratio.
+            A threshold configuration's explicit value overrides this default.
         max_aspect_ratio : float, default 10
-            Maximum contour aspect ratio accepted as a valid detection.
+            Project default for the maximum ratio; threshold-specific values override it.
         check_flicker : bool, default False
-            If brightness flicker detection should be used.
+            Reject B/W detection passes with unusually strong ROI-wide darkening.
+            The cutoff is 20 times the median mean difference from up to 100 sampled
+            frames, using the same gamma as detection. Not applied to HSV tracking.
         skip_frames : int, default 0
             Number of frames to skip between tracked frames (0 = track all).
         max_framedist : int, default 200
@@ -1133,6 +1136,9 @@ class ATracker:
             threshold YAML file; overview assignments are unchanged.
         """
         from atracker.editor import editor_gui
+        from atracker.helpers.detection_settings import aspect_limits
+
+        default_min_ar, default_max_ar = aspect_limits({}, self.config.track)
 
         if threshtypes is not None:
             threshtypes = [threshtypes] if isinstance(threshtypes, str) else list(threshtypes)
@@ -1204,6 +1210,7 @@ class ATracker:
                 "frame_stop": frame_stop,
                 "tracked_csv": tracked_csv,
                 "threshold_dict": thresh_dict,
+                "threshold_defaults": {"min_aspect_ratio": default_min_ar, "max_aspect_ratio": default_max_ar},
                 "threshold_options": {t: self.threshinfo.get(t, {}) for t in requested_types},
                 "dirs": self.dirs,
             })
