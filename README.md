@@ -50,6 +50,7 @@ ATracker is developed and actively maintained by **Dr Jolle Jolles**, senior res
   - Installing prerequisites and setting up your Python environment
   - Platform-specific guidance for **macOS**, **Windows**, and **Linux**
   - Using ATracker to set up a project workspace, define tracking settings, and run analysis
+  - [Tuning automated tracking](documentation/3-tracking.md), covering thresholding, gamma, area/aspect-ratio filters, flicker rejection and the rolling size filter
   - [Processing and interpreting tracking results](documentation/4-processing_data.md), including how to choose processing parameters
   - [Manual tracking and correction](documentation/5-manual_tracking.md), with project and standalone examples
 

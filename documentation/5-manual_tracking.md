@@ -2,6 +2,8 @@
 
 Use the interactive editor to correct local tracking errors or annotate positions from scratch. For widespread detection failures, improve automated tracking first. Run [data processing](4-processing_data.md) after checking and saving the coordinates.
 
+See [Tuning automated tracking](3-tracking.md) for the detection pipeline, parameter meanings, aspect-ratio precedence, flicker rejection and the per-ID size filter.
+
 Use `AT.editor(purpose="timepoints")` for project work. `AT.check_interactive()` remains available for older notebooks, and the standalone `manual_tracker()` function works without a project. Older examples using `AT.process(manfix=True, manonly=True)`, `Tracker_man`, `man_types` or `statevar` do not apply to the current API.
 
 ## Correct files in an ATracker project
