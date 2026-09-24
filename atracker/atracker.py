@@ -71,7 +71,7 @@ class ATracker:
 
         git_info = _git_version_info()
         version_str = f"ATracker {__version__}" + (f" — {git_info}" if git_info else "")
-        lineprint(version_str + " started!")
+        lineprint(version_str + time.strftime(" started on %Y-%m-%d!"))
         lineprint("="*50, False)
 
         # Use the working directory of the notebook if filedir is "."
