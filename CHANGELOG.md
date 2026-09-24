@@ -5,6 +5,7 @@
 
 
 ## Unreleased
+- Added `AT.editor(threshtypes=[...])` to load or create named threshold configurations and save them to the project threshold YAML, matching `set_interactive()` without changing overview assignments. Supplying names opens threshold editing by default; new configurations start from defaults rather than inheriting the previous video's settings.
 - Added per-threshold tracking gamma (default 1.0), applied to frames and backgrounds before subtraction and blur in both detection and the Editor threshold preview. The separate Tracking gamma control is saved with the threshold configuration; the display Gamma control remains display-only.
 - Kept `AT.editor()` as the project interface and made Save current / S persist the active task without closing or advancing, including immediate overview saves. Purpose switches and video navigation retain separate pending edits; Close checks all video/purpose states. Added automatic purpose-specific loading, tracker-consistent region filenames, calibration saving, explicit threshold configuration selection and colour-threshold editing, and preserved existing coordinate ID labels on save. Setup drawings use full-frame coordinates while coordinate editing uses the saved ROI.
 - Added the local run date to the ATracker startup message, alongside the existing version and Git commit information.

@@ -1105,7 +1105,7 @@ class ATracker:
         if overview_dirty:
             self.save()
 
-    def editor(self, names=None, query=None, cats=None, inds=None, purpose="mask"):
+    def editor(self, names=None, query=None, cats=None, inds=None, purpose=None, threshtypes=None):
         """
         Open the interactive editor for one or more files.
 
@@ -1121,9 +1121,22 @@ class ATracker:
             Explicit overview row indices.
         purpose : str
             Initial editing purpose: "mask", "roi", "zones", "framelimits",
-            "timepoints", "measure", "thresholding". Default "mask".
+            "timepoints", "measure", "thresholding", "thresholding color".
+            Defaults to threshold editing when threshtypes is supplied, otherwise "mask".
+        threshtypes : list[str] | str | None
+            Threshold configurations to load or create instead of using the overview
+            assignments. Save current writes the selected entry to the project's
+            threshold YAML file; overview assignments are unchanged.
         """
         from atracker.editor import editor_gui
+
+        if threshtypes is not None:
+            threshtypes = [threshtypes] if isinstance(threshtypes, str) else list(threshtypes)
+            if not threshtypes or any(not isinstance(t, str) or not t.strip() for t in threshtypes):
+                raise ValueError("threshtypes must contain at least one nonempty configuration name")
+            threshtypes = list(dict.fromkeys(t.strip() for t in threshtypes))
+        if purpose is None:
+            purpose = ("thresholding" if threshtypes[0].lower().startswith("bw") else "thresholding color") if threshtypes else "mask"
 
         # Resolve indices
         _inds = inds
@@ -1168,13 +1181,11 @@ class ATracker:
             tracked_csv = os.path.join(self.dirs["tracked"], basename + ".csv")
 
             thresh_types = row.get("thresh_types")
+            requested_types = threshtypes if threshtypes is not None else (
+                [t.strip() for t in thresh_types.split(",") if t.strip()] if isinstance(thresh_types, str) else [])
             thresh_dict = {}
-            if isinstance(thresh_types, str):
-                for tt in thresh_types.split(","):
-                    tt = tt.strip()
-                    if tt in self.threshinfo:
-                        thresh_dict = self.threshinfo[tt]
-                        break
+            if requested_types:
+                thresh_dict = self.threshinfo.get(requested_types[0], {})
 
             file_infos.append({
                 "ind": ind,
@@ -1189,8 +1200,7 @@ class ATracker:
                 "frame_stop": frame_stop,
                 "tracked_csv": tracked_csv,
                 "threshold_dict": thresh_dict,
-                "threshold_options": {t.strip(): self.threshinfo.get(t.strip(), {})
-                    for t in thresh_types.split(",") if t.strip()} if isinstance(thresh_types, str) else {},
+                "threshold_options": {t: self.threshinfo.get(t, {}) for t in requested_types},
                 "dirs": self.dirs,
             })
 

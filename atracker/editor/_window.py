@@ -2396,7 +2396,12 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
                 selected = next(iter(options))
             fi["threshold_type"] = selected
             params = options.get(selected, fi.get("threshold_dict", {}))
-            self._restore_state({"thresh_params": {**params, "gamma": params.get("gamma", 1.0)}})
+            # New configurations must start from defaults, not the previous video's settings.
+            defaults = {"blur": 9, "erode": 1, "blur2": 1, "threshold": 50,
+                "min_area": 100, "max_area": 20000, "gamma": 1.0,
+                "hue_lo": 30, "hue_hi": 90, "sat_lo": 50, "sat_hi": 255,
+                "val_lo": 50, "val_hi": 255}
+            self._restore_state({"thresh_params": {**defaults, **params}})
         self.drawing_widget.update()
 
     def _navigate_to(self, new_idx):

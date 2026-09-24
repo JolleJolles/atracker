@@ -42,6 +42,15 @@ For dark footage, open `AT.editor(names="your_video", purpose="thresholding")` a
 
 The separate **Gamma** control under Drawing functions only changes the displayed image and has no effect on tracking. Tracking gamma does not alter source videos or saved backgrounds.
 
+To edit or create a named threshold configuration independently of the overview assignments:
+
+```python
+AT.editor(inds=inds, threshtypes=["bwdark"])
+# Also accepted: purpose="thresholding", threshtypes=["bwdark"]
+```
+
+An existing `bwdark` entry is loaded; a new entry starts from defaults. **S / Save current** adds or updates it in `AT.threshinfo` and writes `AT.cfiles["threshinfo"]`, preserving other entries. With several names, the Editor asks which configuration to edit. Without an explicit purpose, the first name selects B/W thresholding for a `bw` prefix, otherwise colour thresholding. This does not assign the configuration to videos: tracking uses each overview row's `thresh_types` field, as with `set_interactive(threshtypes=...)`.
+
 The editor retains existing coordinate ID labels when saving, while showing numeric IDs for editing. It still writes coordinate columns rather than preserving every automated-tracker metadata column.
 
 For the older, one-window-per-video workflow:
