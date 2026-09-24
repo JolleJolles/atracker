@@ -139,7 +139,7 @@ class ATracker:
                 orient_lwidth=2, orient_tip=0.15, orient_length=15,
                 traj_length=4, traj_minthick=6.4, traj_maxthick=9,
                 traj_opacity=0.5, mask_opacity=0.15, box_opacity=0.7,
-                draw_contournrs=False, trajs_below=False, internal="")
+                draw_contournrs=False, trajs_below=False, draw_zones=True, internal="")
             print("Config settings stored", end=" | ")
         else:
             self._migrate_config()
@@ -215,7 +215,7 @@ class ATracker:
             orient_lwidth=2, orient_tip=0.15, orient_length=15,
             traj_length=4, traj_minthick=6.4, traj_maxthick=9,
             traj_opacity=0.5, mask_opacity=0.15, box_opacity=0.7,
-            draw_contournrs=False, trajs_below=False, internal="")
+            draw_contournrs=False, trajs_below=False, draw_zones=True, internal="")
 
         print(f"\n{'='*60}")
         print("CONFIG MIGRATION: Legacy config format detected!")
@@ -532,6 +532,9 @@ class ATracker:
             If blob contour numbers should be drawn.
         trajs_below : bool, default False
             If trajectories should be drawn below contours.
+        draw_zones : bool, default True
+            Draw zone fills and labels in the live tracking display and saved
+            tracking/visualisation videos. Does not affect zone processing.
         """
 
         # Special: regions modifies overview structure
@@ -587,6 +590,7 @@ class ATracker:
             "box_opacity": "box_opacity",
             "draw_contournrs": "contnrs",
             "trajs_below": "trajs_below",
+            "draw_zones": "draw_zones",
         }
         for k, attr in _vis_map.items():
             if k in kwargs:

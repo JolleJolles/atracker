@@ -100,6 +100,7 @@ class Visualiser:
         self.mask_opacity  = float(_cv("mask_opacity",  0.6))
         self.box_opacity   = float(_cv("box_opacity",   0.7))
         self.trajs_below   = bool( _cv("trajs_below",   False))
+        self.draw_zones    = bool( _cv("draw_zones",    True))
         self.wall_opacity  = 0.6
 
         self.cols        = uniqcols(self.objects)
@@ -123,7 +124,7 @@ class Visualiser:
             cv2.addWeighted(overlay, 0.35, img_draw, 0.65, 0, img_draw)
             cv2.drawContours(img_draw, wc, -1, (110, 30, 110), 2)
 
-        if zc is not None:
+        if self.draw_zones and zc is not None:
             overlay = img_draw.copy()
             font = cv2.FONT_HERSHEY_SIMPLEX
             visible = []

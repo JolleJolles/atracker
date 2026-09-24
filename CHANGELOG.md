@@ -5,6 +5,7 @@
 
 
 ## Unreleased
+- Added `AT.set_config(draw_zones=False)` to hide zone fills and labels in live tracking and saved tracking/visualisation videos while retaining walls, masks, and zone processing. Existing configurations continue to show zones by default.
 - Made named threshold settings stay active across Next/Prev navigation, including unsaved adjustments and revisited videos. Threshold drafts are shared per configuration for the Editor session; Save current writes the configuration and clears its shared unsaved state, while Close still prompts about unsaved changes.
 - Added `AT.editor(threshtypes=[...])` to load or create named threshold configurations and save them to the project threshold YAML, matching `set_interactive()` without changing overview assignments. Supplying names opens threshold editing by default; new configurations start from defaults rather than inheriting the previous video's settings.
 - Added per-threshold tracking gamma (default 1.0), applied to frames and backgrounds before subtraction and blur in both detection and the Editor threshold preview. The separate Tracking gamma control is saved with the threshold configuration; the display Gamma control remains display-only.
