@@ -14,7 +14,8 @@ from collections import deque
 from scipy.spatial.distance import cdist
 from scipy.optimize import linear_sum_assignment
 
-from pythutils.sysutils import lineprint, Suppressor, removeline
+from pythutils.sysutils import Suppressor, removeline
+from .helpers.logging import lineprint
 from pythutils.fileutils import listfiles
 from pythutils.mediautils import check_media, crop
 from pythutils.mathutils import points_to_angle

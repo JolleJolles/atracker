@@ -5,6 +5,7 @@
 
 
 ## Unreleased
+- Moved the local run date before the time in timestamped ATracker messages and removed hostname prefixes. The startup banner now labels the last Git commit/date explicitly and indicates uncommitted package changes, separately from the package release version.
 - Disabled zone overlays by default for new configurations, migrated configurations, and configurations without `draw_zones`. Set `draw_zones=True` explicitly to show them; zone processing is unchanged.
 - Cached zone overlay fills and label positions instead of rebuilding full-frame masks and distance transforms on every frame. The cache refreshes when geometry or frame size changes and preserves overlapping/disconnected zone rendering. Profiling the saved barbdrought zones identified this as a substantial tracking-video drawing cost.
 - Added a dedicated automated-tracking tuning guide covering B/W and HSV pipelines, threshold/gamma/blur/erosion settings, area and aspect-ratio limits, flicker rejection, rolling size filtering, configuration precedence, short trial runs and troubleshooting. Linked it from the README/manual guide and corrected legacy settings in the tutorial notebook.

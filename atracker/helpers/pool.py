@@ -3,7 +3,7 @@
 import multiprocessing
 from concurrent.futures import ThreadPoolExecutor
 
-from pythutils.sysutils import lineprint
+from .logging import lineprint
 from .data import notebook
 
 

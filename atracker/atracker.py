@@ -18,7 +18,7 @@ import subprocess
 import threading
 
 from pythutils.fileutils import listfiles
-from pythutils.sysutils import lineprint
+from .helpers.logging import lineprint
 from pythutils.drawutils import namedcols
 from pythutils.mediautils import get_vid_params, check_media
 from pythutils.datutils import to_query
@@ -37,7 +37,7 @@ warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
 
 
 def _git_version_info():
-    """Return short git hash and commit date, or None if not in a git repo."""
+    """Describe the last commit and local package edits, when Git is available."""
     try:
         pkg_dir = os.path.dirname(__file__)
         result = subprocess.run(
@@ -46,7 +46,11 @@ def _git_version_info():
         )
         if result.returncode == 0 and result.stdout.strip():
             parts = result.stdout.strip().split()
-            return f"{parts[1]} ({parts[0]})"
+            status = subprocess.run(
+                ["git", "status", "--porcelain", "--untracked-files=normal", "--", "."],
+                capture_output=True, text=True, timeout=2, cwd=pkg_dir)
+            local = " + local changes" if status.returncode == 0 and status.stdout.strip() else ""
+            return f"last commit {parts[0]} ({parts[1]}){local}"
     except Exception:
         pass
     return None
@@ -71,7 +75,7 @@ class ATracker:
 
         git_info = _git_version_info()
         version_str = f"ATracker {__version__}" + (f" — {git_info}" if git_info else "")
-        lineprint(version_str + time.strftime(" started on %Y-%m-%d!"))
+        lineprint(version_str)
         lineprint("="*50, False)
 
         # Use the working directory of the notebook if filedir is "."

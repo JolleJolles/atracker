@@ -8,7 +8,7 @@ import pandas as pd
 from scipy.spatial.distance import cdist
 from scipy.optimize import linear_sum_assignment
 
-from pythutils.sysutils import lineprint
+from .helpers.logging import lineprint
 from pythutils.mediautils import crop, videowriter, add_transimg, imgresize
 from pythutils.drawutils import namedcols, draw_text, draw_traj, uniqcols
 from pythutils.mathutils import points_to_angle

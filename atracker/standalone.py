@@ -10,7 +10,7 @@ import pandas as pd
 
 from box import Box
 from pythutils.mediautils import get_vid_params
-from pythutils.sysutils import lineprint
+from .helpers.logging import lineprint
 
 from .track import Tracker
 from .helpers.media import bg_extract
