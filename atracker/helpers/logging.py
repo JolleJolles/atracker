@@ -15,24 +15,23 @@ def lineprint(text, stamp=True, newline=True, date=True, **kwargs):
 
 
 class TrackingProgress:
-    """Rate-limit progress; replace terminal lines only for a single worker."""
+    """Report frame milestones; replace terminal lines only for a single worker."""
 
-    def __init__(self, prefix, pooled=False, interval=10):
+    def __init__(self, prefix, pooled=False, interval=1000):
         self.prefix = prefix
         self.interval = interval
-        self.last = time.monotonic()
-        self.started = self.last
+        self.last_processed = 0
+        self.started = time.monotonic()
         self.inline = not pooled and sys.stdout.isatty()
         self.width = 0
 
     def update(self, frame, stop, processed):
-        now = time.monotonic()
-        if now - self.last < self.interval:
+        if processed - self.last_processed < self.interval:
             return
-        self.last = now
+        self.last_processed = processed
+        now = time.monotonic()
         fps = processed / max(now - self.started, 1e-9)
-        message = (f"{self.prefix}Frame {frame}/{int(stop)}; "
-                   f"{processed} processed — {fps:.1f} FPS")
+        message = (f"{self.prefix}Frame {frame}/{int(stop)} — {fps:.1f} FPS")
         if self.inline:
             self.width = max(self.width, len(message))
             print("\r" + message.ljust(self.width), end="", flush=True)

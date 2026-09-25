@@ -6,8 +6,8 @@ Use [manual tracking and correction](5-manual_tracking.md) for local corrections
 
 ## Diagnosing slow tracking
 
-Normal tracking prints a batch summary, file starts/completions and progress at
-most every 10 seconds. Single-worker terminals update one progress line; pools,
+Normal tracking prints a batch summary, file starts/completions and progress every
+1,000 processed frames (frame position/stop and FPS). Single-worker terminals update one progress line; pools,
 notebooks and redirected logs use separate lines with file/worker identifiers.
 Tracking progress no longer uses `frame_disstep`. Completion reports actual
 processed frames, elapsed time and FPS, including when frames are skipped.
