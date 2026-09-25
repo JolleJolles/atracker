@@ -163,7 +163,7 @@ The older names `shape_area_tol`, `shape_history_len`, and `contour_mode="dynami
 | `skip_frames` | 0 | Skip frames during tracking. Nonzero values change temporal sampling and should be considered when assessing fast motion and filter history. |
 | `create_vid` | Project config | Write a tracking video for review. |
 | `show_tracking` | Project config | Show tracking live. |
-| `draw_zones` | True | Draw zone fills and labels in tracking/visualisation output. Does not affect detection or zone processing. |
+| `draw_zones` | False | Draw zone fills and labels in tracking/visualisation output. Does not affect detection or zone processing. |
 
 Area and aspect-ratio filtering operate in ordinary B/W and colour detection even when `advanced=False`. Advanced B/W mode computes quantities named inertia, convexity and curvature; the current detector does not apply rejection thresholds to those quantities. The variable called convexity is contour area divided by convex-hull area (often called solidity), not a direct curvature test. Experimental barcode handling is separate from the normal B/W/HSV workflow described here.
 

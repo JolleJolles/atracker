@@ -100,7 +100,7 @@ class Visualiser:
         self.mask_opacity  = float(_cv("mask_opacity",  0.6))
         self.box_opacity   = float(_cv("box_opacity",   0.7))
         self.trajs_below   = bool( _cv("trajs_below",   False))
-        self.draw_zones    = bool( _cv("draw_zones",    True))
+        self.draw_zones    = bool( _cv("draw_zones",    False))
         self.wall_opacity  = 0.6
 
         self.cols        = uniqcols(self.objects)
@@ -127,20 +127,35 @@ class Visualiser:
         if self.draw_zones and zc is not None:
             overlay = img_draw.copy()
             font = cv2.FONT_HERSHEY_SIMPLEX
-            visible = []
-            for zone_idx, coords in zc.items():
-                col = _ZONE_COLORS[(zone_idx - 1) % len(_ZONE_COLORS)]
-                for contour in _zone_parts(coords):
+            parts = [(zone_idx, contour) for zone_idx, coords in zc.items()
+                     for contour in _zone_parts(coords)]
+            # Fingerprint geometry, including in-place edits and zone ordering.
+            # Keep only one cached raster size/geometry per visualiser.
+            cache_key = (img_draw.shape[:2], tuple(
+                (zone_idx, contour.shape, contour.dtype.str, contour.tobytes())
+                for zone_idx, contour in parts))
+            cached = getattr(self, "_zone_overlay_cache", None)
+            if cached is None or cached[0] != cache_key:
+                fills = np.zeros_like(img_draw)
+                fill_mask = np.zeros(img_draw.shape[:2], dtype=np.uint8)
+                visible = []
+                for zone_idx, contour in parts:
+                    col = _ZONE_COLORS[(zone_idx - 1) % len(_ZONE_COLORS)]
                     mask = np.zeros(img_draw.shape[:2], dtype=np.uint8)
                     cv2.drawContours(mask, [contour], -1, 255, -1)
                     if not np.any(mask):
                         continue
-                    overlay[mask > 0] = col
+                    cv2.drawContours(fills, [contour], -1, col, -1)
+                    cv2.bitwise_or(fill_mask, mask, dst=fill_mask)
                     # Label the visible part, including zones crossing the ROI.
                     distance = cv2.distanceTransform(
                         np.pad(mask, 1), cv2.DIST_L2, 3)[1:-1, 1:-1]
                     _, _, _, centre = cv2.minMaxLoc(distance)
-                    visible.append((zone_idx, contour, col, centre))
+                    visible.append((zone_idx, contour.copy(), col, centre))
+                cached = (cache_key, fills, fill_mask, visible)
+                self._zone_overlay_cache = cached
+            _, fills, fill_mask, visible = cached
+            cv2.copyTo(fills, fill_mask, overlay)
             cv2.addWeighted(overlay, 0.18, img_draw, 0.82, 0, img_draw)
             for zone_idx, contour, col, (cx, cy) in visible:
                 cv2.drawContours(img_draw, [contour], -1, col, 2)

@@ -5,6 +5,8 @@
 
 
 ## Unreleased
+- Disabled zone overlays by default for new configurations, migrated configurations, and configurations without `draw_zones`. Set `draw_zones=True` explicitly to show them; zone processing is unchanged.
+- Cached zone overlay fills and label positions instead of rebuilding full-frame masks and distance transforms on every frame. The cache refreshes when geometry or frame size changes and preserves overlapping/disconnected zone rendering. Profiling the saved barbdrought zones identified this as a substantial tracking-video drawing cost.
 - Added a dedicated automated-tracking tuning guide covering B/W and HSV pipelines, threshold/gamma/blur/erosion settings, area and aspect-ratio limits, flicker rejection, rolling size filtering, configuration precedence, short trial runs and troubleshooting. Linked it from the README/manual guide and corrected legacy settings in the tutorial notebook.
 - Aligned tracking and Editor aspect-ratio limits: threshold-specific settings override project defaults, the preview exposes and uses both limits, and saving preserves them and other configuration fields. Flicker estimation now uses detection's gamma and grayscale conversion, reuses cutoffs per gamma, and preserves video position. Added focused filter regression checks.
 - Added `AT.set_config(draw_zones=False)` to hide zone fills and labels in live tracking and saved tracking/visualisation videos while retaining walls, masks, and zone processing. Existing configurations continue to show zones by default.
