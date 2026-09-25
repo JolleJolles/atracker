@@ -1349,7 +1349,11 @@ class ATracker:
 
     def track(self, inds=None, names=None, query=None, cats=None, pools=1, folder="todo", frame_start=None,
         frame_stop=None, threshtype=None, objects=None, checkconschange=False, suffix="", threshfile=None,
-        max_framedist=None, overwrite=None, check_flicker=None, skip_frames=None, watch=False, watch_interval=60):
+        max_framedist=None, overwrite=None, check_flicker=None, skip_frames=None, watch=False, watch_interval=60,
+        profile_interval=0):
+
+        if not isinstance(profile_interval, int) or profile_interval < 0:
+            raise ValueError("profile_interval must be a non-negative integer")
 
         check_flicker = check_flicker if check_flicker is not None else bool(getattr(self.config.track, 'check_flicker', False))
         skip_frames = skip_frames if skip_frames is not None else int(getattr(self.config.track, 'skip_frames', 0))
@@ -1431,9 +1435,13 @@ class ATracker:
                         self.config, self.threshinfo, frame_start, frame_stop, threshtype,
                         objects, checkconschange, suffix,
                         max_framedist=max_framedist, overwrite=overwrite,
-                        check_flicker=check_flicker, skip_frames=skip_frames)
+                        check_flicker=check_flicker, skip_frames=skip_frames,
+                        profile_interval=profile_interval)
 
-            lineprint(f"Tracking started of {len(T.inds)} files..")
+            count = len(T.inds)
+            workers = min(max(1, pools), count)
+            lineprint(f"Tracking {count} file{'s' if count != 1 else ''} with "
+                      f"{workers} worker{'s' if workers != 1 else ''}.")
 
             if len(T.inds) == 0:
                 self.config = cbak

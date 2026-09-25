@@ -4,6 +4,49 @@ This guide explains how to tune detection before tracking a batch, which setting
 
 Use [manual tracking and correction](5-manual_tracking.md) for local corrections after tracking, and [processing tracking data](4-processing_data.md) for interpolation, smoothing and analysis. Those later operations cannot recover a fish that was consistently detected as the wrong object.
 
+## Diagnosing slow tracking
+
+Normal tracking prints a batch summary, file starts/completions and progress at
+most every 10 seconds. Single-worker terminals update one progress line; pools,
+notebooks and redirected logs use separate lines with file/worker identifiers.
+Tracking progress no longer uses `frame_disstep`. Completion reports actual
+processed frames, elapsed time and FPS, including when frames are skipped.
+Warnings and errors remain visible. Per-ID area/aspect summaries and flicker
+cutoffs appear only when profiling is enabled.
+
+Add `profile_interval=1000` to your normal `AT.track(...)` call to print wall-clock
+costs every 1,000 processed frames. The default, `0`, disables timing. Keep the
+same video, frame range, pool count, output and display settings when comparing
+runs, and run long enough to compare several windows. Use a distinct `suffix`
+for a diagnostic run to keep its outputs separate from existing results.
+
+Each window reports processed FPS and milliseconds per processed frame, summed
+over threshold passes, in descending order of cost:
+
+- `read/check`: video decoding and progress reporting, including skipped frames.
+- `prepare`: cropping and the drawing-image copy.
+- `detection`: threshold preprocessing and contour extraction/measurement.
+- `association/filter/data`: ID linking, filters and tracking-history updates.
+- `threshold drawing`, `orientation`, `scene/info drawing`: tracking overlays.
+- `video conversion`: colour conversion, output resizing and padding.
+- `video queue wait`: handing frames to the asynchronous writer. Large times
+  mean the producer is waiting for output encoding/I/O to keep up; the writer's
+  background CPU time is not measured separately.
+- `display`: window updates and `waitKey`, including its configured delay.
+
+Writer drain/resource close and CSV/file finalization are reported separately
+at completion. Window FPS excludes setup, finalization and timing-report printing;
+both window and completion FPS count processed frames, including when frames
+are skipped. With pools, reports are per
+worker, and resource contention can affect every stage.
+
+A short sample alone cannot establish sustained throughput. The writer queue
+holds 64 frames before it blocks, and growing histories or resource contention
+can affect longer runs. If queue waits dominate, compare the same range with
+`create_vid=False`; if drawing/display dominates, compare with both
+`create_vid=False` and `show_tracking=False` using `AT.set_config(...)`. Restore
+your settings afterwards. Do not infer the bottleneck from FPS alone.
+
 ## 1. Prepare representative videos
 
 Start with an ATracker project whose videos have been registered using your normal setup workflow. Check the background, ROI, masks, frame limits and object count before changing thresholds.

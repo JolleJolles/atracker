@@ -714,10 +714,15 @@ class Visualiser:
                     draw_text(img_draw, str(id_),
                               (c[0] - 4, c[1] - 4), 0.3, "black", 0, 1)
 
-    def draw_orient_link(self, img_draw, fulldat, frame_nr):
+    def draw_orient_link(self, img_draw, fulldat, frame_nr, frame_data_start=None):
         """Draw orientation arrows linking colour contours to bw contours."""
-        currframe_inds = [i for i, f in enumerate(fulldat["frame"]) if f == frame_nr]
-        ids = [id_ for i, id_ in enumerate(fulldat["id"]) if i in currframe_inds]
+        if frame_data_start is None:
+            currframe_inds = [i for i, f in enumerate(fulldat["frame"]) if f == frame_nr]
+        else:
+            # Tracking appends all passes for this frame contiguously. Avoid
+            # scanning the complete video history on every live frame.
+            currframe_inds = range(frame_data_start, len(fulldat["frame"]))
+        ids = [fulldat["id"][i] for i in currframe_inds]
 
         if "angle" not in fulldat:
             fulldat["angle"] = [None] * len(fulldat["frame"])

@@ -147,7 +147,7 @@ def showvideo(videofile, wait=False):
 
 def framechecks(cap, frameOK, framelist=None, stopframe=999999, displaystep=100, identifier=""):
     frame_nr = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
-    if frame_nr % displaystep == 0:
+    if displaystep and frame_nr % displaystep == 0:
         if identifier == "":
             print(frame_nr, end=" ")
         else:
@@ -159,7 +159,8 @@ def framechecks(cap, frameOK, framelist=None, stopframe=999999, displaystep=100,
             skip = True
     stop = False
     if frame_nr > stopframe or (not frameOK and frame_nr > stopframe - 10):
-        print(" ")
+        if displaystep:
+            print(" ")
         stop = True
     return stop, skip, frame_nr
 

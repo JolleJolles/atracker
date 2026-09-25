@@ -14,8 +14,8 @@ from collections import deque
 from scipy.spatial.distance import cdist
 from scipy.optimize import linear_sum_assignment
 
-from pythutils.sysutils import Suppressor, removeline
-from .helpers.logging import lineprint
+from pythutils.sysutils import Suppressor
+from .helpers.logging import lineprint, TrackingProgress
 from pythutils.fileutils import listfiles
 from pythutils.mediautils import check_media, crop
 from pythutils.mathutils import points_to_angle
@@ -33,6 +33,7 @@ from .helpers.data import subdic, eval_func_tuple
 from .helpers.detection import ProcessImage
 from .visualise import Visualiser
 from .helpers.detection_settings import aspect_limits
+from .helpers.timing import TrackingTiming
 
 class KeyboardInterruptError(Exception): pass
 
@@ -94,7 +95,7 @@ class Tracker:
     def __init__(self, pools, inds, trackfiles, dirs, overview, config,
                  threshinfo, start, stop, threshtype, objects,
                  checkconschange, suffix, max_framedist=200, overwrite=None, check_flicker=False,
-                 skip_frames=0):
+                 skip_frames=0, profile_interval=0):
 
         self.pools = pools
         self.inds = inds
@@ -121,6 +122,7 @@ class Tracker:
         self.overwrite = overwrite if overwrite is not None else self.config.track.overwrite
         self.check_flicker = check_flicker
         self.skip_frames = skip_frames
+        self.profile_interval = profile_interval
 
     def setuptracking(self, ind, trackfile):
 
@@ -508,8 +510,8 @@ class Tracker:
             else:
                 self.vidout = AsyncVideoWriter(writer)
 
-        newline = False if self.pools<2 else True
-        lineprint(self.pr_comm+"tracking started..", newline=newline)
+        log_prefix = self.pr_comm.split(self.filename)[0]
+        lineprint(f"{log_prefix}Started {self.filename}", date=False)
         sys.stdout.flush()
         t1 = time.time()
         key = None
@@ -519,6 +521,15 @@ class Tracker:
         self.shape_history = {}
         traj_history = {}   # {id: deque(maxlen=traj_length)} — only valid (cx, cy)
         tracked_ids = set()
+        processed_frames = 0
+        last_processed_frame = None
+        progress = TrackingProgress(log_prefix, pooled=self.pools >= 2)
+
+        def diagnostic(message):
+            progress.clear()
+            lineprint(message, date=False)
+
+        timing = TrackingTiming(self.profile_interval, log_prefix, emit=diagnostic)
 
         vis = Visualiser(objects=self.objects,
                          thresh_types=self.thresh_types,
@@ -539,12 +550,15 @@ class Tracker:
                     if gamma not in self.flicker_thresholds:
                         self.flicker_thresholds[gamma] = estimate_flicker_baseline(
                             self.cap, self.img_bg, self.pt1, self.pt2, gamma=gamma)
-                    lineprint(f"Flicker threshold ({ttype}, gamma={gamma:g}): {self.flicker_thresholds[gamma]:.2f}")
+                    if self.profile_interval:
+                        diagnostic(f"{log_prefix}Flicker threshold ({ttype}, gamma={gamma:g}): {self.flicker_thresholds[gamma]:.2f}")
             
             while self.cap.isOpened():
+                timing.start()
                 frameOK, self.img = self.cap.read()
                 stop, skip, self.frame_nr = framechecks(self.cap, frameOK, None, self.frame_stop,
-                                         self.config.vis.frame_disstep, self.ind)
+                                         None, self.ind)
+                timing.mark("read/check")
                 if stop:
                     break
                 if skip:
@@ -555,6 +569,8 @@ class Tracker:
                 # Create images to work with
                 self.img = crop(self.img, self.pt1, self.pt2)
                 self.img_draw = self.img.copy()
+                frame_data_start = len(self.fulldat["frame"])
+                timing.mark("prepare")
 
                 # Get standard conlists
                 _frame_info = []
@@ -581,6 +597,7 @@ class Tracker:
                             simple=True,
                             min_aspect_ratio=min_ar, max_aspect_ratio=max_ar, gamma=ti.get("gamma", 1.0))
                     self.img_thresh, self.allcons, self.conlist = PI.process()
+                    timing.mark("detection")
                     if PI.flicker:
                         continue
 
@@ -680,6 +697,7 @@ class Tracker:
                                 traj_history[id] = deque(maxlen=self.traj_length)
                             traj_history[id].appendleft((cx, cy))
 
+                    timing.mark("association/filter/data")
                     # Thresh_type drawing
                     #---------------------------------
                     if self.config.track.create_vid or self.config.vis.show_tracking:
@@ -689,10 +707,13 @@ class Tracker:
                             self.img_draw, self.img, self.img_thresh,
                             self.conlist, self.allcons, ids, filtered_coms,
                             traj_history, tracked_ids, self.thresh_type)
+                    timing.mark("threshold drawing")
 
                 # Linking of bw and color threshtypes
                 if self.threshcolors and self.orientfrombw:
-                    vis.draw_orient_link(self.img_draw, self.fulldat, self.frame_nr)
+                    vis.draw_orient_link(self.img_draw, self.fulldat, self.frame_nr,
+                                         frame_data_start=frame_data_start)
+                timing.mark("orientation")
 
                 if create_vid or self.config.vis.show_tracking:
                     vis.draw_scene_overlays(self.img_draw)
@@ -701,6 +722,7 @@ class Tracker:
                 #---------------------------------
                 img_mask_draw = self.img_mask if isinstance(self.maskimg, str) else None
                 vis.draw_info_overlay(self.img_draw, img_mask_draw, self.frame_nr, _frame_info)
+                timing.mark("scene/info drawing")
 
                 # Convert once before queueing, as in previous ATracker versions.
                 if create_vid:
@@ -714,7 +736,9 @@ class Tracker:
                         frame_rgb = cv2.copyMakeBorder(
                             frame_rgb, 0, frame_rgb.shape[0] % 2,
                             0, frame_rgb.shape[1] % 2, cv2.BORDER_REPLICATE)
+                    timing.mark("video conversion")
                     self.vidout.write(frame_rgb)
+                    timing.mark("video queue wait")
 
                 # Display video
                 if self.config.vis.show_tracking:
@@ -722,15 +746,26 @@ class Tracker:
                     h = int(self.config.vis.vid_displaysize * self.vidh)
                     cv2.imshow(self.filename, cv2.resize(self.img_draw, (w, h)))
                     key = cv2.waitKey(self.config.vis.waitkey) & 0xff
-                    if key == 27 or key == ord('s'):
-                        break
+
+                timing.mark("display")
+                processed_frames += 1
+                last_processed_frame = self.frame_nr
+                timing.frame(self.frame_nr)
+                progress.update(self.frame_nr, self.frame_stop, processed_frames)
 
                 if key == 27 or key == ord('s'):
                     break
 
             # Tracking of video is finished
             #---------------------------------
+            progress.clear()
+            timing.report(last_processed_frame)
+            finish_started = time.perf_counter() if self.profile_interval else None
             self.exit()
+            if self.profile_interval:
+                diagnostic(f"{log_prefix}timing writer drain / resource close: "
+                      f"{time.perf_counter() - finish_started:.2f}s")
+                finish_started = time.perf_counter()
 
             if key == 27:
                 shutil.move(tempfile, self.trackfile)
@@ -745,19 +780,23 @@ class Tracker:
                     finaldat.to_csv(trackeddata, index=False)
                 if create_vid and os.path.exists(trackedfile):
                     shutil.move(trackedfile, os.path.join(self.dirs["tracked"], filename+self.suffix+"_TR.mp4"))
-                else:
-                    lineprint(self.pr_comm + "Tracked video not created, skipping move.")
+                elif create_vid:
+                    lineprint(self.pr_comm + "Warning: tracked video output is missing.")
                 shutil.move(tempfile, os.path.join(self.dirs["originals"], self.filebase))
                 if key == ord('s'):
                     lineprint("User quit and saved, tracking output stored")
 
             self.tracked += 1
+            if self.profile_interval:
+                diagnostic(f"{log_prefix}timing CSV / file finalization: "
+                      f"{time.perf_counter() - finish_started:.2f}s")
             timediff = time.time() - t1
-            speed = str(round((self.frame_nr-self.frame_start)/float(timediff),1))
-            removeline()
-            left_msg = f"; {len(self.inds)} left.." if self.pools < 2 else ".."
-            lineprint(self.pr_comm+"tracking completed in "+"%.2f" % timediff+"s at "+speed+"fps; "+left_msg)
-            if self.fulldat.get("id") and self.fulldat.get("area"):
+            speed = processed_frames / max(timediff, 1e-9)
+            left_msg = f"; {len(self.inds)} remaining" if self.pools < 2 else ""
+            status = "Stopped" if key in (27, ord('s')) else "Completed"
+            lineprint(f"{log_prefix}{status} {processed_frames} frames in {timediff:.2f}s "
+                      f"— {speed:.1f} FPS{left_msg}.", date=False)
+            if self.profile_interval and self.fulldat.get("id") and self.fulldat.get("area"):
                 summary_df = pd.DataFrame({"id": self.fulldat["id"], "area": self.fulldat["area"],
                                            "aspect_ratio": self.fulldat["aspect_ratio"],
                                            "cx": self.fulldat["cx"]})
@@ -769,7 +808,9 @@ class Tracker:
                     lineprint(self.pr_comm + "  " + ", ".join(parts))
 
         except KeyboardInterrupt:
+            progress.clear()
             raise KeyboardInterruptError()
         except Exception as e:
+            progress.clear()
             lineprint(f"Error on [{self.ind}] {self.filename}: {type(e).__name__}: {e}")
             raise
