@@ -5,6 +5,7 @@
 
 
 ## Unreleased
+- Added state_checker() and AT.editor(purpose="state_checker", candidates=...) for MoveR event CSVs: candidate/video navigation, automatic start-frame seeking, a state-interval timeline, editable inclusive bounds, and confirm/deny decisions saved to review in the original CSV. Preserves extra columns and frame indexing, with unsaved-edit prompts and protection against overwriting external CSV edits.
 - Reduced normal tracking progress to every 1,000 processed frames instead of every 10 seconds, showing only frame position/stop and FPS without repeating the processed count. Detailed stage timings remain opt-in via `profile_interval`.
 - Simplified tracking logs: batch file/worker counts, concise per-file start/completion lines, and progress every 10 seconds (one updating line in single-worker terminals; separate lines for pools, notebooks and redirected logs). Timings, flicker cutoffs and per-ID shape summaries now require `profile_interval>0`. Completion FPS counts processed frames, timing reports identify the last processed frame, and duplicate completion punctuation was removed.
 - Moved the local run date before the time in timestamped ATracker messages and removed hostname prefixes. The startup banner now labels the last Git commit/date explicitly and indicates uncommitted package changes, separately from the package release version.

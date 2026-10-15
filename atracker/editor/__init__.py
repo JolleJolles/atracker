@@ -1,1 +1,2 @@
 from ._api import annotation_gui, manual_tracker, editor_gui
+from ._state_checker import state_checker

@@ -1116,7 +1116,18 @@ class ATracker:
         if overview_dirty:
             self.save()
 
-    def editor(self, names=None, query=None, cats=None, inds=None, purpose=None, threshtypes=None):
+    def state_checker(self, csv_file, frame_base=1):
+        """Review state candidates against project originals and update their CSV.
+
+        Required columns: video, start_frame, end_frame, state. The review column
+        is added if absent; decisions are confirmed/denied, with blank unreviewed.
+        Bounds are inclusive. Set frame_base=0 for zero-based input frames.
+        """
+        from atracker.editor import state_checker
+        return state_checker(csv_file, self.dirs["originals"], frame_base=frame_base)
+
+    def editor(self, names=None, query=None, cats=None, inds=None, purpose=None, threshtypes=None,
+               candidates=None, frame_base=1):
         """
         Open the interactive editor for one or more files.
 
@@ -1132,13 +1143,25 @@ class ATracker:
             Explicit overview row indices.
         purpose : str
             Initial editing purpose: "mask", "roi", "zones", "framelimits",
-            "timepoints", "measure", "thresholding", "thresholding color".
+            "timepoints", "measure", "thresholding", "thresholding color", "state_checker".
             Defaults to threshold editing when threshtypes is supplied, otherwise "mask".
+        candidates : str | None
+            MoveR candidate CSV for purpose="state_checker"; selects its own videos.
+        frame_base : int
+            Candidate CSV frame numbering (1 by default; 0 accepted explicitly).
         threshtypes : list[str] | str | None
             Threshold configurations to load or create instead of using the overview
             assignments. Save current writes the selected entry to the project's
             threshold YAML file; overview assignments are unchanged.
         """
+        if purpose == "state_checker":
+            if candidates is None:
+                raise ValueError("Supply candidates=path_to_csv for state_checker")
+            if any(value is not None for value in (names, query, cats, inds, threshtypes)):
+                raise ValueError("State checker selects videos from its candidate CSV; omit other selectors")
+            return self.state_checker(candidates, frame_base=frame_base)
+        if candidates is not None:
+            raise ValueError("candidates is only supported with purpose='state_checker'")
         from atracker.editor import editor_gui
         from atracker.helpers.detection_settings import aspect_limits
 
