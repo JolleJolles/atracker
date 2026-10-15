@@ -2,16 +2,11 @@
 
 import cv2
 import numpy as np
-from scipy.spatial import KDTree
-from scipy.spatial.distance import cdist
-from shapely.geometry import LineString, Polygon
 
-from pythutils.mediautils import crop
-from pythutils.mathutils import points_to_angle, ptsToDist
-from pythutils.datutils import contour_to_tuple
+from pythutils.mathutils import points_to_angle
 
-from .geometry import adjpt, get_coord, geom_tocoord
-from .contours import concom, con_lathom
+from .contours import concom
+from .body import body_settings, measure_body
 from .filters import dic_exclnan
 from .detection_settings import gamma_correct, aspect_limits
 
@@ -29,10 +24,11 @@ def warp_barcode_patch(gray_img, contour, size=15):
 class ProcessImage:
 
     def __init__(self, img, img_bg=None, img_mask=None, threshtype="bw", blur=9,
-        erode=1, blur2=1, threshold=50, min_area=100, max_area=10000, croppad=20,
-        colmin=None, colmax=None, simple=True,
+        erode=1, blur2=1, threshold=50, min_area=100, max_area=10000,
+        colmin=None, colmax=None, body_mode="centroid",
         tags=None, tag_ids=None, barcode_size=15, barcode_tol=1,
-        flicker_threshold=None, min_aspect_ratio=1.4, max_aspect_ratio=10, gamma=1.0):
+        flicker_threshold=None, min_aspect_ratio=1.4, max_aspect_ratio=10, gamma=1.0,
+        head_rule="near_widest", skeleton_points=10):
 
         self.img = np.asarray(img)
         self.img_bg = np.asarray(img_bg)
@@ -49,10 +45,9 @@ class ProcessImage:
         self.threshold = threshold
         self.min_area = min_area
         self.max_area = max_area
-        self.croppad = croppad
         self.colmin = colmin
         self.colmax = colmax
-        self.simple = simple
+        self.body_mode, self.head_rule, self.skeleton_points = body_settings(body_mode, head_rule, skeleton_points)
         self.flicker_threshold = flicker_threshold
         self.flicker = False
         self.min_aspect_ratio, self.max_aspect_ratio = aspect_limits(
@@ -90,16 +85,7 @@ class ProcessImage:
         
     def process(self):
 
-        """
-        Processes an image and returns thresholded image and contourlist
-
-        inertia: The straightness of the contour. The closer inertia is to 0, the
-            more the contour is like a straight line, so contours with very high
-            inertia are best ignored.
-        convexity: The curvature of the contour. The closer convexity is to 0, the
-            more it is convexed and thus curved, so contours with very low convexity
-            are best ignored.
-        """
+        """Detect silhouettes and extract the independently selected body detail."""
 
         if self.threshtype.startswith("bw"):
             self.preprocess_bw_mode()
@@ -123,8 +109,9 @@ class ProcessImage:
         sorted_areas = [con_areas[i] for i in order]
 
         # Create conlist
-        varlist = ("id","objbox","area","aspect_ratio","length","inertia","convexity","curvature","com",
-        "head","tail","angle","lathom","fed","skeleton","contour")
+        varlist = ("id","objbox","area","aspect_ratio","length","com",
+        "head","tail","angle","skeleton","contour",
+        "length_method","center_source","body_valid","body_straightness","head_assignment","head_asymmetry")
         self.conlist = {var:[np.nan]*len(self.allcons) for var in varlist}
 
         # Go through the contours and extract contour information
@@ -229,100 +216,11 @@ class ProcessImage:
         if self.min_area < area < self.max_area and self.min_aspect_ratio < aspect_ratio < self.max_aspect_ratio:
             # Get object centroid
             self.conlist["com"][ind] = concom(contour)
-            if not self.simple:
-                # Calculate minimum straight bounding rectangle (used for cropping)
-                rec = cv2.boundingRect(contour)
-                rec_tl = (max(rec[0]-self.croppad,1),max(rec[1]-self.croppad,1))
-                rec_br = (min(rec[0]+rec[2]+self.croppad,self.img_thresh.shape[1]),
-                          min(rec[1]+rec[3]+self.croppad,self.img_thresh.shape[0]))
-                rec_pts = (rec_tl, rec_br)
-                self.conlist["objbox"][ind] = rec_pts
-
-                # Calculate minimum rotatated bounding rectangle (used to get box centroid
-                # and finding head and tail
-                rotrec = cv2.boxPoints(rotrecb)
-                rotrec = np.intp(rotrec)
-
-                # Get object inertia and convexity
-                ## The closer inertia is to 0, the more the object is like a line
-                self.conlist["inertia"][ind] = round(float(min(rotrecb[1])+0.0001) / max(rotrecb[1]),3)
-
-                ## The closer convexity is to 1 the more the object is convex thus curved
-                self.conlist["convexity"][ind] = round(area / float(cv2.contourArea(cv2.convexHull(contour)) + 0.0001),3)
-
-                # Calculate rotrec centroid and corner coordinates
-                rotrec_com = concom(rotrec)
-                rotrec_pts = [tuple(pt) for pt in rotrec]
-
-                # Create distanced image of just contour
-                canvas = crop(self.img_thresh, rec_pts)
-                canvas = np.zeros(canvas.shape, np.uint8)
-                cv2.drawContours(canvas, [contour-rec_tl], 0, (255,255,255), -1)
-                cv2.drawContours(canvas, [contour-rec_tl], 0, (255,255,255), 10)
-
-                # Create distanced image to get furthest distance of contour edge
-                imgc_dis = cv2.distanceTransform(canvas, cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
-                imgc_dis = cv2.normalize(imgc_dis, imgc_dis, 0, 1, cv2.NORM_MINMAX)*255
-                _,_,_,obj_fed = cv2.minMaxLoc(imgc_dis)
-                obj_fed = adjpt(obj_fed, rec_tl)
-                self.conlist["fed"][ind] = obj_fed
-
-                # Get skeleton (for getting head and tail)
-                imgc_skel = cv2.ximgproc.thinning(canvas)
-
-                # Calculate length of object
-                self.conlist["length"][ind] = len(imgc_skel[imgc_skel==255])
-
-                # Get head and tail
-                ## Get coordinates of skeleton line
-                skelpts = np.argwhere(imgc_skel==255)
-                skelpts = [adjpt((pt[1],pt[0]),rec_tl) for pt in skelpts]
-
-                if len(skelpts)>0:
-                    ## Get two extreme skeleton points
-                    distmat = cdist(skelpts, skelpts)
-                    ext_inds = np.unravel_index(distmat.argmax(), distmat.shape)
-                    ext_pts = [skelpts[ext_inds[0]], skelpts[ext_inds[1]]]
-
-                    ## Head is point closest to widest part of object
-                    if ptsToDist(obj_fed,ext_pts[0]) > ptsToDist(obj_fed,ext_pts[1]):
-                        ext_pts.reverse()
-                    head, tail = ext_pts
-                    self.conlist["tail"][ind] = (int(tail[0]), int(tail[1]))
-
-                    # Get ordered skeleton points
-                    sortedinds = [i[0] for i in cdist(skelpts, [ext_pts[1]])]
-                    skelpts = [skelpts[i] for i in np.argsort(sortedinds)]
-                    self.conlist["skeleton"][ind] = skelpts
-
-                    # Get point on skeleton line closest to box midpoint
-                    com = skelpts[cdist(skelpts, [(rotrec_com)]).argmin()]
-                    self.conlist["com"][ind] = (int(com[0]), int(com[1]))
-
-                    # Get def con_lathom(skeleton,contour):
-                    self.conlist["lathom"][ind] = con_lathom(skelpts, contour)
-
-                    # Get angle of head
-                    angle = int(points_to_angle(self.conlist["com"][ind], head, flip=True))
-                    self.conlist["angle"][ind] = angle
-
-                    # Improve position of head to be on contour
-                    headout = get_coord(head[0], head[1], angle, 20, astuple=True)
-                    p = Polygon([list(i[0]) for i in contour])
-                    l = LineString([[headout[0],headout[1]],[head[0],head[1]]])
-                    newhead  = geom_tocoord(p.buffer(0).intersection(l))
-                    if newhead != newhead:
-                        contuple = contour_to_tuple(contour)
-                        _, pixid = KDTree(contuple).query(headout)
-                        newhead = contuple[pixid]
-                    self.conlist["head"][ind] = newhead
-
-                    # Calculate curvature
-                    headtotail = ptsToDist(self.conlist["head"][ind], self.conlist["tail"][ind])
-                    canvas = np.zeros(canvas.shape, np.uint8)
-                    head,tail,com = [adjpt(pt,rec_tl,add=False) for pt in [head,tail,com]]
-                    cv2.drawContours(canvas, np.array([[head,tail]]), 0, 255, -1)
-                    headtotail = len(np.argwhere(canvas==255))
-                    cv2.drawContours(canvas, np.array([[head,tail,com]]), 0, 255, -1)
-                    headcomtotail = len(np.argwhere(canvas==255))
-                    self.conlist["curvature"][ind] = round(headtotail/headcomtotail,3)
+            measurements = measure_body(contour, self.conlist["com"][ind],
+                self.body_mode, self.head_rule, self.skeleton_points)
+            for key, value in measurements.items():
+                self.conlist[key][ind] = value
+            if self.body_mode == "skeleton" and measurements["body_valid"]:
+                self.conlist["angle"][ind] = (float(points_to_angle(
+                    measurements["com"], measurements["head"], flip=True))
+                    if self.head_rule != "unassigned" else np.nan)

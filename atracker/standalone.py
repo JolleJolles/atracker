@@ -18,11 +18,11 @@ from .process import Processor
 from .editor import annotation_gui
 
 
-def _make_config(advanced=False, show_tracking=False, create_vid=True, overwrite=True):
+def _make_config(body_mode="centroid", show_tracking=False, create_vid=True, overwrite=True):
     """Build a minimal Box config compatible with Tracker."""
     return Box({
         "track": Box({
-            "advanced": advanced,
+            "body_mode": body_mode,
             "orientfrombw": False,
             "create_vid": create_vid,
             "create_dat": True,
@@ -150,7 +150,7 @@ def track_video(
     draw_roi=False,
     draw_mask=False,
     set_threshold=True,
-    simple=True,
+    body_mode="centroid",
     show_tracking=False,
     create_vid=True,
     output=None,
@@ -160,6 +160,9 @@ def track_video(
     fps=None,
     save_settings=None,
     load_settings=None,
+    head_rule="near_widest",
+    skeleton_points=10,
+    save_body=False,
 ):
     """
     Track a single video without any folder setup or overview file.
@@ -184,9 +187,14 @@ def track_video(
         Open GUI to draw an exclusion mask (e.g. a shelter or refuge area).
     set_threshold : bool, default True
         Open threshold calibration GUI on random frames.
-    simple : bool, default True
-        If True, extract centroid only. If False, extract full shape data
-        (head, tail, skeleton, orientation, curvature).
+    body_mode : str, default "centroid"
+        "centroid" uses the blob centroid; "skeleton" uses the centreline midpoint and tips.
+    head_rule : str, default "near_widest"
+        "near_widest", "near_centroid", "far_centroid" or "unassigned".
+    skeleton_points : int, default 10
+        Number of equally spaced centreline points in optional geometry output.
+    save_body : bool, default False
+        Save per-object/frame contours and centreline points in .body.jsonl.gz.
     show_tracking : bool, default False
         Show live tracking window while processing.
     create_vid : bool, default True
@@ -361,11 +369,17 @@ def track_video(
 
         # --- Config ---
         config = _make_config(
-            advanced=not simple,
+            body_mode=body_mode,
             show_tracking=show_tracking,
             create_vid=create_vid,
             overwrite=overwrite,
         )
+
+        from .helpers.body import body_settings
+        body_settings(body_mode, head_rule, skeleton_points)
+        config.track.head_rule = head_rule
+        config.track.skeleton_points = skeleton_points
+        config.track.save_body = save_body
 
         # --- Run tracking ---
         T = Tracker(
@@ -430,6 +444,8 @@ def process_video(
     interpolate=True,
     compute_movement=True,
     compute_distances=True,
+    orientation_fallback="none",
+    correct_head_tail=True,
 ):
     """
     Post-process a single tracked CSV file without an ATracker folder setup.
@@ -460,6 +476,10 @@ def process_video(
         Path to a wall image (physical boundary for distance calculations).
     zonefile : str or None
         Path to a zone image (named areas for distance calculations).
+    orientation_fallback : str, default "none"
+        Set "heading" to estimate missing orientation from movement; labelled separately.
+    correct_head_tail : bool, default True
+        Correct isolated head/tail transpositions before interpolation.
     orientfrombw : bool, default False
         Use the bw tracking angle column as orientation instead of head/tail coords.
     overwrite : bool, default False
@@ -581,6 +601,8 @@ def process_video(
         interp_gap_orient=interp_gap_orient,
         smoothwin=smoothwin,
         orient_min_speed=orient_min_speed,
+        orientation_fallback=orientation_fallback,
+        correct_head_tail=correct_head_tail,
         interpolate=interpolate,
         compute_movement=compute_movement,
         compute_distances=compute_distances,

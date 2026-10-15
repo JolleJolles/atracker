@@ -1717,7 +1717,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
                 frame, bg, mask_np, "bw",
                 params["blur"], params["erode"], params["blur2"],
                 params["threshold"], params["min_area"], params["max_area"],
-                simple=True, gamma=params["gamma"],
+                body_mode="centroid", gamma=params["gamma"],
                 min_aspect_ratio=params["min_aspect_ratio"], max_aspect_ratio=params["max_aspect_ratio"]
             )
 
@@ -1727,7 +1727,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             PI = ProcessImage(
                 frame, bg, mask_np, "color",
                 blur=params["blur"], min_area=params["min_area"], max_area=params["max_area"],
-                colmin=colmin, colmax=colmax, simple=True, gamma=params["gamma"],
+                colmin=colmin, colmax=colmax, body_mode="centroid", gamma=params["gamma"],
                 min_aspect_ratio=params["min_aspect_ratio"], max_aspect_ratio=params["max_aspect_ratio"]
             )
         else:

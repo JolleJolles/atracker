@@ -9,11 +9,11 @@ from ast import literal_eval
 from math import gcd
 from functools import reduce
 
-from pythutils.mathutils import points_to_angle, angle_to_vec, ptsToDist
+from pythutils.mathutils import ptsToDist
 
 from .helpers.geometry import (calc_borderdistdf, convert, dist_to_point, dist_to_poly,
                                dist_to_rect, dist_to_zone, is_axis_aligned_rectangle,
-                               series_to_point_tuple, valid_img_path, get_anglediff)
+                               valid_img_path, get_anglediff)
 from .helpers.trajectory import (calcudiff, differentiate, fillmissing, getalones,
                                   process_trajectories, smooth)
 from .helpers.contours import coordsfrommask, coordsfromzones
@@ -21,6 +21,7 @@ from scipy.spatial import KDTree
 from .helpers.data import ensure_columns, lit_converter
 from .helpers.provenance import ensure_position_sources
 from .helpers.output import write_csv_atomic
+from .helpers.orientation import process_orientation, correct_isolated_swaps
 
 
 class Processor:
@@ -32,7 +33,8 @@ class Processor:
                  roi_edge_margin=10,
                  interp_gap_com=500, interp_gap_orient=100,
                  smoothwin=10, orient_min_speed=1,
-                 interpolate=True, compute_movement=True, compute_distances=True):
+                 interpolate=True, compute_movement=True, compute_distances=True,
+                 orientation_fallback="none", correct_head_tail=True):
         """
         Post-processing pipeline for tracked coordinate data.
 
@@ -83,6 +85,10 @@ class Processor:
             (default 100).
         smoothwin : int
             Savitzky–Golay smoothing window in frames (default 10; 1 = no smoothing).
+        orientation_fallback : str, default "none"
+            Set "heading" to explicitly allow movement-derived orientation.
+        correct_head_tail : bool, default True
+            Correct isolated head/tail transpositions before interpolation.
         orient_min_speed : float
             Minimum speed (converted units/frame) above which heading is used as a
             fallback for missing orientation (default 1).
@@ -117,6 +123,10 @@ class Processor:
         self.interp_gap_orient = interp_gap_orient
         self.smoothwin = smoothwin
         self.orient_min_speed = orient_min_speed
+        if orientation_fallback not in ("none", "heading"):
+            raise ValueError('orientation_fallback must be "none" or "heading"')
+        self.orientation_fallback = orientation_fallback
+        self.correct_head_tail = correct_head_tail
         self.interpolate = interpolate
         self.compute_movement = compute_movement
         self.compute_distances = compute_distances
@@ -273,7 +283,7 @@ class Processor:
                 self.ids = [i for i in pd.unique(self.data.id)]
 
         # Drop columns that are no longer needed downstream
-        self.data = self.data.drop(columns=["com", "consmerged"], errors="ignore")
+        self.data = self.data.drop(columns=["consmerged"], errors="ignore")
 
         # Unpack legacy packed coordinate columns if present
         self._unpack_coords("com", ["cx", "cy"])
@@ -287,11 +297,6 @@ class Processor:
             self._unpack_coords("head", ["fx", "fy"])
         if "tail" in self.data.columns:
             self._unpack_coords("tail", ["tx", "ty"])
-
-        # When using bw angle as orientation source, rename it now
-        if self.orientfrombw and "angle" in self.data and \
-                "hx" not in self.data and "fx" not in self.data:
-            self.data.rename(columns={"angle": "orient"}, inplace=True)
 
         self.data = ensure_position_sources(self.data)
 
@@ -357,7 +362,7 @@ class Processor:
         """Clean head/tail coordinate data per trajectory.
 
         Blanks coordinates near the ROI border, removes isolated detections,
-        and interpolates short gaps. Does not attempt head/tail swap correction.
+        corrects isolated head/tail swaps and interpolates short gaps.
         """
         newroi = ((1, 1), (self.fileinfo.roi[1][0] - self.fileinfo.roi[0][0],
                            self.fileinfo.roi[1][1] - self.fileinfo.roi[0][1]))
@@ -377,6 +382,9 @@ class Processor:
             if alones:
                 tf.loc[alones, ["fx", "fy", "tx", "ty"]] = np.nan
 
+            if self.correct_head_tail:
+                tf = correct_isolated_swaps(tf)
+
             # Interpolate short head/tail gaps
             if self.interpolate:
                 for cols in [["fx", "fy"], ["tx", "ty"]]:
@@ -394,75 +402,7 @@ class Processor:
 
 
     def _compute_orientation(self, final):
-        """Compute, fill, smooth, and finalise orientation for all IDs and trajectories.
-
-        Called after movement variables so that heading/speed are available as
-        fallback sources for missing orientation.
-
-        Two modes:
-        - orientfrombw: use bw tracking angle directly as orient
-        - fx/fy present: derive orient from head direction relative to centroid
-        """
-        if self.orientfrombw and "angle" in final.columns:
-            # Simple mode: angle column → orient
-            final["orient"] = final["angle"]
-            valid = final["orient"].dropna().index
-            result = final.loc[valid, "orient"].apply(angle_to_vec)
-            final.loc[valid, ["vx", "vy"]] = result.apply(pd.Series, index=["vx", "vy"])
-            for col in ["vx", "vy"]:
-                final[col] = pd.to_numeric(final[col], errors="coerce")
-            final["turnspeed"] = get_anglediff(final["orient"])
-            final["turnaccel"] = get_anglediff(final["turnspeed"])
-            final.drop(columns=["fx", "fy", "fx_c", "fy_c"], inplace=True, errors="ignore")
-            return final
-
-        if "fx" not in final.columns:
-            return final
-
-        final["orient"] = np.nan
-
-        for ID in final.ID.unique():
-            for t in final.loc[final.ID == ID].traj.dropna().unique():
-                inds = final.loc[(final.ID == ID) & (final.traj == t)].index
-
-                # Derive orient from head position relative to centroid
-                pt1 = series_to_point_tuple(final.loc[inds], ["cx", "cy"])
-                pt2 = series_to_point_tuple(final.loc[inds], ["fx", "fy"])
-                final.loc[inds, "orient"] = points_to_angle(pt1, pt2, flip=True)
-
-                # Fall back to heading when orient is missing and speed is sufficient
-                final.loc[inds, "orient"] = final.loc[inds].apply(
-                    lambda row: row["heading"]
-                    if pd.isnull(row["orient"])
-                    and row.get("speed", 0) >= self.orient_min_speed
-                    else row["orient"], axis=1)
-
-                final.loc[inds, "orient"] = pd.to_numeric(
-                    final.loc[inds, "orient"], errors="coerce")
-
-                # Compute orientation vectors and fill/smooth them
-                valid = final.loc[inds, "orient"].dropna().index
-                result = final.loc[valid, "orient"].apply(angle_to_vec)
-                final.loc[valid, ["vx", "vy"]] = result.apply(
-                    pd.Series, index=["vx", "vy"])
-                for col in ["vx", "vy"]:
-                    final[col] = pd.to_numeric(final[col], errors="coerce")
-
-                if self.interpolate:
-                    final.loc[inds], _ = fillmissing(
-                        final.loc[inds], ["vx", "vy"], None, None,
-                        lenthresh=self.interp_gap_orient)
-                final.loc[inds] = smooth(
-                    final.loc[inds], [t], ["vx", "vy"], self.smoothwin)
-
-                # Recompute orient and turn rates from smoothed vectors
-                final.loc[inds, "orient"] = points_to_angle(
-                    (final.loc[inds, "vx"], final.loc[inds, "vy"]), flip=True)
-                final.loc[inds, "turnspeed"] = get_anglediff(final.loc[inds, "orient"])
-                final.loc[inds, "turnaccel"] = get_anglediff(final.loc[inds, "turnspeed"])
-
-        return final
-
+        return process_orientation(final, self)
 
     def _calc_distances(self, final, xs_global, ys_global):
         """Compute all distance measures and attach them to final."""
@@ -547,19 +487,23 @@ class Processor:
             final.drop(columns=["cx_c", "cy_c", "fx_c", "fy_c"],
                        inplace=True, errors="ignore")
 
-        # Drop head coordinates when using bw angle as orientation source
-        if self.orientfrombw:
-            final.drop(columns=["fx", "fy", "fx_c", "fy_c"],
-                       inplace=True, errors="ignore")
-
         final.drop(columns=["inroi"], inplace=True, errors="ignore")
 
+        if "orient" in final:
+            invalid = ~np.isfinite(final[["cx", "cy"]]).all(axis=1) | final["inmask"].eq(1)
+            final.loc[invalid, ["orient", "turnspeed", "turnaccel"]] = np.nan
+            if "orientation_valid" in final:
+                final.loc[invalid, "orientation_valid"] = False
+                final.loc[invalid, "orientation_source"] = "missing"
         final = ensure_position_sources(final)
 
         # Column ordering
         base_order = [
             "frame", "time", "ID", "traj", "inmask",
             "position_source", "position_valid", "head_source", "head_valid", "tail_source", "tail_valid",
+            "body_mode", "center_source", "body_valid", "area", "length", "length_method",
+            "body_straightness", "head_assignment", "head_asymmetry", "head_tail_swapped",
+            "orientation_source", "orientation_valid", "body_file", "tracking_run",
             "cx", "cy", "cx_c", "cy_c",
             "fx", "fy", "fx_c", "fy_c", "tx", "ty",
             "displ", "speed", "accel", "cumdispl",
@@ -593,6 +537,11 @@ class Processor:
             if col in final.columns:
                 final[col] = final[col].round(1)
 
+        if "body_file" in final:
+            final["body_file"] = final["body_file"].map(lambda value: os.path.relpath(
+                os.path.join(os.path.dirname(self.trackedfile), value), os.path.dirname(self.procfile))
+                if isinstance(value, str) and value else value)
+        final.rename(columns={"fx": "hx", "fy": "hy", "fx_c": "hx_c", "fy_c": "hy_c"}, inplace=True)
         return final
 
 

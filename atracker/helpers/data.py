@@ -41,7 +41,7 @@ def load_and_convert_tracking_dataframe(data_file, firstframe=None, lastframe=No
     """
     df = pd.read_csv(data_file)
     df.columns = [c.lower() for c in df.columns]
-    from .provenance import ensure_position_sources, point_values, SOURCE_COLUMNS
+    from .provenance import ensure_position_sources, point_values, SOURCE_COLUMNS, RAW_BODY_COLUMNS
     sources = ensure_position_sources(df)
 
     new_cols = {'frame', 'id', 'cx', 'cy', 'hx', 'hy', 'tx', 'ty', 'angle'}
@@ -79,6 +79,9 @@ def load_and_convert_tracking_dataframe(data_file, firstframe=None, lastframe=No
     else:
         df['IDstr'] = df['id'].astype(str)
 
+    for column in RAW_BODY_COLUMNS:
+        if column in sources and column not in df:
+            df[column] = sources[column]
     for column in SOURCE_COLUMNS:
         df[column] = sources[column]
 

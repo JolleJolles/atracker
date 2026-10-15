@@ -272,12 +272,12 @@ def anglediff(angle1, angle2):
 
 
 def get_anglediff(angle):
-    if type(angle) is not pd.core.series.Series:
-        angle = pd.Series(angle)
-    anglediff = angle - angle.shift(periods=1) if len(angle) > 1 else angle
-    anglediff.loc[anglediff < -180] = 360 - abs(anglediff.loc[anglediff < -180])
-    anglediff.loc[anglediff > 180] = (360 - anglediff.loc[anglediff > 180]) * -1
-    return list(anglediff)
+    """Wrapped changes within a sequence; its first observation has no change."""
+    values = pd.to_numeric(pd.Series(angle).copy(), errors="coerce")
+    delta = values.diff()
+    wrapped = (delta + 180) % 360 - 180
+    wrapped.loc[(wrapped == -180) & (delta > 0)] = 180
+    return wrapped.tolist()
 
 
 def orientchecker(curr_frame, start_frame, prev_frame, delay, centre_coord, con_angle,

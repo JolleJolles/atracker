@@ -118,7 +118,8 @@ def con_lathom(skeleton, contour):
 
 
 def draw_coordlist(img, coordlist, col="orange"):
-    cols, rows = list(zip(*coordlist))
+    coords = np.rint(coordlist).astype(int)
+    cols, rows = coords[:, 0], coords[:, 1]
     img[rows, cols] = list(namedcols(col, BRG=False))
     return img
 

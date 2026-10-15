@@ -131,7 +131,8 @@ class ATracker:
                     self.config.add_section(section)
             self.set_config(
                 overwrite=True, create_vid=True, create_dat=True,
-                advanced=False, link_dist=100, merge_dist=20,
+                body_mode="centroid", head_rule="near_widest", skeleton_points=10,
+                save_body=False, link_dist=100, merge_dist=20,
                 size_filter=False, size_filter_tol=0.25, size_filter_memory=500,
                 min_aspect_ratio=1.4, max_aspect_ratio=10,
                 check_flicker=False, skip_frames=0, max_framedist=200, track_merges=False,
@@ -172,6 +173,16 @@ class ATracker:
                          "keep_frames", "strict"} & track_keys
 
         if not legacy_sections and not legacy_params:
+            if "advanced" in track_keys:
+                old = dict(self.config.items("track"))
+                self.config.track.body_mode = old.get("body_mode", "skeleton" if old["advanced"] else "centroid")
+                self.config.save()
+                path = self.cfiles["config"]
+                with open(path) as stream:
+                    contents = stream.read()
+                with open(path, "w") as stream:
+                    stream.write(re.sub(r"(?m)^[ \t]*advanced[ \t]*=.*(?:\n|$)", "", contents))
+                self.config = LocalConfig(path, compact_form=True)
             return
 
         # Save backup of old config
@@ -206,7 +217,7 @@ class ATracker:
 
         self.set_config(
             overwrite=overwrite, create_vid=create_vid, create_dat=create_dat,
-            advanced=advanced, link_dist=link_dist, merge_dist=merge_dist,
+            body_mode="skeleton" if advanced else "centroid", link_dist=link_dist, merge_dist=merge_dist,
             size_filter=size_filter, size_filter_tol=size_filter_tol,
             size_filter_memory=size_filter_mem,
             min_aspect_ratio=min_ar, max_aspect_ratio=max_ar,
@@ -224,7 +235,7 @@ class ATracker:
         print("CONFIG MIGRATION: Legacy config format detected!")
         print(f"  Backup saved as: {os.path.basename(backup_path)}")
         print("  Track settings migrated:")
-        print(f"    simple={not advanced!s:<5} -> advanced={advanced}")
+        print(f"    body_mode={'skeleton' if advanced else 'centroid'}")
         print(f"    linkdisthreshold   -> link_dist     = {link_dist}")
         print(f"    mergedmindist      -> merge_dist    = {merge_dist}")
         print(f"    contour_mode       -> size_filter   = {size_filter}")
@@ -440,9 +451,14 @@ class ATracker:
             If a tracking video should be created.
         create_dat : bool, default True
             If data should be written to file.
-        advanced : bool, default False
-            Enable advanced contour extraction: skeleton, head, tail,
-            orientation, curvature. False = centroid and area only.
+        body_mode : str, default "centroid"
+            "centroid" uses the blob centroid; "skeleton" uses the centreline midpoint and tips.
+        head_rule : str, default "near_widest"
+            "near_widest", "near_centroid", "far_centroid" or "unassigned".
+        skeleton_points : int, default 10
+            Equally spaced centreline points per object in optional geometry output.
+        save_body : bool, default False
+            Save per-frame centreline/contour geometry to a compressed JSONL sidecar.
         size_filter : bool, default False
             Enable per-ID rolling area consistency check on top of global
             min/max thresholds. Rejects detections that deviate strongly
@@ -540,12 +556,22 @@ class ATracker:
                 self.overview.drop("region", axis=1, inplace=True)
                 self.save()
 
+        if "advanced" in kwargs or "simple" in kwargs:
+            raise ValueError('Use body_mode="centroid" or body_mode="skeleton"')
+        from atracker.helpers.body import body_settings
+        body_settings(kwargs.get("body_mode", (getattr(self.config.track, "body_mode", None) or "centroid")),
+                      kwargs.get("head_rule", (getattr(self.config.track, "head_rule", None) or "near_widest")),
+                      kwargs.get("skeleton_points", (getattr(self.config.track, "skeleton_points", None) or 10)))
+
         # track section
         _track_map = {
             "overwrite": "overwrite",
             "create_vid": "create_vid",
             "create_dat": "create_dat",
-            "advanced": "advanced",
+            "body_mode": "body_mode",
+            "head_rule": "head_rule",
+            "skeleton_points": "skeleton_points",
+            "save_body": "save_body",
             "size_filter": "size_filter",
             "size_filter_tol": "size_filter_tol",
             "size_filter_memory": "size_filter_memory",
@@ -1050,7 +1076,8 @@ class ATracker:
                 roi_edge_margin=10,
                 interp_gap_com=500, interp_gap_orient=100,
                 smoothwin=10, orient_min_speed=1,
-                interpolate=True, compute_movement=True, compute_distances=True):
+                interpolate=True, compute_movement=True, compute_distances=True,
+                orientation_fallback="none", correct_head_tail=True):
         """
         Post-process tracked CSV files into analysis-ready data.
 
@@ -1086,6 +1113,10 @@ class ATracker:
             Maximum frame gap to interpolate head/tail and orientation over.
         smoothwin : int, default 10
             Savitzky–Golay smoothing window in frames (1 = no smoothing).
+        orientation_fallback : str, default "none"
+            Set "heading" to explicitly allow movement-derived orientation.
+        correct_head_tail : bool, default True
+            Correct isolated head/tail transpositions before interpolation.
         orient_min_speed : float, default 1
             Minimum speed above which heading is used as fallback for orientation.
         interpolate : bool, default True
@@ -1155,6 +1186,8 @@ class ATracker:
             "interp_gap_orient": interp_gap_orient,
             "smoothwin": smoothwin,
             "orient_min_speed": orient_min_speed,
+            "orientation_fallback": orientation_fallback,
+            "correct_head_tail": correct_head_tail,
             "interpolate": interpolate,
             "compute_movement": compute_movement,
             "compute_distances": compute_distances,

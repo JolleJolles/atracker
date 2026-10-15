@@ -39,6 +39,12 @@ the videos in an overview spreadsheet; reopening `ATracker` loads saved settings
 Continue with [folder tracking](3-folder_tracking.md) to create backgrounds, draw
 geometry and tune detection before running the batch.
 
+Body detail is separate from detection method: use `body_mode="centroid"` for a
+blob centre or `body_mode="skeleton"` for a centreline midpoint and tips, with a
+configurable head rule. Optional geometry files retain sampled centrelines and
+contours; see [body settings](3-folder_tracking.md#9-other-tracking-checks-and-outputs).
+
+
 ## 3. Track an individual video
 
 ```python

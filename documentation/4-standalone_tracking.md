@@ -133,3 +133,20 @@ calibration and processing options remain in your script or notebook. Keep that
 code alongside the outputs to record how they were produced. Without
 `save_settings`, background and other setup files are temporary and cleaned up
 after tracking. The original video is preserved.
+
+## Optional body shape output
+
+Body detail is independent of `method="bw"` or a colour method:
+
+```python
+tracked = track_video("/path/to/video.mp4", body_mode="skeleton",
+    head_rule="near_widest", skeleton_points=10, save_body=True)
+```
+
+The default `body_mode="centroid"` saves blob position, area and bounding-box
+length. Skeleton mode uses the centreline midpoint for `cx/cy`, adds `hx/hy`,
+`tx/ty`, centreline length and straightness, and can save sampled centrelines and
+contours in `<video>.body.jsonl.gz`. See [body settings](3-folder_tracking.md#9-other-tracking-checks-and-outputs)
+for head-assignment rules and [output units](6-processing_data.md#7-output-columns-units-and-position-provenance).
+For processing, `orientation_fallback="heading"` explicitly enables movement-based
+estimates of missing orientation; the default keeps body orientation separate.

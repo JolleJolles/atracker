@@ -496,7 +496,7 @@ class Visualiser:
 
         # Rescale coordinate columns
         if resize != 1:
-            for col in ["cx", "cy", "fx", "fy", "tx", "ty", "mx", "my", "wx", "wy"]:
+            for col in ["cx", "cy", "hx", "hy", "fx", "fy", "tx", "ty", "mx", "my", "wx", "wy"]:
                 if col in data:
                     data[col] = data[col] * resize
 
@@ -507,8 +507,11 @@ class Visualiser:
 
         if "com" not in data and "cx" in data:
             data["com"] = _ptcol("cx", "cy")
-        if "head" not in data and "fx" in data:
-            data["head"] = _ptcol("fx", "fy")
+        if "head" not in data:
+            if "hx" in data:
+                data["head"] = _ptcol("hx", "hy")
+            elif "fx" in data:
+                data["head"] = _ptcol("fx", "fy")
         if "tail" not in data and "tx" in data:
             data["tail"] = _ptcol("tx", "ty")
         if "maskpt" not in data and "mx" in data:
@@ -698,15 +701,19 @@ class Visualiser:
                 img_draw = draw_coordlist(img_draw, sk, self.col_orange)
             t = conlist["tail"][i]
             if t == t:
+                t = tuple(np.rint(t).astype(int))
                 cv2.circle(img_draw, t, 0, self.col_red, 6)
             h = conlist["head"][i]
             if h == h:
-                arrowtip = get_coord(h[0], h[1], conlist["angle"][i], 13, True)
-                cv2.arrowedLine(img_draw, h, arrowtip,
-                                self.col_orient, 1, tipLength=0.4)
+                h = tuple(np.rint(h).astype(int))
+                if np.isfinite(conlist["angle"][i]):
+                    arrowtip = get_coord(h[0], h[1], conlist["angle"][i], 13, True)
+                    cv2.arrowedLine(img_draw, h, arrowtip,
+                                    self.col_orient, 1, tipLength=0.4)
                 cv2.circle(img_draw, h, 0, self.col_lightgreen, 6)
             c = conlist["com"][i]
             if c == c:
+                c = tuple(np.rint(c).astype(int))
                 idcol = (self.thresh_cols.get(thresh_type, self.col_com)
                          if not thresh_type.startswith("bw") else self.col_com)
                 cv2.circle(img_draw, c, 0, idcol, self.centre_lwidth)

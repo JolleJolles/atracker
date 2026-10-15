@@ -78,6 +78,8 @@ settings = dict(
     interp_gap_orient=100,
     smoothwin=10,
     orient_min_speed=1,
+    orientation_fallback="none",
+    correct_head_tail=True,
 
     # Measurements to compute
     compute_movement=True,
@@ -151,7 +153,9 @@ The tables below cover every entry in the default dictionary above. You can also
 | `min_traj_len` | `10` | Minimum trajectory length; also controls removal of short isolated detection bursts. Lower if valid visits are very brief. |
 | `mask_margin` | `15` | Pixel margin used to remove near-mask detections and prevent interpolation near the mask. |
 | `roi_edge_margin` | `10` | Pixel margin for rejecting head/tail positions near the ROI boundary and avoiding interpolation across exits. |
-| `orient_min_speed` | `1` | Minimum computed speed for using movement heading when head-derived orientation is missing. |
+| `orient_min_speed` | `1` | Minimum computed speed for heading fallback, when explicitly enabled. |
+| `orientation_fallback` | `"none"` | Use `"heading"` to allow movement-derived estimates of missing orientation; recorded separately. |
+| `correct_head_tail` | `True` | Correct isolated head/tail swaps supported by both neighbouring frames, before interpolation. Manual labels and sustained reversals are retained. |
 | `compute_movement` | `True` | Compute displacement, speed, acceleration, heading, orientation and turning variables. |
 | `compute_distances` | `True` | Compute distances using available ROI, mask, wall, zone and point annotations. Disable if these are unnecessary. |
 
@@ -173,7 +177,7 @@ Start with a few representative files: one with clean tracking, one with gaps, a
 | Tracking flickers at a refuge boundary | Inspect the mask, then adjust `mask_margin` in pixels. | A larger margin removes noise without removing valid entry/exit observations. |
 | Too many separate trajectories | Inspect remaining gaps before increasing `max_traj_gap`. | Separate visits or disappearances are not incorrectly joined. |
 | Valid brief visits disappear | Reduce `min_traj_len`. | Isolated noise bursts do not become accepted trajectories. |
-| Orientation is unreliable while stationary | Raise `orient_min_speed` or shorten `interp_gap_orient`. | Heading is not treated as body orientation during pauses or backward movement. |
+| Orientation is unreliable while stationary | Keep `orientation_fallback="none"` and review `interp_gap_orient`. | Smoothing cannot establish which endpoint is the head; heading fallback can be wrong during reverse swimming. |
 
 For example, for full-rate **25 FPS** tracking, a 12-frame centroid gap is about 0.48 seconds and an 11-sample smoothing window about 0.44 seconds. These are trial values, not universal defaults:
 
@@ -238,11 +242,16 @@ their original values when tracking starts later or skips frames.
 | --- | --- |
 | `frame` | Source-video frame number. |
 | `id` | Tracker identity label; colour methods can use named labels. |
-| `cx`, `cy` | Centroid, in pixels relative to the ROI's top-left; x rightward, y downward. |
+| `cx`, `cy` | Blob centroid or centreline midpoint according to `body_mode`, in ROI-local pixels; x rightward, y downward. |
 | `hx`, `hy`, `tx`, `ty` | Optional head/tail positions in the same pixel convention. |
-| `angle` | Optional detector orientation in degrees; axial B/W angles can be ambiguous by 180 degrees. |
+| `angle` | Optional head-directed detector orientation in degrees; missing for unassigned tips. |
 | `area` | Detected contour area in square pixels. |
 | `aspect_ratio` | Detected contour aspect ratio, dimensionless. |
+| `length`, `length_method` | Length in pixels: `box_major_axis` or traced `centerline` arc length. |
+| `body_mode`, `center_source`, `body_valid` | Requested detail mode, actual centre definition and extraction validity. |
+| `body_straightness` | Endpoint distance / centreline length, dimensionless; 1 is straight. |
+| `head_assignment`, `head_asymmetry` | Head rule and relative endpoint-distance asymmetry; not confidence probabilities. |
+| `body_file`, `tracking_run` | Optional relative geometry-file reference and matching run identifier. |
 | `consmerged` | Optional internal contour merge indicator. |
 | `position_source`, `head_source`, `tail_source` | Origins of the centroid, head and tail, respectively; see below. |
 | `position_valid`, `head_valid`, `tail_valid` | Whether the corresponding x/y pair is finite in this file. |
@@ -266,11 +275,13 @@ depends on `fulldata`, frame limits and resampling settings.
 | `traj` | Valid trajectory segment within an individual; missing when no valid trajectory is retained. |
 | `inmask` | 1 when no valid trajectory is retained, including missing/filtered data; not proof of physical occupancy inside a mask. |
 | `cx`, `cy` | Processed centroid pixels, ROI-relative with y downward; may be interpolated/smoothed. |
-| `fx`, `fy`, `tx`, `ty` | Processed head/tail pixels; raw `hx`, `hy` become `fx`, `fy`. |
-| `cx_c`, `cy_c`, `fx_c`, `fy_c` | Converted centroid/head positions in mm with mm/pixel calibration; x ROI-relative, y flipped upward by default (`datflip=True`). |
+| `hx`, `hy`, `tx`, `ty` | Processed head/tail pixels, retaining the tracking-file naming. |
+| `cx_c`, `cy_c`, `hx_c`, `hy_c` | Converted centre/head positions in mm with mm/pixel calibration; x ROI-relative, y flipped upward by default (`datflip=True`). |
 | `displ`, `cumdispl` | Displacement per retained step and cumulative displacement per individual, in mm with calibration. |
 | `speed`, `accel` | Linear speed in cm/s and acceleration in cm/s² with calibration, using the processing FPS. |
-| `heading`, `orient` | Movement heading and estimated body orientation in degrees; heading uses `atan2(dx, dy)`. |
+| `heading`, `orient` | Movement heading and estimated facing direction in degrees. Heading uses `atan2(dx, dy)`; body direction uses image y-up convention (0 up, 90 right). |
+| `orientation_source`, `orientation_valid` | Orientation origin and finite-value flag; see below. |
+| `head_tail_swapped` | Whether processing corrected an isolated endpoint transposition. |
 | `turnspeed`, `turnaccel` | Wrapped angular change per retained step and change of that angular change; not degrees/s or degrees/s². |
 | `cumturn`, `abscumturn` | Cumulative signed and absolute angular changes in degrees, per individual. |
 | `rdist` | Signed ROI-edge distance in mm with calibration; positive inside the ROI. |
@@ -279,9 +290,11 @@ depends on `fulldata`, frame limits and resampling settings.
 | `z1dist`, `z2dist`, ... | Distance to each palette zone, in mm with calibration; zero inside a zone. |
 | `pt1dist`, `pt2dist`, ... | Distance to saved reference points, in mm with calibration. |
 
-Optional fields can be absent. In particular, head coordinates are omitted when
-B/W angle is used instead. Current output ordering does not retain every
-intermediate processing column. Without calibration, physical units cannot be
+Optional fields can be absent. Body measurements and geometry references are retained
+when present in the tracked input; raw silhouette measures stay in pixels/pixels²
+even when position conversion is enabled. Head coordinates are retained when a
+recorded detector angle is used for orientation. Intermediate processing columns
+are not all exported. Without calibration, physical units cannot be
 inferred: displacement remains in pixel units and the legacy speed formula still
 divides by 10. Frame skipping/resampling also affects how step differences relate
 to time; inspect the retained frame interval before interpreting derivatives.
@@ -318,3 +331,36 @@ processed outputs after you change settings or correct coordinates.
 For processing an individual CSV without a project, use `process_video()` as shown
 in the [standalone guide](4-standalone_tracking.md). Return to the
 [guide overview](2-using_atracker.md) to choose another workflow.
+
+### Body orientation and optional geometry
+
+Processing separates facing direction (`orient`) from movement direction
+(`heading`). Head coordinates are used when available; an angle-only input can
+use its recorded detector angle instead. Missing orientation stays missing unless interpolation fills a short
+gap, or `orientation_fallback="heading"` explicitly allows movement-based estimates.
+`orientation_source` records `observed`, `manual`, `corrected`, `interpolated`,
+`unknown`, `heading` or `missing`; smoothing does not change the underlying source.
+`head_source`/`tail_source` can also be `corrected` after an isolated swap correction.
+Unassigned endpoints do not acquire a facing direction through interpolation or
+heading fallback. Angular changes are computed within each individual/trajectory;
+its first sample has no preceding angular change.
+
+With `save_body=True`, tracking streams `<video>.body.jsonl.gz` next to its CSV.
+The first JSON line contains schema version, run ID, video, ROI, units, frame base
+and body settings. Remaining lines contain `frame`, `time`, `id`, extraction
+status, the contour's x/y vertices and sampled centreline x/y points (or null if
+unavailable). Centreline points run from estimated head to tail, or have arbitrary
+endpoint order when head assignment is disabled. They are equally spaced along
+the traced path, including both tips; straight-line distances between samples can
+be shorter across bends. No centreline is calculated in centroid mode.
+
+Coordinates remain raw ROI-local pixels with y downward; add the saved ROI origin
+for full-frame positions. Frames start at 1 and times are frame/FPS in seconds.
+The sidecar contains accepted detections, not missing/interpolated frame records.
+It is readable with Python `gzip`/`json`, or R `jsonlite::stream_in(gzfile(path))`.
+Check that its metadata `tracking_run` matches the CSV before combining them.
+
+`body_file` is relative to the CSV that contains it, including processed outputs.
+The geometry remains the raw tracking geometry: processing and editor coordinate
+changes do not reshape the stored contour/centreline. A new tracking run replaces
+its geometry output; disabling geometry output leaves any old sidecar unreferenced.

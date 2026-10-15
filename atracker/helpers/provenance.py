@@ -6,6 +6,10 @@ import pandas as pd
 
 
 SOURCE_COLUMNS = ("position_source", "head_source", "tail_source")
+RAW_BODY_COLUMNS = ("area", "aspect_ratio", "length", "length_method", "body_mode", "center_source",
+                    "body_valid", "body_straightness", "head_assignment", "head_asymmetry",
+                    "body_file", "tracking_run")
+
 
 
 def point_columns(data):
@@ -90,4 +94,10 @@ def mark_manual_edits(edited, original=None):
         # New frames with no point have no source for that point type.
         new_missing = ~np.isfinite(now).all(axis=1) & baseline[name + "_source"].isna().to_numpy()
         result.loc[new_missing, name + "_source"] = "missing"
+    for column in RAW_BODY_COLUMNS:
+        if column in baseline and column not in result:
+            result[column] = baseline[column].to_numpy()
+    if "head_assignment" in result:
+        manual_head = result.head_source.eq("manual") & result.head_valid
+        result.loc[manual_head, "head_assignment"] = "manual"
     return result.sort_values(keys).reset_index(drop=True)

@@ -38,6 +38,8 @@ from .helpers.timing import TrackingTiming
 from .helpers.pool import BatchInterrupted
 from .helpers.output import write_csv_atomic
 from .helpers.naming import output_basename
+from .helpers.body import body_settings
+from .helpers.body_output import BodyWriter
 
 
 class KeyboardInterruptError(BatchInterrupted): pass
@@ -112,7 +114,11 @@ class Tracker:
         self.ustart = start
         self.ustop = stop
         self.suffix = "" if len(suffix)==0 else "_"+suffix
-        self.advanced = bool(getattr(self.config.track, 'advanced', False))
+        self.body_mode, self.head_rule, self.skeleton_points = body_settings(
+            getattr(self.config.track, "body_mode", "skeleton" if getattr(self.config.track, "advanced", False) else "centroid"),
+            getattr(self.config.track, "head_rule", "near_widest"),
+            getattr(self.config.track, "skeleton_points", 10))
+        self.save_body = bool(getattr(self.config.track, "save_body", False))
         self.orientfrombw = bool(getattr(self.config.track, 'orientfrombw', False))
         self.linkdisthreshold = getattr(self.config.track, 'link_dist', getattr(self.config.track, 'linkdisthreshold', 100))
         self.mergedmindist = getattr(self.config.track, 'merge_dist', getattr(self.config.track, 'mergedmindist', 20))
@@ -132,6 +138,7 @@ class Tracker:
     def setuptracking(self, ind, trackfile):
         self.cap = None
         self.vidout = None
+        self.body_writer = None
         self._source_moved = False
         self._completed_tracking = False
         try:
@@ -140,6 +147,8 @@ class Tracker:
             try:
                 self.exit()
             finally:
+                if self.body_writer is not None:
+                    self.body_writer.abort()
                 if self._source_moved:
                     if os.path.exists(self.tempfile):
                         if os.path.exists(self.trackfile):
@@ -555,6 +564,12 @@ class Tracker:
         t1 = time.time()
         key = None
         self.fulldat = {"frame":[]}
+        if create_dat and self.save_body:
+            self.body_writer = BodyWriter(os.path.splitext(trackeddata)[0] + ".body.jsonl.gz",
+                dict(video=self.filebase, coordinate_system="ROI-local pixels; x right, y down",
+                     roi=[list(self.pt1), list(self.pt2)], frame_base=1, body_mode=self.body_mode,
+                     head_rule=self.head_rule, skeleton_points=self.skeleton_points,
+                     centerline_order="head_to_tail; unassigned tips have arbitrary order"))
         self.movedat = {}
         self.last_valid = {}
         self.shape_history = {}
@@ -621,7 +636,7 @@ class Tracker:
                     if self.thresh_type.startswith("bw"):
                         PI = ProcessImage(self.img, self.img_bg, self.img_mask, self.thresh_type,
                             ti["blur"], ti["erode"], ti["blur2"], ti["threshold"], ti["min_area"], ti["max_area"],
-                            simple=not self.advanced, flicker_threshold=self.flicker_thresholds.get(float(ti.get("gamma", 1.0))),
+                            body_mode=self.body_mode, head_rule=self.head_rule, skeleton_points=self.skeleton_points, flicker_threshold=self.flicker_thresholds.get(float(ti.get("gamma", 1.0))),
                             min_aspect_ratio=min_ar, max_aspect_ratio=max_ar, gamma=ti.get("gamma", 1.0))
                     else:
                         if "hue_lo" in ti:
@@ -633,7 +648,7 @@ class Tracker:
                         PI = ProcessImage(self.img, self.img_bg, self.img_mask, self.thresh_type,
                             ti["blur"], min_area=ti["min_area"], max_area=ti["max_area"],
                             colmin=colmin, colmax=colmax,
-                            simple=True,
+                            body_mode=self.body_mode, head_rule=self.head_rule, skeleton_points=self.skeleton_points,
                             min_aspect_ratio=min_ar, max_aspect_ratio=max_ar, gamma=ti.get("gamma", 1.0))
                     self.img_thresh, self.allcons, self.conlist = PI.process()
                     timing.mark("detection")
@@ -701,8 +716,8 @@ class Tracker:
                     self.fulldat.setdefault("cx", []).extend([c[0] for c in filtered_coms])
                     self.fulldat.setdefault("cy", []).extend([c[1] for c in filtered_coms])
 
-                    # Store head/tail coordinates if not simple
-                    if self.advanced:
+                    # Store body endpoints for skeleton measurements
+                    if self.body_mode == "skeleton":
                         heads = [self.conlist["head"][i] for i in inds]
                         tails = [self.conlist["tail"][i] for i in inds]
                         self.fulldat.setdefault("hx", []).extend([h[0] if (h is not None and h == h) else np.nan for h in heads])
@@ -713,6 +728,33 @@ class Tracker:
                     elif self.orientfrombw:
                         # If orientfrombw, also extend angle column
                         self.fulldat.setdefault("angle", []).extend([self.conlist["angle"][i] for i in inds])
+
+                    valid_centres = [np.isfinite(point).all() for point in filtered_coms]
+                    for column in ("length", "length_method", "center_source", "body_valid"):
+                        self.fulldat.setdefault(column, []).extend([
+                            bool(self.conlist[column][i] and valid_centres[j]) if column == "body_valid"
+                            else self.conlist[column][i] for j, i in enumerate(inds)])
+                    self.fulldat.setdefault("body_mode", []).extend([self.body_mode] * len(ids))
+                    if self.body_mode == "skeleton":
+                        for column in ("body_straightness", "head_assignment", "head_asymmetry"):
+                            self.fulldat.setdefault(column, []).extend([self.conlist[column][i] for i in inds])
+                        # Rejected positions must not retain apparently valid head/tail observations.
+                        for column in ("hx", "hy", "tx", "ty", "angle"):
+                            values = self.fulldat[column]
+                            for j, valid in enumerate(valid_centres):
+                                if not valid:
+                                    values[len(values)-len(ids)+j] = np.nan
+                    if self.body_writer is not None:
+                        for j, (i, identity) in enumerate(zip(inds, ids)):
+                            if not valid_centres[j]:
+                                continue
+                            line = self.conlist["skeleton"][i]
+                            self.body_writer.write(dict(frame=int(self.frame_nr), time=float(self.frame_nr / self.fps), id=str(identity),
+                                center_source=self.conlist["center_source"][i],
+                                head_assignment=self.conlist["head_assignment"][i] if isinstance(self.conlist["head_assignment"][i], str) else None,
+                                body_valid=bool(self.conlist["body_valid"][i]),
+                                centerline=line if isinstance(line, list) else None,
+                                contour=self.conlist["contour"][i].reshape(-1, 2).tolist()))
 
                     # Add data to movedat
                     self.prevlist = self.conlist
@@ -818,6 +860,10 @@ class Tracker:
                     finaldat = pd.DataFrame(self.fulldat)
                     from .helpers.provenance import ensure_position_sources
                     finaldat = ensure_position_sources(finaldat, default="observed")
+                    if self.body_writer is not None:
+                        finaldat["body_file"] = os.path.basename(self.body_writer.path)
+                        finaldat["tracking_run"] = self.body_writer.run
+                        self.body_writer.commit()
                     write_csv_atomic(finaldat, trackeddata, index=False)
                 if create_vid and os.path.exists(trackedfile):
                     shutil.move(trackedfile, os.path.join(self.dirs["tracked"], filename+self.suffix+"_TR.mp4"))

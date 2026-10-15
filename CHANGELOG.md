@@ -36,6 +36,9 @@
 
 ## Unreleased
 
+- Separated contour detail from detection method with `body_mode="centroid"` or `"skeleton"`, available for background and colour detection. Added explicit head-assignment rules, traced/arc-length-resampled centrelines, body length/straightness and centre-definition fields. Area and length are saved in both modes; optional streamed `.body.jsonl.gz` files store raw per-frame/object contours and sampled centrelines with schema/run metadata. Saved boolean body-mode settings migrate; function calls now use `body_mode` rather than `simple`/`advanced`.
+- Made orientation processing explicit: optional heading fallback, per-trajectory angular differences, origin/validity fields and conservative isolated head/tail swap correction that preserves manual labels. Fixed angle-only input handling and the first angular difference in a sequence. Processed head columns now retain `hx/hy` naming, and body measures/file references survive processing and editor saves. Updated body/output guidance and visualisation for subpixel centreline points.
+
 - Removed obsolete `AT.set_interactive()` and `AT.check_interactive()`; use `AT.editor(purpose=...)` for setup and `AT.editor(purpose="timepoints")` for coordinate correction (migration examples in guide 5). Removed unused private `_get_all_inds()` and unused `helpers.geometry.fixheadtail()`, which referenced a missing helper.
 - Centralised region output filenames across tracking, skip checks, background creation, editing and geometry exports, and shared one-based frame / zero-based index conversions in the editor. Extracted editor project I/O and purpose-data loading into smaller modules. Invalid ROI text now reports its overview row, coordinate saves use atomic CSV replacement, and background extraction always releases the video reader and reports unreadable input.
 

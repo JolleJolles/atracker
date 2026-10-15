@@ -218,24 +218,57 @@ AT.set_config(
 
 The check starts after **10 accepted observations** for an ID. Earlier observations pass this particular check. With the default tolerance, accepted area spans **25%–400%** of the median; a tolerance of 0.5 narrows it to **50%–200%**. Increasing the tolerance makes the check stricter. The history contains accepted observations, not elapsed video frames, so gaps and frame skipping change how much time the history spans.
 
-Rejected detections receive missing centroid coordinates and do not update the area history. This occurs after ID linking; it is not a separate identity classifier. Advanced head/tail fields are stored separately and are not all cleared by the size check, so inspect centroid validity when interpreting those fields.
+Rejected detections receive missing centre and head/tail coordinates and do not update the area history. This occurs after ID linking; it is not a separate identity classifier. `body_valid` is false for rejected positions.
 
 Use this filter when occasional detections have implausible areas relative to the animal. It cannot fix a consistently wrong contour, and a history built from wrong detections gives a wrong baseline. Tight tolerances can remove legitimate curled, partially occluded or changing-size animals. Tune the basic threshold image first.
-
-The older names `shape_area_tol`, `shape_history_len`, and `contour_mode="dynamic"` are legacy configuration concepts. Use the three current settings above in new code.
 
 ## 9. Other tracking checks and outputs
 
 | Setting | Default | Role |
 | --- | --- | --- |
-| `advanced` | False | Enables additional B/W head/tail, skeleton and shape calculations. It does not automatically add convexity or curvature rejection. |
+| `body_mode` | `"centroid"` | Blob centroid, or `"skeleton"` for centreline midpoint and two tips. Applies to both B/W and colour contours. |
+| `head_rule` | `"near_widest"` | Endpoint nearest the widest region; alternatives are `"near_centroid"`, `"far_centroid"` and `"unassigned"`. |
+| `skeleton_points` | 10 | Equally spaced points, including both endpoints, in optional centreline output. |
+| `save_body` | False | Stream raw per-frame/object contours and centrelines to `.body.jsonl.gz`. |
 | `max_framedist` | 200 | Live jump-filter allowance in pixels per elapsed frame. Implausible centroid jumps are rejected; movements between two positions near masked regions have special handling. |
 | `skip_frames` | 0 | Skip frames during tracking. Nonzero values change temporal sampling and should be considered when assessing fast motion and filter history. |
 | `create_vid` | Project config | Write a tracking video for review. |
 | `show_tracking` | Project config | Show tracking live. |
 | `draw_zones` | False | Draw zone fills and labels in tracking/visualisation output. Does not affect detection or zone processing. |
 
-Area and aspect-ratio filtering operate in ordinary B/W and colour detection even when `advanced=False`. Advanced B/W mode computes quantities named inertia, convexity and curvature; the current detector does not apply rejection thresholds to those quantities. The variable called convexity is contour area divided by convex-hull area (often called solidity), not a direct curvature test. Experimental barcode handling is separate from the normal B/W/HSV workflow described here.
+Detection method and body detail are independent:
+
+```python
+AT.set_config(body_mode="skeleton", head_rule="near_widest",
+    skeleton_points=10, save_body=True)
+AT.track(folder="originals", threshtype="bw", overwrite=False)
+```
+
+Use `body_mode="centroid"` for simple blobs such as coloured markers. Both modes
+save area (pixels²) and length (pixels): the rotated bounding-box major axis in
+centroid mode, and traced centreline arc length in skeleton mode. `length_method`
+records that distinction. Skeleton mode also saves body straightness (endpoint
+distance / centreline length; 1 is straight). This is not local body curvature.
+
+`cx/cy` is the blob centroid in centroid mode and the half-arc-length centreline
+point in skeleton mode; `center_source` records which. An unresolved skeleton
+falls back to the blob centroid with `body_valid=False` and missing tips/length.
+The main connected skeleton path is traced in pixel-neighbour order, rather than
+sorting points by distance from an endpoint; branches outside that path are omitted.
+Closed loops without tips remain unresolved.
+
+The default head heuristic selects the tip nearest the silhouette's maximum
+interior distance (a proxy for its widest part). Centroid-based rules use the
+**blob centroid**, not the centreline midpoint. No rule establishes biological
+identity universally. `head_asymmetry` records the relative difference between
+endpoint distances to the chosen reference (0 means a tie; it is not a probability).
+Use `head_rule="unassigned"` for symmetric objects: `hx/hy` and `tx/ty` are then
+unlabelled endpoint candidates, and no body-facing orientation is inferred.
+
+The [output reference](6-processing_data.md#7-output-columns-units-and-position-provenance)
+explains the geometry sidecar. It is optional and contains raw silhouettes, not
+processed/interpolated body shapes. Experimental barcode handling is separate
+from this B/W/HSV workflow.
 
 ## 10. Validate a short run, then track the batch
 
