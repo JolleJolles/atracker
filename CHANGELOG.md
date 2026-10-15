@@ -2,21 +2,14 @@
 
 ## TODO
 
-### Finish the current release
-
-1. **Tracking-data provenance and output documentation — completed.** Added separate centroid/head/tail source and validity fields through automated tracking, manual editing and processing, including legacy-unknown positions and manual deletion records. Documented output columns, units, frames and coordinate conventions in guide 6.
-2. **Small batch-workflow improvements — completed.** Added visible per-file failures, continuation after ordinary errors, cancellation cleanup, atomic tracking/processing CSV replacement and source-video recovery. Regions sharing a video run sequentially within parallel batches. Configuration-aware run discovery remains part of the instance redesign.
-3. **Focused code cleanup — completed.** Centralised video/region output names and editor frame conversions; extracted project editor loading/saving and purpose-data loading. Removed superseded project editor methods, an unused private selector and the unused broken head/tail correction helper. Malformed ROI values now raise clear errors; background readers are released on failures and successful extraction.
-4. **Release preparation.** Finish and commit the pending unreviewed-only event-checker option; keep the package at 1.0.0 until the next release and distinguish the existing v1.0.1 tag from a published GitHub release; check public API changes and migration notes. Condense the roughly 70 Unreleased entries into clear user-facing groups, retaining the detailed Git history. Check documented entry points against the final release and prepare a tagged release candidate before the stable release.
-
-### Subsequent release A — modular tracking methods (point 4)
+### Modular tracking methods
 
 - Define a common detector input: current frame, frame/time index, ROI/mask context, resolved method settings and explicit per-video temporal state where needed.
 - Define a common detector output: detections in a documented coordinate system, with positions, optional contours/orientation, confidence and optional identity hints. Keep optional capabilities explicit rather than requiring every method to produce every field.
 - Adapt existing background-subtraction and colour detection to that interface first, preserving their behaviour. Keep video reading, ID assignment, outputs, visualisation and processing outside the detector implementations.
 - Support independent backend state/reset and shared threshold-preview behaviour. Leave extension points for predictive backgrounds, barcode detection and YOLO; implementing those methods is separate work.
 
-### Subsequent release B — unified tracking instances and project layout (point 2)
+### Unified tracking instances and project layout
 
 - Introduce one versioned, self-contained JSON per tracking instance: video reference, unique instance ID, frame limits, animal information, ROI/calibration, original vector masks/walls/zones, method settings and external asset references. Multiple instances can share one video and arena.
 - Use the same instance format for project and standalone workflows. Save resolved run settings/software version with outputs; copy presets into instances explicitly rather than silently changing them through shared references.
@@ -24,101 +17,49 @@
 - Make the overview a regenerable user-facing table of instances and experimental metadata, with explicit import/synchronisation of spreadsheet edits. Tracking reads saved instance definitions. Remove redundant image-path/geometry columns from the overview.
 - Store original editable vector geometry as authoritative data and generate raster masks/zone previews as needed; retain actual background images as method assets. Provide migration from numbered-folder projects, legacy overview/configuration files and raster geometry without moving or deleting source recordings.
 
-### Subsequent release C — portability and tutorial datasets (points 7 + 1)
+### Portability and tutorial datasets
 
 - Add installation and core end-to-end checks on supported operating systems/Python versions; separate GUI requirements from non-interactive tracking/processing where practical.
 - Curate the existing tutorial videos into a separate example-data folder or downloadable bundle covering different tracking scenarios, with setup files, runnable examples and expected outputs. Record permissions/licensing and dataset versions. Formal performance benchmarking is deferred and is not a priority for the planned paper.
 
 ### Later
 
-- Extend the existing processing diagnostics and interactive review into an integrated quality-control report with direct navigation to flagged intervals (point 3).
-- Make an intermediate release only at a genuinely usable, checked milestone; use development commits or release candidates for intermediate work rather than retrospectively labelling old commits as releases. Choose version increments from public API/data-format compatibility, not the number of changelog entries. No releases or tags are created by this roadmap.
+- Extend the existing processing diagnostics and interactive review into an integrated quality-control report with direct navigation to flagged intervals.
+- Make an intermediate release only at a genuinely usable, checked milestone; use development commits or release candidates for intermediate work rather than retrospectively labelling old commits as releases. Choose version increments from public API/data-format compatibility, not the number of changelog entries. Compatible additions can follow as 2.x; breaking project-layout changes require another major version.
 
 ## Unreleased
 
-- Added unreviewed-only event selection with full CSV preservation on save; refreshed current guides to use current function names.
+_No changes yet._
 
-- Separated contour detail from detection method with `body_mode="centroid"` or `"skeleton"`, available for background and colour detection. Added explicit head-assignment rules, traced/arc-length-resampled centrelines, body length/straightness and centre-definition fields. Area and length are saved in both modes; optional streamed `.body.jsonl.gz` files store raw per-frame/object contours and sampled centrelines with schema/run metadata. Saved boolean body-mode settings migrate; function calls now use `body_mode` rather than `simple`/`advanced`.
-- Made orientation processing explicit: optional heading fallback, per-trajectory angular differences, origin/validity fields and conservative isolated head/tail swap correction that preserves manual labels. Fixed angle-only input handling and the first angular difference in a sequence. Processed head columns now retain `hx/hy` naming, and body measures/file references survive processing and editor saves. Updated body/output guidance and visualisation for subpixel centreline points.
+## v2.0.0 — 2026-10-15
 
-- Removed obsolete `AT.set_interactive()` and `AT.check_interactive()`; use `AT.editor(purpose=...)` for setup and `AT.editor(purpose="timepoints")` for coordinate correction (migration examples in guide 5). Removed unused private `_get_all_inds()` and unused `helpers.geometry.fixheadtail()`, which referenced a missing helper.
-- Centralised region output filenames across tracking, skip checks, background creation, editing and geometry exports, and shared one-based frame / zero-based index conversions in the editor. Extracted editor project I/O and purpose-data loading into smaller modules. Invalid ROI text now reports its overview row, coordinate saves use atomic CSV replacement, and background extraction always releases the video reader and reports unreadable input.
+### Breaking changes
 
-- Added `AT.watch_folder()` to discover stable incoming MP4 recordings, copy them safely into the project, reuse a configured overview template, extract backgrounds and track during experiments. Documented settling limits, shared geometry, metadata and retry behaviour. `AT.track()` now returns a success flag so the watcher stops on tracking failure or interruption.
+- Use `AT.editor(purpose=...)` for project setup and coordinate correction; removed the superseded project editor interfaces. Image measurements use `measure_images()` and event review uses `event_checker()`.
+- Use `body_mode="centroid"` or `"skeleton"` instead of `simple`/`advanced` arguments. Existing saved boolean body settings migrate automatically. Skeleton-mode positions use the centreline midpoint; centroid mode uses the blob centroid.
+- Processed head coordinates now use `hx/hy` and `hx_c/hy_c`, matching tracked coordinates. Legacy head columns remain readable. Missing orientation no longer silently becomes movement heading: enable `orientation_fallback="heading"` explicitly if needed.
+- Code is organised into the current `track`, `process`, `visualise`, `editor` and `helpers` modules. Use the documented top-level imports; obsolete internal module paths are not retained.
+- See [Migrating to 2.0](documentation/8-migrating_to_2.md) for replacement calls, coordinate conventions and reprocessing notes.
 
-- Improved batch failure reporting and cancellation: ordinary file errors no longer hide or stop other files, interrupted tracking restores moved source videos, and tracking/processing CSVs replace existing outputs only after a successful write. Parallel tracking serialises regions sharing a video; fixed single-region skip naming and per-file link-distance conversion. Processing and visualisation return the batch success flag.
-- Added position_source/head_source/tail_source and independent validity flags to tracking and processing. Editor saves retain unchanged origins and label per-point manual additions/corrections/deletions; coordinate interpolation is labelled at the fill step, and legacy files use unknown provenance. Preserve head/tail information during editor loading and retain tail coordinates in processed output. Added an output-column/units reference in guide 6.
-- Added AT.export_geometry() to save per-video/region geometry JSON beside originals: full-frame ROI and raster-derived mask/wall/zone polygons with holes and separate parts, calibration, metadata and associated file references. Documented export, R use and the continuing image-based workflow in guide 2.
-- Replaced the notebook-led documentation with seven connected Markdown guides: installation, capabilities, folder tracking, standalone tracking, the editor, processing and image measurement. Archived the historical notebooks and refreshed README examples and links.
-- Renamed batch_measure() to measure_images() without an alias; fixed known-scale calibration so px_per_mm works without interactive calibration. Added a dedicated measurement guide with calibration, CSV output and resume behaviour.
-- Reorganised the manual-tracking guide to match the standalone tutorial: numbered workflows, compact examples and control/output tables, with current event-review options and legacy notes at the end.
-- Added a standalone tutorial covering single-video setup, saved .atrk bundles, processing, processed-video overlays and batch automation, with a README link.
-- Improved event review with playback retained across navigation, coloured review buttons and an optional advance-after-review toggle. Added immediate frame-box seeking and frame/second step buttons, separated and widened candidate-bound controls, removed the unused visible-range option, and added a draggable editor sidebar divider. Avoid loading empty mask filenames to remove the harmless Qt warning.
-- Renamed the discrete-interval reviewer to event_checker; removed the state_checker API and editor-purpose alias. Added modifier="complete" or another checkbox name, retaining per-event values in its own CSV column and restoring them on navigation.
-- Added state_checker() and AT.editor(purpose="state_checker", candidates=...) for MoveR event CSVs: candidate/video navigation, automatic start-frame seeking, a state-interval timeline, editable inclusive bounds, and confirm/deny decisions saved to review in the original CSV. Preserves extra columns and frame indexing, with unsaved-edit prompts and protection against overwriting external CSV edits.
-- Reduced normal tracking progress to every 1,000 processed frames instead of every 10 seconds, showing only frame position/stop and FPS without repeating the processed count. Detailed stage timings remain opt-in via `profile_interval`.
-- Simplified tracking logs: batch file/worker counts, concise per-file start/completion lines, and progress every 10 seconds (one updating line in single-worker terminals; separate lines for pools, notebooks and redirected logs). Timings, flicker cutoffs and per-ID shape summaries now require `profile_interval>0`. Completion FPS counts processed frames, timing reports identify the last processed frame, and duplicate completion punctuation was removed.
-- Moved the local run date before the time in timestamped ATracker messages and removed hostname prefixes. The startup banner now labels the last Git commit/date explicitly and indicates uncommitted package changes, separately from the package release version.
-- Disabled zone overlays by default for new configurations, migrated configurations, and configurations without `draw_zones`. Set `draw_zones=True` explicitly to show them; zone processing is unchanged.
-- Cached zone overlay fills and label positions instead of rebuilding full-frame masks and distance transforms on every frame. The cache refreshes when geometry or frame size changes and preserves overlapping/disconnected zone rendering. Profiling the saved barbdrought zones identified this as a substantial tracking-video drawing cost.
-- Added opt-in `track(profile_interval=1000)` windowed wall-clock diagnostics for input, detection, association/filtering, drawing, video conversion, encoder queue waits and display, plus final writer drain and file output timings. Fixed live colour/B/W orientation linking scanning all accumulated detections on every frame, which made long runs progressively slower when enabled.
-- Added a dedicated automated-tracking tuning guide covering B/W and HSV pipelines, threshold/gamma/blur/erosion settings, area and aspect-ratio limits, flicker rejection, rolling size filtering, configuration precedence, short trial runs and troubleshooting. Linked it from the README/manual guide and corrected legacy settings in the tutorial notebook.
-- Aligned tracking and Editor aspect-ratio limits: threshold-specific settings override project defaults, the preview exposes and uses both limits, and saving preserves them and other configuration fields. Flicker estimation now uses detection's gamma and grayscale conversion, reuses cutoffs per gamma, and preserves video position. Added focused filter regression checks.
-- Added `AT.set_config(draw_zones=False)` to hide zone fills and labels in live tracking and saved tracking/visualisation videos while retaining walls, masks, and zone processing. Existing configurations continue to show zones by default.
-- Made named threshold settings stay active across Next/Prev navigation, including unsaved adjustments and revisited videos. Threshold drafts are shared per configuration for the Editor session; Save current writes the configuration and clears its shared unsaved state, while Close still prompts about unsaved changes.
-- Added `AT.editor(threshtypes=[...])` to load or create named threshold configurations and save them to the project threshold YAML, matching `set_interactive()` without changing overview assignments. Supplying names opens threshold editing by default; new configurations start from defaults rather than inheriting the previous video's settings.
-- Added per-threshold tracking gamma (default 1.0), applied to frames and backgrounds before subtraction and blur in both detection and the Editor threshold preview. The separate Tracking gamma control is saved with the threshold configuration; the display Gamma control remains display-only.
-- Kept `AT.editor()` as the project interface and made Save current / S persist the active task without closing or advancing, including immediate overview saves. Purpose switches and video navigation retain separate pending edits; Close checks all video/purpose states. Added automatic purpose-specific loading, tracker-consistent region filenames, calibration saving, explicit threshold configuration selection and colour-threshold editing, and preserved existing coordinate ID labels on save. Setup drawings use full-frame coordinates while coordinate editing uses the saved ROI.
-- Added the local run date to the ATracker startup message, alongside the existing version and Git commit information.
-- Shortened the Editor brightness label to "Gamma" and made the slider width flexible with a compact Reset button to avoid crowding the control.
-- Added a "Use visible range" toggle to the Editor tracking timeline, expanding the existing All/Past/Future range across the bar with actual frame labels; the view stays fixed while dragging and follows the current frame after release.
-- Added a collapsible Editor tracking-coverage timeline with one row per ID for the selected point type, present/missing/outside-interval colours, and a draggable frame playhead. Coverage follows coordinate edits and Undo; compressed pixels flag any missing frame. Corrected the video slider and coordinate deletion controls to use the displayed frame consistently.
-- Added an Editor brightness (gamma) slider with a reset button and remembered setting to make dark videos and backgrounds easier to view; adjustments affect only the display, preserving source images, tracking thresholds, and annotations.
-- Made tracking video encoding configurable through `video_codec`, `video_preset`, and `video_crf`; added output-only `video_resize` to reduce encoded video dimensions and writing cost without reducing tracking resolution.
-- Fixed visualisation dropping disconnected pieces of zones, placed zone labels inside visible areas, corrected y-down heading arrows, and moved arrow starts outside centroid markers. Increased FFmpeg export quality (H.264 CRF 18). Zone distances now also include every disconnected piece; existing distances require reprocessing.
-- Added an imageio/FFmpeg H.264 fallback when OpenCV cannot open visualisation output, with encoder errors reporting the target path and video resources released on rendering errors.
-- Aligned full-frame backgrounds and wall/zone overlays with cropped, resized visualisation videos.
-- Padded odd-sized visualisation frames to even MP4 dimensions (for example, a half-size ROI of 316 × 485 becomes 316 × 486) and added a frame-size check to prevent silent writer mismatches.
-- Included video dimensions, FPS and OpenCV version in visualisation writer errors to help diagnose environment-specific output failures.
-- Made visualisation report the absolute output path or explicitly state that saving is disabled, and raise an error if the video writer fails to open or no output is written.
-- Fixed overlay opacity accumulating where pending zone shapes overlap; zones/previews and mask outlines are now composited before applying the shared display opacity.
-- Fixed pandas `SettingWithCopyWarning` during processed-output rounding by explicitly copying the selected output columns.
-- Fixed tracked points and point-editing controls not appearing/working in the multi-file editor's "Coordinate data" mode; moved filenames above navigation buttons and added full-name tooltips/window titles.
-- Fixed signed ROI-distance comparisons so `roi_edge_margin` targets positions near/outside the boundary instead of the arena interior, for centroid gap handling and head/tail filtering. Short gaps still join according to `max_traj_gap`.
-- Clarified the processing guide with ATracker-native file selection, a complete default settings dictionary and explanations of every `process()` parameter.
-- Split manual tracking into its own guide and rewrote processing documentation around the current API, with runnable examples, parameter-selection advice and output-unit caveats.
-- Fixed the interactive editor resetting the last-used drawing tool when opening the next video; window size, position and maximized/fullscreen state are now saved with personal editor preferences.
-- Extended the mask opacity slider to zones and pending zone previews, and renamed it "Mask / Zones Opacity".
-- Fixed adding zones to saved images to select an unused palette colour; saving now colours pending shapes automatically instead of storing dark previews.
-- Fixed saved zones images appearing blank when reopened with `set_interactive(zones=True)` by converting loaded RGB images to the canvas's ARGB format.
-- Video frames are now written in a separate thread via AsyncVideoWriter, preventing video writing from blocking the tracking loop.
-- Fixed race condition where shared Tracker instance attributes were overwritten by concurrent workers, causing missing or misplaced output files and CSVs.
-- Added skip_frames parameter to track(). Set to 0 (default) to process every frame, or higher to skip frames and increase tracking speed (e.g. skip_frames=1 processes every 2nd frame).
-- Fixed infinite loop where already-tracked files were not removed from the job queue before pooled tracking started.
-- Reworked `filter_tracking_jumps` mask handling: jumps between two positions both near a masked region are now accepted unconditionally (fish traversed under mask), replacing the previous straight-line path-crossing check which failed when both endpoints were on the same side of the mask.
-- Fixed `filter_tracking_jumps` to use filtered (post-jump-check) positions when updating `movedat`, preventing noise contours rejected by the jump filter from overwriting the ID's reference position and causing persistent ID mis-assignment in subsequent frames.
-- Added `contour_mode` setting to `set_config()`. Set to `"dynamic"` to enable a per-ID rolling area consistency filter that rejects detections deviating strongly (below 25% or above 400%) from the ID's rolling median area, suppressing noise contours that pass the global thresholds but are inconsistent with the tracked object's history.
-- Tracking completion now prints per-ID median area and aspect ratio for accepted detections.
-- Replaced O(N²) trajectory drawing with per-ID deques: drawing now reads from a fixed-length deque instead of scanning all accumulated fulldat, eliminating a bottleneck that grew throughout long videos.
-- Removed `sys.stdout.flush()` from the per-frame threshold loop.
-- Cached all drawing color values (`eval()`, `namedcols()`) before the tracking loop so they are computed once per video instead of once per frame.
-- Eliminated redundant `cv2.contourArea` call per contour: areas are now computed once during sorting in `process()` and passed directly to `processcon()`.
-- Fixed mask shape comparison in `preprocess_bw_mode` to compare spatial dimensions only, avoiding a no-op `cv2.resize` call every frame.
-- Updated `processcon` function to get the aspect ratio of the rotated rectangle and always long side divided by short side, and set better default parameters for tracking fish
-- Fixed checking of firstframe and lastframe columns of the overview to deal with empty strings
-- When drawing rectangle in roi, mask, or measure mode in `set_interactive` mode, it now also shows the surface area.
-- Added `__citation__` to `__init__.py`.
-- Updated `README.md` with zenodo doi and moved citation to the top.
-- Cleaned `CHANGELOG.md` structure and standardize dates
-- Split monolithic `utils.py` into eight focused modules: `geometry.py` (spatial math), `contour_utils.py` (contour operations), `angles.py` (angle/orientation math), `trajectory.py` (movement analysis), `tracking_filters.py` (real-time filters), `media.py` (video/image I/O), `qt_utils.py` (Qt/screen utilities), and `data_utils.py` (data handling). `utils.py` is now a thin backward-compatibility shim so all existing code continues to work unchanged.
-- Replaced `from .utils import *` in `tracker.py` and `process_image.py` with explicit imports from the new specialized modules for cleaner dependency tracking.
-- Deleted obsolete `tracker_man.py` (manual tracking superseded by `visual_editor.py` / `manual_tracker()` wrapper).
-- Renamed `processor.py` to `post_processor.py` to clearly distinguish post-processing of tracked data from image processing; `__init__.py` updated accordingly.
-- Rewrote `__init__.py` with explicit named exports (`ATracker`, `manual_tracker`, `batch_measure`, `Processor`, `__citation__`) instead of star imports.
-- Fixed `warp_barcode_patch` being defined inside the `ProcessImage` class body instead of as a module-level function, which would have caused a `NameError` at runtime.
-- Fixed "colname does not exist" message printed during tracking: `namedcols()` was called for `"bw"` threshold types which are not color names; these are now correctly skipped when building the per-threshtype color lookup.
-- Fixed OpenCV `rectangle` crash (`Can't parse 'pt2'. Sequence item with index 1 has a wrong type`) in the tracking overlay caused by `pythutils.draw_text` returning float pixel coordinates; replaced all per-frame overlay label drawing with direct `cv2.getTextSize` / `cv2.rectangle` / `cv2.putText` calls using explicit integer arithmetic.
-- Added `drawinfobox` option to the tracking overlay and `visualiser`: when enabled, draws a compact white infobox in the top-left corner showing frame number and per-ID area and aspect ratio, replacing the previous fragmented per-line labels. The standalone frame-number label is suppressed automatically when the infobox is active.
+### Features
+
+- Unified project editor for ROI, masks, zones, calibration, frame limits, named B/W/HSV threshold configurations and coordinate correction. Added a draggable per-ID tracking-coverage timeline, purpose-specific drafts, consistent save/navigation behaviour, display gamma, flexible sidebar and remembered display preferences.
+- Event checker for candidate CSVs: jump between event windows, adjust frame bounds, confirm/deny, retain playback state, optionally advance after decisions, add a named modifier checkbox and select only unreviewed events while preserving all CSV rows and extra columns.
+- Standalone tracking, processing and visualisation without a project overview, with reusable `.atrk` setup files. Added image length/area measurement and CSV output through `measure_images()`.
+- Independent centroid/skeleton body modes for background subtraction and colour contours, explicit head-assignment rules, traced centreline midpoint/tips, length and straightness. Optional streamed `.body.jsonl.gz` files retain raw contours and equally spaced centreline points with coordinate/run metadata.
+- Per-point position/head/tail origins and validity flags distinguish observations, manual changes, interpolation and unknown legacy data. Orientation has separate origin/validity fields and conservative isolated head/tail swap correction.
+- Folder watcher discovers settled incoming MP4s, copies them into a project, reuses a tested setup template, extracts backgrounds and tracks during experiments.
+- Portable per-video/region geometry and calibration exports for downstream spatial analyses. Added output-column, frame, coordinate and units documentation.
+
+### Improvements and fixes
+
+- Reliable batch failure reporting and continuation, cancellation cleanup, recovery of moved source videos, atomic CSV replacement and restart/skip behaviour. Parallel workers serialise regions sharing a source video; processing/visualisation return success flags.
+- Unified contour area/aspect-ratio filtering, configurable tracking gamma and consistent flicker rejection. Fixed per-file link-distance conversion, mask-related jump handling and rejected detections contaminating tracking history.
+- Tracking progress/timing reports, per-ID contour summaries, configurable encoding/output resizing and asynchronous video writing. Fixed worker file races and already-tracked queue loops.
+- Corrected zone image saving/loading, multipart zone visualisation/distances, mask/zone opacity, ROI distance checks, coordinate frame indexing and overlay alignment. Reprocessing is needed to apply corrected zone-distance calculations to existing results.
+- Improved visualisation writer diagnostics and cleanup, H.264 fallback, odd-frame dimensions, heading conventions, orientation arrows and subpixel body overlays.
+- Centralised output naming and editor frame conversions; extracted editor persistence/purpose loading and body/orientation helpers. Removed unused broken helpers, surfaced invalid ROI errors and ensured background readers are released.
+- Replaced long current tutorials with focused Markdown guides; retained historical notebooks in the archive. Prepared package metadata, source/wheel checks, migration guidance and a Trusted Publishing workflow for 2.0.
 
 ## v1.0.0 — 2026-03-05 
 First public release of ATracker.

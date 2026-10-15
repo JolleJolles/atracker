@@ -15,4 +15,4 @@ venv/
 dist/
 build/
 coverage/
-
+*.egg-info/

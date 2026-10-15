@@ -12,7 +12,7 @@ DESCRIPTION = "A flexible Python toolkit for animal tracking"
 DISTNAME = "atracker"
 MAINTAINER = "Jolle Jolles"
 MAINTAINER_EMAIL = "j.w.jolles@gmail.com"
-URL = "https://github.com/JolleJolles"
+URL = "https://github.com/JolleJolles/atracker"
 DOWNLOAD_URL = ""
 
 # Read long description from README
@@ -36,6 +36,12 @@ if __name__ == "__main__":
         license="Apache-2.0",
         platforms=["Windows", "Linux", "Mac OS-X"],
         packages=find_packages(),
+        python_requires=">=3.9",
+        project_urls={
+            "Documentation": URL + "/blob/main/documentation/2-using_atracker.md",
+            "Changelog": URL + "/blob/main/CHANGELOG.md",
+            "Issues": URL + "/issues",
+        },
         include_package_data=True,
         install_requires=[
             # Core scientific stack

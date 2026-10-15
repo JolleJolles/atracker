@@ -8,70 +8,58 @@
 
 ## Citation
 
-If you use ATracker in your research, please cite:
-
-Jolles JW (2026). *ATracker: A flexible Python toolkit for animal tracking*. Zenodo. https://doi.org/10.5281/zenodo.18889019
-
+Jolles JW (2026). *ATracker: A flexible Python toolkit for animal tracking*. Zenodo.
+https://doi.org/10.5281/zenodo.18889019
 
 ## Overview
 
-**ATracker** provides tools for the full workflow of behavioural tracking experiments, from preparing videos and defining tracking regions to running automated or manual tracking and generating trajectory data for analysis.
+ATracker combines video setup, automated and manual tracking, interactive
+correction, event review and trajectory processing. Use a project overview for
+collections of recordings, or track and process individual videos independently.
+It is developed by **Dr Jolle Jolles**, senior researcher at **CEAB-CSIC**.
 
-ATracker is particularly well suited for behavioural experiments where flexible annotation, quality control, and integration with custom analysis pipelines are essential. Relying on `opencv`, it is optimized for cross-platform use and runs on **macOS**, **Windows**, and **Linux**.
+Version **2.0** brings a unified editor, explicit body modes, per-point provenance,
+geometry exports and more reliable batch execution. Existing scripts may need
+changes: see [Migrating to 2.0](documentation/8-migrating_to_2.md).
 
-ATracker is developed and actively maintained by **Dr Jolle Jolles**, senior researcher at **CEAB-CSIC**.
+## Features
 
-## Key Features
+- **Background subtraction and HSV colour detection**, with multi-object tracking,
+  named threshold configurations, gamma, contour filters and optional flicker rejection.
+- **Independent body detail:** track a blob centroid, or estimate a centreline
+  midpoint, head/tail, body length and straightness. Optional files retain contours
+  and equally spaced centreline points for later shape analyses.
+- **Interactive editor** for ROI, masks, zones, calibration, frame limits and
+  thresholds; correct centroid/head/tail coordinates and inspect per-ID coverage.
+- **Event review** from CSV candidates: seek directly to each event, adjust bounds,
+  confirm/deny, add a modifier checkbox and resume with unreviewed events only.
+- **Processing and provenance:** filter/smooth trajectories, interpolate gaps,
+  calculate movement and spatial measures, and distinguish observed, manually
+  changed and interpolated positions. Body orientation remains distinct from heading.
+- **Batch and live experiments:** parallel execution, visible failures, safe CSV
+  replacement, source recovery and a folder watcher using a configured setup template.
+- **Standalone workflows**, reusable setup files, tracking overlays and portable
+  geometry/calibration exports for downstream analysis.
+- **Image measurements:** draw calibrated lengths/outlines and save measurements to CSV.
 
-- **Interactive annotation tools** for defining ROIs, masks, zones, and walls
-- **Flexible thresholding system** supporting grayscale and HSV colour tracking
-- **Automated contour-based tracking** with centroid, orientation, skeleton, and shape features
-- **Manual tracking and correction interface** for efficient annotation and quality control
-- **Post-processing pipeline** for trajectory smoothing, interpolation, and distance calculations
-- **Image measurement tools** for manual measurement of points and distances across image/video collections
-- **Batch processing framework** for large collections of videos
-- **Project organisation tools** for managing tracking experiments and outputs
-- **Config-based workflows** for reproducible tracking pipelines
-- Support for **multi-object tracking**, **colour tracking**, and experimental **barcode detection**
-
-## When is ATracker useful?
-
-**ATracker** is particularly useful when:
-
-- experiments require custom masks, regions, or zones
-- tracking parameters must be tuned interactively per video
-- manual correction or annotation of trajectories is needed
-- multiple tracking modes are used within the same experiment
-- large video datasets must be processed in a structured, reproducible workflow
-
-## Documentation
-
-The current guides use Markdown, with practical examples for each workflow:
-
-1. [Installing ATracker](documentation/1-installing_atracker.md)
-2. [Using ATracker: capabilities and workflow overview](documentation/2-using_atracker.md)
-3. [Folder tracking](documentation/3-folder_tracking.md)
-4. [Standalone tracking, processing and visualisation](documentation/4-standalone_tracking.md)
-5. [Tracking editor: setup, correction and event review](documentation/5-tracking_editor.md)
-6. [Processing tracking data](documentation/6-processing_data.md)
-7. [Measuring images](documentation/7-measuring_images.md)
-
-Older notebooks are preserved in [documentation/archive](documentation/archive/README.md)
-as historical examples; use the guides above for current APIs.
+Barcode handling remains experimental; modular detector backends and the
+instance-based project redesign are planned, not released capabilities.
 
 ## Installation
 
-Install ATracker directly from GitHub:
+Install from GitHub in a virtual environment:
 
 ```bash
-pip install git+https://github.com/JolleJolles/atracker.git
+python -m pip install git+https://github.com/JolleJolles/atracker.git
 ```
 
-All dependencies (including `pythutils`) are installed automatically.
+See [installation](documentation/1-installing_atracker.md) for environment setup,
+notebooks and troubleshooting. Python 3.9 or later is required. The GUI uses
+PyQt5 and OpenCV; runtime dependencies are declared in `setup.py`.
 
-## Usage
+## Quick start
 
-For a structured video project:
+For a video project:
 
 ```python
 from atracker import ATracker
@@ -79,26 +67,51 @@ from atracker import ATracker
 AT = ATracker("/path/to/project")
 AT.setup_files(fname_extract=False)
 AT.get_bgfiles()
-AT.editor(inds=[0], purpose="thresholding", threshtypes=["bw"])
+AT.editor(inds=[0], threshtypes=["bw"])
+AT.set_config(body_mode="centroid", show_tracking=False)
 AT.track(folder="originals", threshtype="bw", overwrite=False)
 AT.process()
 ```
 
-Configure ROI, masks, object counts and calibration as needed before tracking.
-The [folder guide](documentation/3-folder_tracking.md) walks through setup.
+Initialisation moves supported videos in the project root into `0originals`.
+Use a dedicated project folder. Configure ROI, masks, object counts and calibration
+as needed; [folder tracking](documentation/3-folder_tracking.md) covers the workflow.
 
-For one video without a project:
+For centreline measurements, independently of B/W or colour detection:
+
+```python
+AT.set_config(body_mode="skeleton", head_rule="near_widest",
+    skeleton_points=10, save_body=True)
+```
+
+In centroid mode `cx/cy` is the blob centroid; in skeleton mode it is the centreline
+midpoint. Head/tail estimates use a configurable heuristic. See the
+[output reference](documentation/6-processing_data.md#7-output-columns-units-and-position-provenance)
+for coordinate conventions, units, validity and raw geometry files.
+
+For a video without a project:
 
 ```python
 from atracker import track_video, process_video
 
-tracked = track_video("/path/to/video.mp4", save_settings=True)
+tracked = track_video("/path/to/video.mp4", body_mode="centroid", save_settings=True)
 processed = process_video(tracked, videofile="/path/to/video.mp4", conv=0.25)
 ```
 
-Here `conv` is the experiment's calibration in mm/pixel. See the
-[standalone guide](documentation/4-standalone_tracking.md) for ROI/mask handling,
-reusing setup and rendering an overlay video.
+Here `conv` is calibration in mm/pixel. See [standalone tracking](documentation/4-standalone_tracking.md)
+for setup reuse and visualisation.
+
+For candidate review in a project:
+
+```python
+AT.event_checker("jump_candidates.csv", modifier="complete", unreviewed_only=True)
+```
+
+For new recordings sharing a tested setup:
+
+```python
+AT.watch_folder("/path/to/incoming", template_ind=0)
+```
 
 For image measurements:
 
@@ -109,6 +122,17 @@ measure_images("/path/to/images", px_per_mm=10,
     variables=["length"], out_csv="measurements.csv")
 ```
 
-## Compatibility
+## Documentation
 
-ATracker relies on a stable set of packages and is designed to work out of the box with **Python 3.9+**. Dependencies are declared in `setup.py`; keep a record of your working environment when reproducing an analysis.
+1. [Installing ATracker](documentation/1-installing_atracker.md)
+2. [Capabilities and workflow overview](documentation/2-using_atracker.md)
+3. [Folder tracking, batches and incoming recordings](documentation/3-folder_tracking.md)
+4. [Standalone tracking, processing and visualisation](documentation/4-standalone_tracking.md)
+5. [Tracking editor and event review](documentation/5-tracking_editor.md)
+6. [Processing, output columns and units](documentation/6-processing_data.md)
+7. [Measuring images](documentation/7-measuring_images.md)
+8. [Migrating to 2.0](documentation/8-migrating_to_2.md)
+
+See the [changelog](CHANGELOG.md) for release changes and the roadmap.
+Archived notebooks are [historical examples](documentation/archive/README.md),
+not current tutorials. Report problems through [GitHub Issues](https://github.com/JolleJolles/atracker/issues).
