@@ -52,6 +52,7 @@ ATracker is developed and actively maintained by **Dr Jolle Jolles**, senior res
   - Using ATracker to set up a project workspace, define tracking settings, and run analysis
   - [Tuning automated tracking](documentation/3-tracking.md), covering thresholding, gamma, area/aspect-ratio filters, flicker rejection and the rolling size filter
   - [Processing and interpreting tracking results](documentation/4-processing_data.md), including how to choose processing parameters
+  - [Standalone tracking, processing and visualisation](documentation/6-standalone_tracking.md), without a project or overview spreadsheet
   - [Manual tracking and correction](documentation/5-manual_tracking.md), with project and standalone examples
 
 - The **`tutorial/` folder** contains a curated set of example videos to learn ATracker's capabilities. It is accompanied by a compact Jupyter notebook (`atracker_tutorial_compact.ipynb`) that demonstrates the key steps for:
