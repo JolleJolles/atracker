@@ -1,6 +1,4 @@
 """Position origin is independent of whether processing retains its coordinates."""
-import ast
-
 import numpy as np
 import pandas as pd
 
@@ -13,30 +11,22 @@ RAW_BODY_COLUMNS = ("area", "aspect_ratio", "length", "length_method", "body_mod
 
 
 def point_columns(data):
-    return (("position", "cx", "cy", "com"),
-            ("head", "hx" if "hx" in data else "fx", "hy" if "hy" in data else "fy", "head"),
-            ("tail", "tx", "ty", "tail"))
+    return (("position", "cx", "cy"),
+            ("head", "hx" if "hx" in data else "fx", "hy" if "hy" in data else "fy"),
+            ("tail", "tx", "ty"))
 
 
-def point_values(data, x, y, packed=None):
+def point_values(data, x, y):
     if x in data and y in data:
         return data[[x, y]].apply(pd.to_numeric, errors="coerce")
-    if packed and packed in data:
-        def unpack(value):
-            try:
-                value = ast.literal_eval(value) if isinstance(value, str) else value
-                return float(value[0]), float(value[1])
-            except (TypeError, ValueError, IndexError, SyntaxError):
-                return np.nan, np.nan
-        return pd.DataFrame(data[packed].map(unpack).tolist(), index=data.index, columns=[x, y])
     return pd.DataFrame(np.nan, index=data.index, columns=[x, y])
 
 
 def ensure_position_sources(data, default="unknown"):
     """Add provenance without replacing known origins when coordinates are filtered."""
     data = data.copy()
-    for name, x, y, packed in point_columns(data):
-        valid = np.isfinite(point_values(data, x, y, packed)).all(axis=1)
+    for name, x, y in point_columns(data):
+        valid = np.isfinite(point_values(data, x, y)).all(axis=1)
         column = name + "_source"
         if column not in data:
             data[column] = np.where(valid, default, "missing")
@@ -80,11 +70,11 @@ def mark_manual_edits(edited, original=None):
     original = ensure_position_sources(original).set_index(keys)
     baseline = original.reindex(pd.MultiIndex.from_frame(edited[keys])).reset_index()
     result = ensure_position_sources(edited, default="manual")
-    for name, x, y, packed in point_columns(result):
-        values = point_values(result, x, y, packed)
+    for name, x, y in point_columns(result):
+        values = point_values(result, x, y)
         bx = "hx" if name == "head" and "hx" in baseline else x
         by = "hy" if name == "head" and "hy" in baseline else y
-        prior = point_values(baseline, bx, by, packed)
+        prior = point_values(baseline, bx, by)
         # The editor represents points using QPoint integer coordinates.
         prior = np.trunc(prior.to_numpy(dtype=float))
         now = values.to_numpy(dtype=float)

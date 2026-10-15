@@ -35,11 +35,13 @@ _No changes yet._
 
 ### Breaking changes
 
+- Removed automatic config/overview migration, obsolete tracking-setting aliases and packed-coordinate readers; conversion code is provided in the upgrade guide. Removed the obsolete undo-buffer fallback and package release guide.
+
 - Use `AT.editor(purpose=...)` for project setup and coordinate correction; removed the superseded project editor interfaces. Image measurements use `measure_images()` and event review uses `event_checker()`.
-- Use `body_mode="centroid"` or `"skeleton"` instead of `simple`/`advanced` arguments. Existing saved boolean body settings migrate automatically. Skeleton-mode positions use the centreline midpoint; centroid mode uses the blob centroid.
-- Processed head coordinates now use `hx/hy` and `hx_c/hy_c`, matching tracked coordinates. Legacy head columns remain readable. Missing orientation no longer silently becomes movement heading: enable `orientation_fallback="heading"` explicitly if needed.
+- Use `body_mode="centroid"` or `"skeleton"` instead of `simple`/`advanced` arguments. Old saved settings require explicit conversion using the upgrade guide. Skeleton-mode positions use the centreline midpoint; centroid mode uses the blob centroid.
+- Processed head coordinates now use `hx/hy` and `hx_c/hy_c`, matching tracked coordinates. Old head columns and packed coordinate CSVs require explicit conversion. Missing orientation no longer silently becomes movement heading: enable `orientation_fallback="heading"` explicitly if needed.
 - Code is organised into the current `track`, `process`, `visualise`, `editor` and `helpers` modules. Use the documented top-level imports; obsolete internal module paths are not retained.
-- See [Migrating to 2.0](documentation/8-migrating_to_2.md) for replacement calls, coordinate conventions and reprocessing notes.
+- See [Upgrading across breaking changes](documentation/8-upgrading.md) for replacement calls, coordinate conventions and reprocessing notes.
 
 ### Features
 
@@ -59,7 +61,7 @@ _No changes yet._
 - Corrected zone image saving/loading, multipart zone visualisation/distances, mask/zone opacity, ROI distance checks, coordinate frame indexing and overlay alignment. Reprocessing is needed to apply corrected zone-distance calculations to existing results.
 - Improved visualisation writer diagnostics and cleanup, H.264 fallback, odd-frame dimensions, heading conventions, orientation arrows and subpixel body overlays.
 - Centralised output naming and editor frame conversions; extracted editor persistence/purpose loading and body/orientation helpers. Removed unused broken helpers, surfaced invalid ROI errors and ensured background readers are released.
-- Replaced long current tutorials with focused Markdown guides; retained historical notebooks in the archive. Prepared package metadata, source/wheel checks, migration guidance and a Trusted Publishing workflow for 2.0.
+- Replaced long current tutorials with focused Markdown guides; retained historical notebooks in the archive. Prepared package metadata, source/wheel checks, upgrade guidance and a Trusted Publishing workflow for 2.0.
 
 ## v1.0.0 — 2026-03-05 
 First public release of ATracker.

@@ -33,71 +33,34 @@ def get_filepart(dir, sep="_", part=2, remove_ext=True, ext=None):
     return out
 
 
+def require_current_tracking_columns(data):
+    """Validate external tracking files; conversions belong in the upgrade guide."""
+    obsolete = {"com", "head", "tail", "fx", "fy", "fx_c", "fy_c"} & set(data.columns)
+    if obsolete or not {"frame", "cx", "cy"}.issubset(data.columns):
+        raise ValueError("Expected flat frame/cx/cy coordinates and hx/hy for head points; "
+                         "convert older CSVs using documentation/8-upgrading.md")
+    if not ({"id", "ID"} & set(data.columns)):
+        raise ValueError("Tracking CSV must contain an id or ID column")
+
+
 def load_and_convert_tracking_dataframe(data_file, firstframe=None, lastframe=None):
-    """
-    Loads a tracking data CSV, converts old formats to new, filters frames,
-    and returns a standardized DataFrame with columns:
-    frame, id, IDstr, cx, cy, hx, hy, tx, ty, angle
-    """
+    """Load current coordinates and map identity labels to numeric editor IDs."""
+    from .provenance import ensure_position_sources
     df = pd.read_csv(data_file)
-    df.columns = [c.lower() for c in df.columns]
-    from .provenance import ensure_position_sources, point_values, SOURCE_COLUMNS, RAW_BODY_COLUMNS
-    sources = ensure_position_sources(df)
-
-    new_cols = {'frame', 'id', 'cx', 'cy', 'hx', 'hy', 'tx', 'ty', 'angle'}
-    if not new_cols.issubset(df.columns):
-        if {'com', 'angle'}.issubset(df.columns):
-            def parse_point(s):
-                try:
-                    return literal_eval(str(s))
-                except Exception:
-                    return (np.nan, np.nan)
-            new_df = pd.DataFrame()
-            new_df['frame'] = df['frame']
-            new_df['IDstr'] = df['id'].astype(str)
-            new_df[['cx', 'cy']] = df['com'].apply(parse_point).apply(pd.Series)
-            head = point_values(df, 'hx' if 'hx' in df else 'fx', 'hy' if 'hy' in df else 'fy', 'head')
-            tail = point_values(df, 'tx', 'ty', 'tail')
-            new_df['hx'], new_df['hy'] = head.iloc[:, 0], head.iloc[:, 1]
-            new_df['tx'], new_df['ty'] = tail.iloc[:, 0], tail.iloc[:, 1]
-            new_df['angle'] = pd.to_numeric(df['angle'], errors='coerce')
-            df = new_df
-        elif {'cx', 'cy'}.issubset(df.columns):
-            new_df = pd.DataFrame()
-            new_df['frame'] = df['frame']
-            new_df['IDstr'] = df['id'].astype(str)
-            new_df['cx'] = df['cx']
-            new_df['cy'] = df['cy']
-            head = point_values(df, 'hx' if 'hx' in df else 'fx', 'hy' if 'hy' in df else 'fy', 'head')
-            tail = point_values(df, 'tx', 'ty', 'tail')
-            new_df['hx'], new_df['hy'] = head.iloc[:, 0], head.iloc[:, 1]
-            new_df['tx'], new_df['ty'] = tail.iloc[:, 0], tail.iloc[:, 1]
-            new_df['angle'] = np.nan
-            df = new_df
-        else:
-            raise ValueError(f"Unrecognized tracking file format: {data_file}")
-    else:
-        df['IDstr'] = df['id'].astype(str)
-
-    for column in RAW_BODY_COLUMNS:
-        if column in sources and column not in df:
-            df[column] = sources[column]
-    for column in SOURCE_COLUMNS:
-        df[column] = sources[column]
-
+    require_current_tracking_columns(df)
+    df = df.rename(columns={"ID": "id"}) if "id" not in df else df
+    df['IDstr'] = df['id'].astype(str)
+    for column in ('hx', 'hy', 'tx', 'ty', 'angle'):
+        if column not in df:
+            df[column] = np.nan
+    df = ensure_position_sources(df)
     if firstframe is not None:
-        df = df[df['frame'] >= firstframe]
+        df = df[df.frame >= firstframe]
     if lastframe is not None:
-        df = df[df['frame'] <= lastframe]
-
-    unique_ids = sorted(df['IDstr'].unique(), key=str)
-    id_map = {name: i + 1 for i, name in enumerate(unique_ids)}
-    df['ID'] = df['IDstr'].map(id_map)
-
-    if 'id' in df.columns:
-        df = df.drop(columns=['id'])
-
-    return df.reset_index(drop=True)
+        df = df[df.frame <= lastframe]
+    labels = sorted(df.IDstr.unique(), key=str)
+    df['ID'] = df.IDstr.map({name: i + 1 for i, name in enumerate(labels)})
+    return df.drop(columns='id').reset_index(drop=True)
 
 
 def ensure_columns(df, columns_with_defaults):
@@ -116,17 +79,6 @@ def duplicate_row(df, index, number):
     row_to_duplicate['region'] = range(2, number + 1)
     df = pd.concat([df, row_to_duplicate], ignore_index=True)
     return df
-
-
-def lit_converter(val):
-    if pd.isnull(val):
-        return (np.nan, np.nan)
-    if isinstance(val, (tuple, list)):
-        return val
-    try:
-        return literal_eval(val)
-    except Exception:
-        return (np.nan, np.nan)
 
 
 def safe_literal_eval(val):

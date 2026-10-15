@@ -77,19 +77,18 @@ class BodyMeasurementsTest(unittest.TestCase):
             with gzip.open(path, 'rt') as stream:
                 self.assertEqual(json.loads(next(stream))['tracking_run'], writer.run)
 
-    def test_existing_advanced_config_is_migrated(self):
+    def test_outdated_config_is_rejected_without_rewriting_it(self):
         with tempfile.TemporaryDirectory() as directory:
             project = object.__new__(ATracker)
             project.cfiles = {'config':str(Path(directory)/'project.conf')}
             project.config = LocalConfig(project.cfiles['config'], compact_form=True)
             project.config.add_section('track')
             project.config.track.advanced = True
-            project.config.track.link_dist = 80
             project.config.save()
-            project._migrate_config()
-            self.assertEqual(project.config.track.body_mode, 'skeleton')
-            self.assertEqual(project.config.track.link_dist, 80)
-            self.assertNotIn('advanced', dict(project.config.items('track')))
+            before = Path(project.cfiles['config']).read_bytes()
+            with self.assertRaisesRegex(ValueError, '8-upgrading.md'):
+                project._validate_config()
+            self.assertEqual(Path(project.cfiles['config']).read_bytes(), before)
 
     def test_only_isolated_swaps_are_corrected(self):
         data = pd.DataFrame(dict(fx=[1.,-1,1], fy=0., tx=[-1.,1,-1], ty=0., head_source='observed', tail_source='observed'))

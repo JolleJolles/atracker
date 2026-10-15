@@ -496,7 +496,7 @@ class Visualiser:
 
         # Rescale coordinate columns
         if resize != 1:
-            for col in ["cx", "cy", "hx", "hy", "fx", "fy", "tx", "ty", "mx", "my", "wx", "wy"]:
+            for col in ["cx", "cy", "hx", "hy", "tx", "ty", "mx", "my", "wx", "wy"]:
                 if col in data:
                     data[col] = data[col] * resize
 
@@ -507,11 +507,8 @@ class Visualiser:
 
         if "com" not in data and "cx" in data:
             data["com"] = _ptcol("cx", "cy")
-        if "head" not in data:
-            if "hx" in data:
-                data["head"] = _ptcol("hx", "hy")
-            elif "fx" in data:
-                data["head"] = _ptcol("fx", "fy")
+        if "head" not in data and "hx" in data:
+            data["head"] = _ptcol("hx", "hy")
         if "tail" not in data and "tx" in data:
             data["tail"] = _ptcol("tx", "ty")
         if "maskpt" not in data and "mx" in data:
@@ -761,7 +758,7 @@ class Visualiser:
 # Module-level helper
 # ------------------------------------------------------------------
 def _zone_parts(coords):
-    """Accept legacy single polygons and multipart zone geometry."""
+    """Accept single polygons and multipart zone geometry."""
     if not len(coords):
         return []
     if np.asarray(coords[0]).ndim == 1:

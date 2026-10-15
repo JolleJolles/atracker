@@ -115,15 +115,14 @@ class Tracker:
         self.ustop = stop
         self.suffix = "" if len(suffix)==0 else "_"+suffix
         self.body_mode, self.head_rule, self.skeleton_points = body_settings(
-            getattr(self.config.track, "body_mode", "skeleton" if getattr(self.config.track, "advanced", False) else "centroid"),
+            getattr(self.config.track, "body_mode", "centroid"),
             getattr(self.config.track, "head_rule", "near_widest"),
             getattr(self.config.track, "skeleton_points", 10))
         self.save_body = bool(getattr(self.config.track, "save_body", False))
         self.orientfrombw = bool(getattr(self.config.track, 'orientfrombw', False))
-        self.linkdisthreshold = getattr(self.config.track, 'link_dist', getattr(self.config.track, 'linkdisthreshold', 100))
-        self.mergedmindist = getattr(self.config.track, 'merge_dist', getattr(self.config.track, 'mergedmindist', 20))
-        _cm = getattr(self.config.track, 'contour_mode', 'static')
-        self.size_filter = bool(getattr(self.config.track, 'size_filter', _cm == 'dynamic'))
+        self.linkdisthreshold = getattr(self.config.track, 'link_dist', 100)
+        self.mergedmindist = getattr(self.config.track, 'merge_dist', 20)
+        self.size_filter = bool(getattr(self.config.track, 'size_filter', False))
         self.keep_frames = 10
         self.tracked = 0
         self.threshtype_override = threshtype
@@ -188,7 +187,7 @@ class Tracker:
         self.tempfile = os.path.join(self.dirs["temp"], self.filebase)
         conv = self.overview.loc[ind]["conv"]
         conv = 1 if conv!=conv else float(conv)
-        self.linkdisthreshold = getattr(self.config.track, "link_dist", getattr(self.config.track, "linkdisthreshold", 100)) / conv
+        self.linkdisthreshold = getattr(self.config.track, "link_dist", 100) / conv
         self.trackedfile = os.path.join(self.dirs["temp"], self.filename+self.suffix+"_TR.mp4")
         self.trackeddata = os.path.join(self.dirs["tracked"], self.filename+self.suffix+".csv")
 
@@ -687,13 +686,13 @@ class Tracker:
                     # --- Dynamic shape filter: reject contours that deviate from per-ID rolling area ---
                     areas = [self.conlist["area"][i] for i in inds]
                     if self.size_filter:
-                        _area_tol = getattr(self.config.track, 'size_filter_tol', getattr(self.config.track, 'shape_area_tol', 0.25))
+                        _area_tol = getattr(self.config.track, 'size_filter_tol', 0.25)
                         shape_accept = filter_contour_shape(
                             ids, areas, self.frame_nr, self.shape_history, area_tol=_area_tol, pr_comm=self.pr_comm)
                         for i, ok in enumerate(shape_accept):
                             if not ok:
                                 filtered_coms[i] = (np.nan, np.nan)
-                    _history_len = getattr(self.config.track, 'size_filter_memory', getattr(self.config.track, 'shape_history_len', 500))
+                    _history_len = getattr(self.config.track, 'size_filter_memory', 500)
                     update_shape_history(ids, areas, filtered_coms, self.shape_history, history_len=_history_len)
 
                     # Collect overlay info for this thresh type

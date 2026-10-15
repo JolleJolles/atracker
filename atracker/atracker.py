@@ -146,7 +146,7 @@ class ATracker:
                 draw_contournrs=False, trajs_below=False, draw_zones=False, internal="")
             print("Config settings stored", end=" | ")
         else:
-            self._migrate_config()
+            self._validate_config()
             print("Config settings loaded", end=" | ")
 
         if os.path.exists(self.cfiles["threshinfo"]):
@@ -161,91 +161,17 @@ class ATracker:
 
         os.chdir(self.dir)
 
-    def _migrate_config(self):
-        """Detect a legacy config format and migrate it to the current one."""
-        sections = list(self.config)
-        legacy_sections = [s for s in ["exp", "bgextract", "orient"] if s in sections]
-        try:
-            track_keys = set(k for k, _ in self.config.items("track"))
-        except Exception:
-            track_keys = set()
-        legacy_params = {"simple", "contour_mode", "startframe", "stopframe",
-                         "keep_frames", "strict"} & track_keys
-
-        if not legacy_sections and not legacy_params:
-            if "advanced" in track_keys:
-                old = dict(self.config.items("track"))
-                self.config.track.body_mode = old.get("body_mode", "skeleton" if old["advanced"] else "centroid")
-                self.config.save()
-                path = self.cfiles["config"]
-                with open(path) as stream:
-                    contents = stream.read()
-                with open(path, "w") as stream:
-                    stream.write(re.sub(r"(?m)^[ \t]*advanced[ \t]*=.*(?:\n|$)", "", contents))
-                self.config = LocalConfig(path, compact_form=True)
-            return
-
-        # Save backup of old config
-        backup_path = self.cfiles["config"].replace(".conf", "_legacy_backup.conf")
-        shutil.copy2(self.cfiles["config"], backup_path)
-
-        # Read old track values to preserve them
-        def _gt(key, default):
-            try:
-                val = dict(self.config.items("track")).get(key, default)
-                return default if val is None else val
-            except Exception:
-                return default
-
-        overwrite       = _gt("overwrite", True)
-        create_vid      = _gt("create_vid", True)
-        create_dat      = _gt("create_dat", True)
-        advanced        = not bool(_gt("simple", True))
-        link_dist       = int(float(_gt("linkdisthreshold", 100)))
-        merge_dist      = int(float(_gt("mergedmindist", 20)))
-        size_filter     = _gt("contour_mode", "static") == "dynamic"
-        size_filter_tol = float(_gt("shape_area_tol", 0.25))
-        size_filter_mem = int(float(_gt("shape_history_len", 500)))
-        min_ar          = float(_gt("min_aspect_ratio", 1.4))
-        max_ar          = float(_gt("max_aspect_ratio", 10))
-
-        # Recreate config from scratch with new format
-        os.remove(self.cfiles["config"])
-        self.config = LocalConfig(self.cfiles["config"], compact_form=True)
-        for section in ["track", "vis"]:
-            self.config.add_section(section)
-
-        self.set_config(
-            overwrite=overwrite, create_vid=create_vid, create_dat=create_dat,
-            body_mode="skeleton" if advanced else "centroid", link_dist=link_dist, merge_dist=merge_dist,
-            size_filter=size_filter, size_filter_tol=size_filter_tol,
-            size_filter_memory=size_filter_mem,
-            min_aspect_ratio=min_ar, max_aspect_ratio=max_ar,
-            check_flicker=False, skip_frames=0, max_framedist=200, track_merges=False,
-            show_tracking=True, vid_displaysize=1, frame_disstep=100,
-            userwait=False, idcol=True,
-            contour_col="blue", centre_col="white", front_col="black",
-            orient_col="black", traj_col="yellow", centre_lwidth=13,
-            orient_lwidth=2, orient_tip=0.15, orient_length=15,
-            traj_length=4, traj_minthick=6.4, traj_maxthick=9,
-            traj_opacity=0.5, mask_opacity=0.15, box_opacity=0.7,
-            draw_contournrs=False, trajs_below=False, draw_zones=False, internal="")
-
-        print(f"\n{'='*60}")
-        print("CONFIG MIGRATION: Legacy config format detected!")
-        print(f"  Backup saved as: {os.path.basename(backup_path)}")
-        print("  Track settings migrated:")
-        print(f"    body_mode={'skeleton' if advanced else 'centroid'}")
-        print(f"    linkdisthreshold   -> link_dist     = {link_dist}")
-        print(f"    mergedmindist      -> merge_dist    = {merge_dist}")
-        print(f"    contour_mode       -> size_filter   = {size_filter}")
-        print(f"    shape_area_tol     -> size_filter_tol    = {size_filter_tol}")
-        print(f"    shape_history_len  -> size_filter_memory = {size_filter_mem}")
-        if legacy_sections:
-            print(f"  Removed sections: {legacy_sections}")
-        print("  Visualisation settings reset to defaults.")
-        print("  Review your new config file and update if needed.")
-        print(f"{'='*60}\n")
+    def _validate_config(self):
+        """Reject outdated settings without modifying the user's configuration."""
+        keys = set(dict(self.config.items("track"))) if "track" in self.config else set()
+        obsolete = {"simple", "advanced", "contour_mode", "linkdisthreshold", "mergedmindist",
+                    "shape_area_tol", "shape_history_len", "startframe", "stopframe", "keep_frames", "strict"}
+        if keys & obsolete or {"exp", "bgextract", "orient"} & set(self.config):
+            raise ValueError("Outdated configuration: convert it using documentation/8-upgrading.md")
+        from atracker.helpers.body import body_settings
+        body_settings(getattr(self.config.track, "body_mode", None),
+                      getattr(self.config.track, "head_rule", None) or "near_widest",
+                      getattr(self.config.track, "skeleton_points", None) or 10)
 
     def _name_and_index(self, vid):
 
@@ -271,17 +197,12 @@ class ATracker:
         self.overview["date"] = self.overview["date"].astype(str).str[:10]
         self.config = LocalConfig(self.cfiles["config"], compact_form=True)
 
-        # Normalise column names: merge legacy "Exclude" and "skip" into "exclude"
-        ov = self.overview
-        if "exclude" not in ov.columns:
-            ov["exclude"] = np.nan
-        if "Exclude" in ov.columns:
-            ov.loc[ov["Exclude"] == 1, "exclude"] = 1
-            ov.drop(columns=["Exclude"], inplace=True)
-        if "skip" in ov.columns:
-            ov.loc[ov["skip"] == 1, "exclude"] = 1
-            ov.drop(columns=["skip"], inplace=True)
-        self.overview = ov
+        if {"Exclude", "skip"} & set(self.overview.columns):
+            raise ValueError("Outdated overview headers: convert them using documentation/8-upgrading.md")
+        if "exclude" not in self.overview:
+            self.overview["exclude"] = np.nan
+        if os.path.exists(self.cfiles["config"]):
+            self._validate_config()
 
     def showinfo(self, files=None, inds=None, return_inds=False):
         ov = self.overview

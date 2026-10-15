@@ -18,29 +18,28 @@ correction, event review and trajectory processing. Use a project overview for
 collections of recordings, or track and process individual videos independently.
 It is developed by **Dr Jolle Jolles**, senior researcher at **CEAB-CSIC**.
 
-Version **2.0** brings a unified editor, explicit body modes, per-point provenance,
-geometry exports and more reliable batch execution. Existing scripts may need
-changes: see [Migrating to 2.0](documentation/8-migrating_to_2.md).
+Version **2.0** brings together **over 70 changes since 1.0**, spanning tracking,
+the interactive interface, processing, visualisation and documentation. The editor
+now brings setup and coordinate correction into one workflow, individual videos
+can be tracked without a project, and batch tracking is more reliable. The release
+also adds event review, configurable body measurements and support for tracking
+incoming recordings during experiments. See the [changelog](CHANGELOG.md) for the
+release summary and [Upgrading across breaking changes](documentation/8-upgrading.md) for changes
+to existing scripts.
 
 ## Features
 
-- **Background subtraction and HSV colour detection**, with multi-object tracking,
-  named threshold configurations, gamma, contour filters and optional flicker rejection.
-- **Independent body detail:** track a blob centroid, or estimate a centreline
-  midpoint, head/tail, body length and straightness. Optional files retain contours
-  and equally spaced centreline points for later shape analyses.
-- **Interactive editor** for ROI, masks, zones, calibration, frame limits and
-  thresholds; correct centroid/head/tail coordinates and inspect per-ID coverage.
-- **Event review** from CSV candidates: seek directly to each event, adjust bounds,
-  confirm/deny, add a modifier checkbox and resume with unreviewed events only.
-- **Processing and provenance:** filter/smooth trajectories, interpolate gaps,
-  calculate movement and spatial measures, and distinguish observed, manually
-  changed and interpolated positions. Body orientation remains distinct from heading.
-- **Batch and live experiments:** parallel execution, visible failures, safe CSV
-  replacement, source recovery and a folder watcher using a configured setup template.
-- **Standalone workflows**, reusable setup files, tracking overlays and portable
-  geometry/calibration exports for downstream analysis.
-- **Image measurements:** draw calibrated lengths/outlines and save measurements to CSV.
+- **Flexible animal tracking:** background subtraction or HSV colour detection,
+  single or multiple animals, and a choice of blob-centre tracking or centreline,
+  head/tail and body-shape measurements.
+- **Interactive setup and annotation:** define tracking regions, masks, zones and
+  calibration; tune detection, track manually, correct coordinates and review events.
+- **Trajectory processing and visualisation:** filter and smooth tracks, interpolate
+  gaps, calculate movement and spatial measures, and inspect tracking overlays.
+- **Individual videos or whole experiments:** use standalone functions or organised
+  projects, run batches in parallel, reuse settings and watch for incoming recordings.
+- **Measurements and analysis outputs:** measure lengths and outlines on images,
+  and export coordinates, movement measures and geometry for downstream analysis.
 
 Barcode handling remains experimental; modular detector backends and the
 instance-based project redesign are planned, not released capabilities.
@@ -131,7 +130,7 @@ measure_images("/path/to/images", px_per_mm=10,
 5. [Tracking editor and event review](documentation/5-tracking_editor.md)
 6. [Processing, output columns and units](documentation/6-processing_data.md)
 7. [Measuring images](documentation/7-measuring_images.md)
-8. [Migrating to 2.0](documentation/8-migrating_to_2.md)
+8. [Upgrading across breaking changes](documentation/8-upgrading.md)
 
 See the [changelog](CHANGELOG.md) for release changes and the roadmap.
 Archived notebooks are [historical examples](documentation/archive/README.md),

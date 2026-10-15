@@ -117,7 +117,7 @@ def load_atcache(path):
     Parameters
     ----------
     path : str
-        Path to the .atrk file (or legacy .atcache path).
+        Path to the .atrk setup file.
 
     Returns
     -------

@@ -948,58 +948,29 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             print("Nothing to undo.")
             return
 
-        if "actions" in buf:
-            actions = buf["actions"]
-            pw = self.drawing_widget.points_by_frame
-
-            for scope, id_, ptype, restored in actions:
-                if not isinstance(restored, dict):
-                    continue
-                if id_ not in pw:
-                    pw[id_] = {'c': {}, 'h': {}, 't': {}, 'a': {}}
-                if ptype not in pw[id_]:
-                    pw[id_][ptype] = {}
-
-                for frame, value in restored.items():
-                    if value is not None:
-                        pw[id_][ptype][frame] = value
-                        print(f"Restored point for ID={id_}, frame={frame}.")
-                    else:
-                        if frame in pw[id_][ptype]:
-                            del pw[id_][ptype][frame]
-                        print(f"Removed point for ID={id_}, frame={frame}.")
-            print("Undo completed.")
-            self._undo_buffer = {}
-            self.drawing_widget.update()
-            return
-
-        # fallback for legacy undo buffer format
-        id_ = buf.get("id")
-        ptype = buf.get("ptype")
-        restored = buf.get("points")
-        if not isinstance(restored, dict):
-            print("Undo buffer does not contain valid points.")
-            return
-
+        actions = buf["actions"]
         pw = self.drawing_widget.points_by_frame
 
-        if id_ not in pw:
-            pw[id_] = {'c': {}, 'h': {}, 't': {}, 'a': {}}
-        if ptype not in pw[id_]:
-            pw[id_][ptype] = {}
+        for scope, id_, ptype, restored in actions:
+            if not isinstance(restored, dict):
+                continue
+            if id_ not in pw:
+                pw[id_] = {'c': {}, 'h': {}, 't': {}, 'a': {}}
+            if ptype not in pw[id_]:
+                pw[id_][ptype] = {}
 
-        for frame, value in restored.items():
-            if value is not None:
-                pw[id_][ptype][frame] = value
-                print(f"Restored point for ID={id_}, frame={frame}.")
-            else:
-                if frame in pw[id_][ptype]:
-                    del pw[id_][ptype][frame]
-                print(f"Removed point for ID={id_}, frame={frame}.")
+            for frame, value in restored.items():
+                if value is not None:
+                    pw[id_][ptype][frame] = value
+                    print(f"Restored point for ID={id_}, frame={frame}.")
+                else:
+                    if frame in pw[id_][ptype]:
+                        del pw[id_][ptype][frame]
+                    print(f"Removed point for ID={id_}, frame={frame}.")
+        print("Undo completed.")
         self._undo_buffer = {}
         self.drawing_widget.update()
-
-        
+        return
 
     def pointInsideShape(self, pt: QPoint, mode, shape_data):
         if mode == "rectangle":

@@ -53,12 +53,21 @@ class PositionProvenanceTest(unittest.TestCase):
     def test_loader_keeps_sources_and_head_coordinates(self):
         with tempfile.TemporaryDirectory() as d:
             f=Path(d)/'raw.csv'
-            pd.DataFrame(dict(frame=[1],id=['F01'],cx=[20],cy=[20],fx=[21],fy=[20],
+            pd.DataFrame(dict(frame=[1],id=['F01'],cx=[20],cy=[20],hx=[21],hy=[20],
                 position_source=['observed'],head_source=['manual'])).to_csv(f,index=False)
             loaded=load_and_convert_tracking_dataframe(f)
             self.assertEqual(loaded.position_source.iloc[0],'observed')
             self.assertEqual(loaded.head_source.iloc[0],'manual')
             self.assertEqual(loaded.hx.iloc[0],21)
+
+    def test_packed_or_old_head_columns_require_explicit_conversion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'old.csv'
+            pd.DataFrame(dict(frame=[1],id=['F01'],cx=[20],cy=[20],fx=[21],fy=[20])).to_csv(path,index=False)
+            with self.assertRaisesRegex(ValueError, '8-upgrading.md'):
+                load_and_convert_tracking_dataframe(path)
+            with self.assertRaisesRegex(ValueError, '8-upgrading.md'):
+                process_video(str(path),roi=((0,0),(100,100)),conv=.25,overwrite=True)
 
     def test_head_interpolation_retains_centroid_and_tail_origins(self):
         with tempfile.TemporaryDirectory() as d:

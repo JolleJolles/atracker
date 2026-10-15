@@ -18,7 +18,7 @@ from .helpers.trajectory import (calcudiff, differentiate, fillmissing, getalone
                                   process_trajectories, smooth)
 from .helpers.contours import coordsfrommask, coordsfromzones
 from scipy.spatial import KDTree
-from .helpers.data import ensure_columns, lit_converter
+from .helpers.data import ensure_columns, require_current_tracking_columns
 from .helpers.provenance import ensure_position_sources
 from .helpers.output import write_csv_atomic
 from .helpers.orientation import process_orientation, correct_isolated_swaps
@@ -139,21 +139,6 @@ class Processor:
     def _log(self, msg):
         print(f"  [{self.nr}] {msg}", flush=True)
 
-    def _unpack_coords(self, column, newcols):
-        """Unpack a tuple column (e.g. 'com') into two separate float columns."""
-        if column in self.data:
-            mask = pd.isnull(self.data[column])
-            self.data.loc[mask, column] = [(np.nan, np.nan)] * mask.sum()
-            if self.data[column].notna().sum() == 0:
-                self.data[newcols[0]] = np.nan
-                self.data[newcols[1]] = np.nan
-            else:
-                self.data[newcols[0]], self.data[newcols[1]] = zip(*self.data[column])
-                self.data[newcols[0]] = pd.to_numeric(self.data[newcols[0]], errors="coerce").astype(float)
-                self.data[newcols[1]] = pd.to_numeric(self.data[newcols[1]], errors="coerce").astype(float)
-            self.data = self.data.drop(columns=[column])
-
-
     def setup(self, trackedfile, thread_id):
 
         self.trackedfile = trackedfile
@@ -194,13 +179,10 @@ class Processor:
 
         # Load tracking data
         self.data = pd.read_csv(self.trackedfile, header=0)
-        if len(self.data) > 0 and "_E" not in self.filebase[-5:]:
-            converters = {c: lit_converter for c in self.data.columns
-                          if str(self.data[c].iloc[0]).startswith("(")}
-            self.data = pd.read_csv(self.trackedfile, header=0, converters=converters)
-            self.emptydat = False
-        else:
-            self.emptydat = True
+        require_current_tracking_columns(self.data)
+        if "id" not in self.data:
+            self.data.rename(columns={"ID": "id"}, inplace=True)
+        self.emptydat = self.data.empty
         self._log(f"loaded {len(self.data)} rows")
 
         self.ids = [i for i in pd.unique(self.data.id)]
@@ -270,7 +252,7 @@ class Processor:
 
 
     def prep(self):
-        """Prepare raw tracking data: unpack coordinates, filter frames, expand to
+        """Prepare raw tracking data: filter frames, expand to
         full frame range, and remove short isolated fragments."""
 
         # Implicitly drop bw-contour rows when colour IDs are also present
@@ -285,18 +267,9 @@ class Processor:
         # Drop columns that are no longer needed downstream
         self.data = self.data.drop(columns=["consmerged"], errors="ignore")
 
-        # Unpack legacy packed coordinate columns if present
-        self._unpack_coords("com", ["cx", "cy"])
-
-        # Rename modern head columns to the fx/fy convention used downstream
-        if "hx" in self.data.columns and "hy" in self.data.columns:
+        # The processing calculations use an internal fx/fy pair; saved output stays hx/hy.
+        if {"hx", "hy"}.issubset(self.data.columns):
             self.data.rename(columns={"hx": "fx", "hy": "fy"}, inplace=True)
-
-        # Unpack legacy head/tail tuple columns
-        if "head" in self.data.columns:
-            self._unpack_coords("head", ["fx", "fy"])
-        if "tail" in self.data.columns:
-            self._unpack_coords("tail", ["tx", "ty"])
 
         self.data = ensure_position_sources(self.data)
 
