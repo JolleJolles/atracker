@@ -1,10 +1,7 @@
 # Changelog
 
-## TODO
-- Perhaps besides storing the default tracking file and tracked video for each file, we could store an associated file that has coord data of all relevant files for that video, such as of the mask, the walls, and zones.  
-
-
 ## Unreleased
+- Added AT.export_geometry() to save per-video/region geometry JSON beside originals: full-frame ROI and raster-derived mask/wall/zone polygons with holes and separate parts, calibration, metadata and associated file references. Documented export, R use and the continuing image-based workflow in guide 2.
 - Replaced the notebook-led documentation with seven connected Markdown guides: installation, capabilities, folder tracking, standalone tracking, the editor, processing and image measurement. Archived the historical notebooks and refreshed README examples and links.
 - Renamed batch_measure() to measure_images() without an alias; fixed known-scale calibration so px_per_mm works without interactive calibration. Added a dedicated measurement guide with calibration, CSV output and resume behaviour.
 - Reorganised the manual-tracking guide to match the standalone tutorial: numbered workflows, compact examples and control/output tables, with current event-review options and legacy notes at the end.

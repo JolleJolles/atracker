@@ -89,6 +89,73 @@ Processing creates cleaned trajectories and movement measurements; visualisation
 renders the results over the source video. Inspect representative outputs before
 choosing interpolation and smoothing settings for the full experiment.
 
+## 6. Export geometry for later analysis
+
+Save portable geometry alongside selected original videos:
+
+```python
+geometry_files = AT.export_geometry(names=["your_video"])
+```
+
+This writes `0originals/your_video.geometry.json`. Multi-region videos use
+`your_video_R2.geometry.json`, matching their tracking output names. You can also
+select with `inds`, `query` or `cats`; omit selectors to export all project rows not marked excluded. Existing exports are retained unless `overwrite=True`.
+
+```python
+geometry_files = AT.export_geometry(inds=[0, 1],
+    zone_names={1: "refuge", 2: "open_water"}, overwrite=True)
+```
+
+`zone_names` maps the numeric colour-palette IDs used by processing to your labels.
+Unmapped zones use names such as `zone_1`. Use `output="/path/to/geometry"` to choose
+another directory.
+
+Each JSON is a GeoJSON FeatureCollection with additional metadata:
+
+| Contents | Convention |
+| --- | --- |
+| ROI, masks, walls, mask zones and zones | Ordered polygon outlines, including separate parts and holes. |
+| Coordinates | Full-frame pixels: origin top left, x rightward, y downward. ROI offsets have not been subtracted. |
+| Calibration | `calibration.mm_per_pixel`; null if no calibration is set. |
+| Metadata | Video/region, image dimensions, FPS, frame limits and animal count. |
+| Source and associated files | Relative references to setup images and expected tracked/processed CSVs and tracking video. These output paths need not exist yet. |
+| Provenance | Outlines extracted from the saved raster images; not the editor's original drawing points. |
+
+By default, pixel contours are retained without extra simplification. Set
+`epsilon=1` to simplify outlines with a one-pixel tolerance. Thin or single-pixel
+features with no polygon area are omitted. Mask/wall regions follow dark pixels
+at grayscale <=10; zones use the processing colour-palette thresholds. No mask
+expansion/erosion from later processing is applied. ROI polygons represent crop
+bounds (right/bottom exclusive); image-derived outlines follow boundary pixel
+centres, so their areas are approximations to the raster regions.
+
+### Read the export in R
+
+```r
+info <- jsonlite::fromJSON("your_video.geometry.json")
+regions <- sf::st_read("your_video.geometry.json", quiet = TRUE)
+regions <- sf::st_set_crs(regions, NA)
+```
+
+The coordinates are pixels, not longitude/latitude; remove any geographic CRS
+assigned by the GeoJSON reader before spatial calculations. Pixel distances can
+be multiplied by `info$calibration$mm_per_pixel` to obtain millimetres. Points must
+use the same full-frame coordinate convention. For a point inside a polygon,
+distance to that polygon is zero; distance to its boundary measures how far
+inside it lies. Choose the boundary for wall/edge distance questions.
+
+### Images or vector geometry?
+
+Tracking, processing and the editor currently continue to read the saved images.
+The JSON is an analysis snapshot: regenerate it with `overwrite=True` after
+changing setup images or calibration. Editing JSON does not update tracking.
+
+A future vector-first workflow could store the original drawing coordinates as
+the authoritative geometry and generate mask/zone images from them. That would
+retain precise shapes, names and overlaps while keeping raster images convenient
+for detection. It requires coordinated editor and loader changes; this export
+adds portable geometry without changing the existing image workflow.
+
 ## What is saved?
 
 | Workflow | Main records and outputs |

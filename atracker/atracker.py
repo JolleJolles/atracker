@@ -1116,6 +1116,18 @@ class ATracker:
         if overview_dirty:
             self.save()
 
+    def export_geometry(self, names=None, inds=None, query=None, cats=None,
+                        output=None, zone_names=None, epsilon=0, overwrite=False):
+        """Export portable full-frame polygons, calibration and file references.
+
+        Saved as <video>[_R<region>].geometry.json in originals by default.
+        zone_names maps numeric palette IDs to names; existing exports are kept
+        unless overwrite=True. Tracking/processing still use the source images.
+        """
+        from atracker.geometry import export_geometry
+        return export_geometry(self, names=names, inds=inds, query=query, cats=cats,
+            output=output, zone_names=zone_names, epsilon=epsilon, overwrite=overwrite)
+
     def event_checker(self, csv_file, frame_base=1, modifier=None):
         """Review CSV event windows against project originals.
 
