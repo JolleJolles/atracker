@@ -8,7 +8,7 @@ import pandas as pd
 
 
 class StateCandidates:
-    def __init__(self, csv_file, video_dir, frame_base=1, modifier=None):
+    def __init__(self, csv_file, video_dir, frame_base=1, modifier=None, unreviewed_only=False):
         if frame_base not in (0, 1):
             raise ValueError("frame_base must be 0 or 1")
         self.path = Path(csv_file).expanduser().resolve()
@@ -43,6 +43,12 @@ class StateCandidates:
             if not self.data[modifier].str.lower().isin(["", "true", "false", "1", "0"]).all():
                 raise ValueError(f"Modifier {modifier!r} must contain blank, true or false values")
         self.modifier = modifier
+        self._all_data = self.data.copy(deep=True)
+        selected = self.data.review.str.strip().eq("") if unreviewed_only else self.data.index == self.data.index
+        self._source_rows = self.data.index[selected]
+        self.data = self.data.loc[self._source_rows].copy().reset_index(drop=True)
+        if self.data.empty:
+            raise ValueError("No unreviewed events remain in this CSV")
         self.saved = self.data.copy(deep=True)
         root = Path(video_dir).expanduser().resolve()
         self.paths = {}
@@ -76,7 +82,9 @@ class StateCandidates:
         fd, name = tempfile.mkstemp(prefix=".state-review-", suffix=".csv", dir=self.path.parent)
         try:
             with os.fdopen(fd, "w", newline="", encoding="utf-8") as stream:
-                self.data.to_csv(stream, index=False)
+                complete = self._all_data.copy(deep=True)
+                complete.loc[self._source_rows, :] = self.data.to_numpy()
+                complete.to_csv(stream, index=False)
             os.replace(name, self.path)
         finally:
             if os.path.exists(name):

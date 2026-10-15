@@ -183,6 +183,22 @@ class StateCheckerTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "required"):
             StateCandidates(self.csv, self.root, modifier="review")
 
+    def test_unreviewed_filter_preserves_other_rows_and_extra_columns(self):
+        original = pd.read_csv(self.csv, keep_default_na=False)
+        original['review'] = ['denied', '   ', 'confirmed']
+        original.to_csv(self.csv, index=False)
+        model = StateCandidates(self.csv, self.root, unreviewed_only=True)
+        self.assertEqual(len(model.data), 1)
+        self.assertEqual(model.data.loc[0, 'start_frame'], 25)
+        model.update(0, 26, 36, 'confirmed')
+        model.save()
+        result = pd.read_csv(self.csv, keep_default_na=False)
+        pd.testing.assert_frame_equal(result.iloc[[0, 2]], original.iloc[[0, 2]])
+        self.assertEqual(result.loc[1, 'start_frame'], 26)
+        self.assertEqual(result.loc[1, 'note'], original.loc[1, 'note'])
+        with self.assertRaisesRegex(ValueError, 'No unreviewed events'):
+            StateCandidates(self.csv, self.root, unreviewed_only=True)
+
     def test_project_dispatch(self):
         project = object.__new__(ATracker)
         project.dirs = {"originals": str(self.root)}

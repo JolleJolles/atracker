@@ -36,6 +36,8 @@
 
 ## Unreleased
 
+- Added unreviewed-only event selection with full CSV preservation on save; refreshed current guides to use current function names.
+
 - Separated contour detail from detection method with `body_mode="centroid"` or `"skeleton"`, available for background and colour detection. Added explicit head-assignment rules, traced/arc-length-resampled centrelines, body length/straightness and centre-definition fields. Area and length are saved in both modes; optional streamed `.body.jsonl.gz` files store raw per-frame/object contours and sampled centrelines with schema/run metadata. Saved boolean body-mode settings migrate; function calls now use `body_mode` rather than `simple`/`advanced`.
 - Made orientation processing explicit: optional heading fallback, per-trajectory angular differences, origin/validity fields and conservative isolated head/tail swap correction that preserves manual labels. Fixed angle-only input handling and the first angular difference in a sequence. Processed head columns now retain `hx/hy` naming, and body measures/file references survive processing and editor saves. Updated body/output guidance and visualisation for subpixel centreline points.
 

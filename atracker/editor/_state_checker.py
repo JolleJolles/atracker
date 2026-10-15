@@ -272,15 +272,17 @@ class StateCheckerWindow(PyQt5ShapeDrawerWindow):
                 self.cap.release()
 
 
-def event_checker(csv_file, video_dir, frame_base=1, modifier=None):
+def event_checker(csv_file, video_dir, frame_base=1, modifier=None, unreviewed_only=False):
     """Review a MoveR candidate CSV; save inclusive bounds and confirmed/denied review labels.
 
     UI frames are one-based. Set frame_base=0 explicitly for zero-based input CSVs.
+    unreviewed_only selects rows with blank review values when opening; all CSV rows are preserved on save.
     modifier optionally adds a named checkbox saved as true/false in that CSV column.
     Extra CSV columns and unselected rows are preserved. Confirm/Deny and S save
     all pending edits to the original CSV; navigation alone does not write it.
     """
-    candidates = StateCandidates(csv_file, video_dir, frame_base=frame_base, modifier=modifier)
+    candidates = StateCandidates(csv_file, video_dir, frame_base=frame_base, modifier=modifier,
+                                 unreviewed_only=unreviewed_only)
     # Check bounds before Qt can silently clamp them to the available video frames.
     for video, path in candidates.paths.items():
         cap = cv2.VideoCapture(path)

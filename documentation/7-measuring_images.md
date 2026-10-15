@@ -3,8 +3,7 @@
 [Guide overview](2-using_atracker.md)
 
 Use `measure_images()` to draw lengths or outlines on images and save calibrated
-measurements to CSV. It works without an ATracker project. The function was
-previously named `batch_measure`; use `measure_images` in new and existing scripts.
+measurements to CSV. It works without an ATracker project.
 
 ## 1. Measure with a known scale
 

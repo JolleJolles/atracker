@@ -785,17 +785,18 @@ class ATracker:
         return export_geometry(self, names=names, inds=inds, query=query, cats=cats,
             output=output, zone_names=zone_names, epsilon=epsilon, overwrite=overwrite)
 
-    def event_checker(self, csv_file, frame_base=1, modifier=None):
+    def event_checker(self, csv_file, frame_base=1, modifier=None, unreviewed_only=False):
         """Review CSV event windows against project originals.
 
         modifier adds a named checkbox, for example modifier="complete", saved
-        as true/false in its own CSV column.
+        as true/false in its own CSV column. unreviewed_only selects blank reviews.
         """
         from atracker.editor import event_checker
-        return event_checker(csv_file, self.dirs["originals"], frame_base=frame_base, modifier=modifier)
+        return event_checker(csv_file, self.dirs["originals"], frame_base=frame_base, modifier=modifier,
+                             unreviewed_only=unreviewed_only)
 
     def editor(self, names=None, query=None, cats=None, inds=None, purpose=None, threshtypes=None,
-               candidates=None, frame_base=1, modifier=None):
+               candidates=None, frame_base=1, modifier=None, unreviewed_only=False):
         """
         Open the interactive editor for one or more files.
 
@@ -829,7 +830,8 @@ class ATracker:
                 raise ValueError("Supply candidates=path_to_csv for event_checker")
             if any(value is not None for value in (names, query, cats, inds, threshtypes)):
                 raise ValueError("Event checker selects videos from its candidate CSV; omit other selectors")
-            return self.event_checker(candidates, frame_base=frame_base, modifier=modifier)
+            return self.event_checker(candidates, frame_base=frame_base, modifier=modifier,
+                                      unreviewed_only=unreviewed_only)
         if candidates is not None:
             raise ValueError("candidates is only supported with purpose='event_checker'")
         from atracker.editor import editor_gui
