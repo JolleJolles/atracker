@@ -65,15 +65,25 @@ AT.check_interactive(inds=[0, 1], fileaction="overwrite")
 
 This also edits tracked CSVs while displaying original videos, but uses the older per-video window and filename handling. Prefer `AT.editor()` for region-aware, multi-purpose work.
 
-## Review candidate behaviour states
+## Review candidate events
 
-Open a MoveR event-window CSV in the new state checker:
+Open a MoveR event-window CSV in the new event checker:
 
 ```python
-AT.state_checker("processed/barrier_jump_frames.csv")
+AT.event_checker("processed/barrier_jump_frames.csv", modifier="complete")
 # Equivalent editor mode:
-AT.editor(purpose="state_checker", candidates="processed/barrier_jump_frames.csv")
+AT.editor(purpose="event_checker", candidates="processed/barrier_jump_frames.csv")
 ```
+
+`event_checker` reviews discrete event intervals; the `state` column retains its
+MoveR label. Use `event_checker` for this mode.
+
+Use `modifier="complete"` to add a **Complete** checkbox, for example to mark a
+jump spanning the whole barrier. Its value is saved in a `complete` CSV column:
+`true` when checked, `false` when unchecked. Existing values are restored per
+event. Blank means not yet assessed; Confirm/Deny records the current checkbox
+value, while changing the checkbox alone remains pending until Save or a review
+button is pressed. The modifier can have another name, such as `contact`.
 
 The CSV must contain `video`, `start_frame`, `end_frame`, and `state` (for example,
 `state_jump` or `state_slow`). An empty `review` column is accepted and added if
@@ -83,7 +93,9 @@ The checker does not modify tracked coordinates or overview frame limits.
 
 - **Prev / Next** (or left/right arrow keys while the video canvas has focus)
   move through candidate rows in CSV order, including multiple intervals in the
-  same video. **Video arrows** skip to the next/previous different video.
+  same video. **Video arrows** skip to the next/previous different video. Playback
+  resumes after navigation if it was playing. Use the frame box or ±1-frame/±1-second
+  buttons to step through the video.
 - Each candidate opens at its `start_frame`. The bottom timeline shows all
   candidate intervals for that video, in separate rows per state. Click another
   interval to select it; click or drag elsewhere to seek. Scroll the timeline to
@@ -91,23 +103,27 @@ The checker does not modify tracked coordinates or overview frame limits.
   the selected candidate. The normal playback/frame controls remain available.
 - Adjust the candidate start/end with the existing frame-limit controls, including
   setting a bound to the current frame. Both bounds are inclusive.
+- Drag the divider between sidebar and video to resize the sidebar. Candidate
+  start/end controls occupy separate lines; the timeline shows the full video.
 - **Confirm** writes `confirmed`; **Deny** writes `denied`; **Unreviewed** clears
   `review`. These buttons and **S / Save current** save all pending edits to the
-  same CSV. A denied row remains in the file, retaining its state label and bounds.
+  same CSV. **Advance after review** controls whether these buttons select the next
+  candidate after saving (enabled by default). A denied row remains in the file,
+  retaining its state label and bounds.
 - Navigation retains edits without saving. Closing with pending edits offers
   Save, Discard or Cancel. Extra CSV columns and row order are preserved. An
   externally changed CSV must be reopened before saving, preventing lost edits.
 
 CSV frames are **one-based by default**, matching the editor. For a zero-based
-export, use `AT.state_checker(csv_file, frame_base=0)`: the interface still displays
+export, use `AT.event_checker(csv_file, frame_base=0)`: the interface still displays
 one-based frames, and saves bounds back in the original zero-based convention.
 The checker validates candidate bounds against video lengths before opening.
 
 Without a project:
 
 ```python
-from atracker import state_checker
-state_checker("barrier_jump_frames.csv", video_dir="/path/to/originals")
+from atracker import event_checker
+event_checker("barrier_jump_frames.csv", video_dir="/path/to/originals")
 ```
 
 When loading the reviewed CSV downstream, use `review == "confirmed"` for accepted

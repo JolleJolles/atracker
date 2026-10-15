@@ -5,6 +5,8 @@
 
 
 ## Unreleased
+- Improved event review with playback retained across navigation, coloured review buttons and an optional advance-after-review toggle. Added immediate frame-box seeking and frame/second step buttons, separated and widened candidate-bound controls, removed the unused visible-range option, and added a draggable editor sidebar divider. Avoid loading empty mask filenames to remove the harmless Qt warning.
+- Renamed the discrete-interval reviewer to event_checker; removed the state_checker API and editor-purpose alias. Added modifier="complete" or another checkbox name, retaining per-event values in its own CSV column and restoring them on navigation.
 - Added state_checker() and AT.editor(purpose="state_checker", candidates=...) for MoveR event CSVs: candidate/video navigation, automatic start-frame seeking, a state-interval timeline, editable inclusive bounds, and confirm/deny decisions saved to review in the original CSV. Preserves extra columns and frame indexing, with unsaved-edit prompts and protection against overwriting external CSV edits.
 - Reduced normal tracking progress to every 1,000 processed frames instead of every 10 seconds, showing only frame position/stop and FPS without repeating the processed count. Detailed stage timings remain opt-in via `profile_interval`.
 - Simplified tracking logs: batch file/worker counts, concise per-file start/completion lines, and progress every 10 seconds (one updating line in single-worker terminals; separate lines for pools, notebooks and redirected logs). Timings, flicker cutoffs and per-ID shape summaries now require `profile_interval>0`. Completion FPS counts processed frames, timing reports identify the last processed frame, and duplicate completion punctuation was removed.

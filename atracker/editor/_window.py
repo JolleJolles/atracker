@@ -9,7 +9,7 @@ from atracker.helpers.media import get_media_type
 from atracker.helpers.data import load_and_convert_tracking_dataframe
 from atracker.helpers.detection import ProcessImage
 from atracker.helpers.detection_settings import aspect_limits
-from PyQt5.QtWidgets import QMessageBox, QInputDialog, QDoubleSpinBox
+from PyQt5.QtWidgets import QMessageBox, QInputDialog, QDoubleSpinBox, QSplitter
 from PyQt5.QtCore import QByteArray
 
 # Maps human-readable purpose labels (lowercased) to internal opmode strings
@@ -134,7 +134,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
 
         # === 2. LEFT SIDEBAR SETUP ===
         self.left_widget = QWidget()
-        self.left_widget.setFixedWidth(350)
+        self.left_widget.setMinimumWidth(300)
         self.left_layout = QVBoxLayout()
         self.left_widget.setLayout(self.left_layout)
 
@@ -834,8 +834,15 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
            
         # === 8. MAIN LAYOUT ===
         main_layout = QHBoxLayout()
-        main_layout.addWidget(self.left_widget)
-        main_layout.addWidget(self.drawing_group, 1)
+        self.sidebar_splitter = QSplitter(Qt.Horizontal)
+        self.sidebar_splitter.setChildrenCollapsible(False)
+        self.sidebar_splitter.setHandleWidth(8)
+        self.sidebar_splitter.addWidget(self.left_widget)
+        self.sidebar_splitter.addWidget(self.drawing_group)
+        self.sidebar_splitter.setStretchFactor(0, 0)
+        self.sidebar_splitter.setStretchFactor(1, 1)
+        self.sidebar_splitter.setSizes([350, 750])
+        main_layout.addWidget(self.sidebar_splitter)
         self.timeline_group = QGroupBox("Tracking coverage — click or drag to seek")
         self.timeline_group.setCheckable(True)
         self.timeline_group.setChecked(True)
@@ -1605,7 +1612,8 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             # Setup drawings use full-frame coordinates; tracked points use ROI coordinates.
             self.roi = fi.get("roi") if opmode in ("timepoints", "thresholding", "thresholding color") else None
             if opmode != "mask":
-                mask = QImage(fi.get("mask_path") or "")
+                mask_path = fi.get("mask_path")
+                mask = QImage(mask_path) if mask_path else QImage()
                 if mask.isNull():
                     mask = QImage(self.orig_width, self.orig_height, QImage.Format_Grayscale8)
                     mask.fill(255)

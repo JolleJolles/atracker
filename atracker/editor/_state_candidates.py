@@ -8,7 +8,7 @@ import pandas as pd
 
 
 class StateCandidates:
-    def __init__(self, csv_file, video_dir, frame_base=1):
+    def __init__(self, csv_file, video_dir, frame_base=1, modifier=None):
         if frame_base not in (0, 1):
             raise ValueError("frame_base must be 0 or 1")
         self.path = Path(csv_file).expanduser().resolve()
@@ -32,6 +32,17 @@ class StateCandidates:
             raise ValueError("end_frame cannot precede start_frame")
         if "review" not in self.data:
             self.data["review"] = ""
+        if modifier is not None:
+            if not isinstance(modifier, str) or not modifier.strip():
+                raise ValueError("modifier must be a non-empty column name")
+            modifier = modifier.strip()
+            if modifier in required | {"review"}:
+                raise ValueError("modifier cannot replace a required event or review column")
+            if modifier not in self.data:
+                self.data[modifier] = ""
+            if not self.data[modifier].str.lower().isin(["", "true", "false", "1", "0"]).all():
+                raise ValueError(f"Modifier {modifier!r} must contain blank, true or false values")
+        self.modifier = modifier
         self.saved = self.data.copy(deep=True)
         root = Path(video_dir).expanduser().resolve()
         self.paths = {}

@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import QApplication, QMessageBox
 
 from atracker import ATracker
 from atracker.editor._state_candidates import StateCandidates
-from atracker.editor._state_checker import StateCheckerWindow, state_checker
+from atracker.editor._state_checker import StateCheckerWindow, event_checker
 
 
 class StateCheckerTest(unittest.TestCase):
@@ -61,6 +61,7 @@ class StateCheckerTest(unittest.TestCase):
     def open_window(self, frame_base=1):
         self.model = StateCandidates(self.csv, self.root, frame_base=frame_base)
         self.window = StateCheckerWindow(self.model)
+        self.window.advance_after_review.setChecked(False)
         self.window.show()
         self.app.processEvents()
         self.app.processEvents()
@@ -130,7 +131,7 @@ class StateCheckerTest(unittest.TestCase):
         data.loc[0, "end_frame"] = 100
         data.to_csv(self.csv, index=False)
         with self.assertRaisesRegex(ValueError, "exceeds video"):
-            state_checker(self.csv, self.root)
+            event_checker(self.csv, self.root)
         data.loc[0, "end_frame"] = 1
         data.to_csv(self.csv, index=False)
         with self.assertRaisesRegex(ValueError, "precede"):
@@ -158,12 +159,36 @@ class StateCheckerTest(unittest.TestCase):
         self.assertEqual(saved.loc[0, "start_frame"], 16)
         self.assertEqual(saved.loc[0, "end_frame"], 18)
 
+    def test_modifier_values_follow_events_and_survive_csv_save(self):
+        model = StateCandidates(self.csv, self.root, modifier="complete")
+        self.model = model
+        self.window = StateCheckerWindow(model)
+        w = self.window
+        w.advance_after_review.setChecked(False)
+        w.show()
+        self.app.processEvents()
+        w.modifier_checkbox.setChecked(True)
+        w.review("confirmed")
+        w._navigate_to(1)
+        self.app.processEvents()
+        self.assertFalse(w.modifier_checkbox.isChecked())
+        w.review("confirmed")
+        w._navigate_to(0)
+        self.app.processEvents()
+        self.assertTrue(w.modifier_checkbox.isChecked())
+        saved = pd.read_csv(self.csv, dtype=str, keep_default_na=False)
+        self.assertEqual(list(saved.complete), ["true", "false", ""])
+        reloaded = StateCandidates(self.csv, self.root, modifier="complete")
+        self.assertEqual(reloaded.data.loc[0, "complete"], "true")
+        with self.assertRaisesRegex(ValueError, "required"):
+            StateCandidates(self.csv, self.root, modifier="review")
+
     def test_project_dispatch(self):
         project = object.__new__(ATracker)
         project.dirs = {"originals": str(self.root)}
-        with patch.object(importlib.import_module("atracker.editor"), "state_checker", return_value="opened") as launch:
-            self.assertEqual(project.editor(purpose="state_checker", candidates=str(self.csv)), "opened")
-            launch.assert_called_once_with(str(self.csv), str(self.root), frame_base=1)
+        with patch.object(importlib.import_module("atracker.editor"), "event_checker", return_value="opened") as launch:
+            self.assertEqual(project.editor(purpose="event_checker", candidates=str(self.csv)), "opened")
+            launch.assert_called_once_with(str(self.csv), str(self.root), frame_base=1, modifier=None)
 
 
 if __name__ == "__main__":

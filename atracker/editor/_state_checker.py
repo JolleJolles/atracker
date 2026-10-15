@@ -4,7 +4,7 @@ import sys
 import cv2
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QColor, QPainter, QPen
-from PyQt5.QtWidgets import QApplication, QHBoxLayout, QLabel, QMessageBox, QPushButton
+from PyQt5.QtWidgets import QApplication, QCheckBox, QHBoxLayout, QLabel, QMessageBox, QPushButton
 
 from ._state_candidates import StateCandidates
 from ._timeline import TrackingTimeline
@@ -86,15 +86,52 @@ class StateCheckerWindow(PyQt5ShapeDrawerWindow):
         self.mode_group.hide()
         self.func_group.hide()
         self.flim_group.setTitle("Candidate start / end (inclusive)")
-        self.nav_group.setTitle("State checker — candidate navigation")
+        old_bounds = self.flim_group.layout().takeAt(0).layout()
+        bounds_widgets = (self.flim_start_spin, self.btn_update_start, self.flim_stop_spin, self.btn_update_stop)
+        while old_bounds.count():
+            item = old_bounds.takeAt(0)
+            if item.widget() is not None and item.widget() not in bounds_widgets:
+                item.widget().deleteLater()
+        old_bounds.deleteLater()
+        for label, spin, button in (("Start:", self.flim_start_spin, self.btn_update_start),
+                                    ("End:", self.flim_stop_spin, self.btn_update_stop)):
+            row = QHBoxLayout()
+            row.addWidget(QLabel(label))
+            spin.setFixedWidth(120)
+            row.addWidget(spin)
+            row.addWidget(button)
+            self.flim_group.layout().addLayout(row)
+        frame_steps = QHBoxLayout()
+        for label, step in (("−1 s", "second_back"), ("−1 frame", -1),
+                            ("+1 frame", 1), ("+1 s", "second_forward")):
+            button = QPushButton(label)
+            button.clicked.connect(lambda checked=False, amount=step: self.onVideoSliderChanged(
+                self.current_frame_idx + (-self.fps_spin.value() if amount == "second_back" else
+                    self.fps_spin.value() if amount == "second_forward" else amount)))
+            frame_steps.addWidget(button)
+        self.video_group.layout().addLayout(frame_steps)
+        self.frame_spin.valueChanged.connect(lambda frame: self.onVideoSliderChanged(frame - 1)
+            if frame - 1 != self.current_frame_idx else None)
+        self.nav_group.setTitle("Event checker — candidate navigation")
         self.review_label = QLabel()
         self.nav_group.layout().addWidget(self.review_label)
+        self.modifier_checkbox = None
+        if candidates.modifier:
+            self.modifier_checkbox = QCheckBox(candidates.modifier.replace("_", " ").capitalize())
+            self.modifier_checkbox.setToolTip(f"Save true/false in the '{candidates.modifier}' CSV column")
+            self.modifier_checkbox.toggled.connect(self._modifier_changed)
+            self.nav_group.layout().addWidget(self.modifier_checkbox)
+        self.advance_after_review = QCheckBox("Advance after review")
+        self.advance_after_review.setChecked(True)
+        self.nav_group.layout().addWidget(self.advance_after_review)
         controls = QHBoxLayout()
         self.confirm_button = QPushButton("Confirm")
         self.deny_button = QPushButton("Deny")
         self.reset_button = QPushButton("Unreviewed")
-        for button, status in ((self.confirm_button, "confirmed"), (self.deny_button, "denied"),
-                               (self.reset_button, "")):
+        for button, status, colour in ((self.confirm_button, "confirmed", "#d9efdf"),
+                                       (self.deny_button, "denied", "#f5d9d9"),
+                                       (self.reset_button, "", "#f7e4c8")):
+            button.setStyleSheet(f"QPushButton {{ background-color: {colour}; color: #202020; padding: 5px; }}")
             button.clicked.connect(lambda checked=False, value=status: self.review(value))
             controls.addWidget(button)
         self.nav_group.layout().addLayout(controls)
@@ -108,13 +145,11 @@ class StateCheckerWindow(PyQt5ShapeDrawerWindow):
         self.timeline = StateTimeline(self)
         self.timeline_scroll.setWidget(self.timeline)
         self.timeline_scroll.setMinimumHeight(120)
-        # Reconnect updates that were bound to the old timeline instance.
-        self.timeline_use_range.toggled.connect(self.timeline.update)
-        self.range_slider.valueChanged.connect(self.timeline.update)
-        for button in (self.rb_range_all, self.rb_range_past, self.rb_range_future):
-            button.toggled.connect(self.timeline.update)
+        self.timeline_use_range.setChecked(False)
+        self.timeline_group.toggled.disconnect(self.timeline_use_range.setVisible)
+        self.timeline_use_range.hide()
         old_timeline.hide()
-        self.timeline_group.setTitle("State candidates — click an interval or drag to seek")
+        self.timeline_group.setTitle("Event candidates — click an interval or drag to seek")
         self.flim_start_spin.valueChanged.connect(self._bounds_changed)
         self.flim_stop_spin.valueChanged.connect(self._bounds_changed)
         self._loading_candidate = False
@@ -154,28 +189,38 @@ class StateCheckerWindow(PyQt5ShapeDrawerWindow):
             return False
         return True
 
+    def _modifier_changed(self, checked):
+        self.candidates.data.loc[self._file_idx, self.candidates.modifier] = "true" if checked else "false"
+
     def _show_candidate(self):
         row = self.candidates.data.loc[self._file_idx]
-        self.setWindowTitle(f"ATracker — State checker — {row.video}")
+        self.setWindowTitle(f"ATracker — Event checker — {row.video}")
         self.review_label.setText(f"{row.state} — {row.review or 'unreviewed'}")
+        if self.modifier_checkbox is not None:
+            self.modifier_checkbox.blockSignals(True)
+            self.modifier_checkbox.setChecked(str(row[self.candidates.modifier]).lower() in ("true", "1"))
+            self.modifier_checkbox.blockSignals(False)
         self.mode_group.hide()
         self.func_group.hide()
         self.syncTimeline()
 
-    def _seek_candidate_start(self):
+    def _seek_candidate_start(self, resume=False):
         self.onVideoSliderChanged(self.flim_start_spin.value() - 1)
+        if resume:
+            self.onPlayClicked()
 
     def _navigate_to(self, new_idx):
         if not 0 <= new_idx < len(self._file_infos) or new_idx == self._file_idx:
             return
         if not self._valid_bounds():
             return
+        was_playing = self.timer is not None and self.timer.isActive()
         self._loading_candidate = True
         super()._navigate_to(new_idx)
         self._loading_candidate = False
         self._show_candidate()
-        # Run after the parent's queued first-frame read.
-        QTimer.singleShot(0, self._seek_candidate_start)
+        # Seek after the parent's queued first-frame read, then restore playback.
+        QTimer.singleShot(0, lambda: self._seek_candidate_start(resume=was_playing))
 
     def navigate_video(self, direction):
         video = self.candidates.data.loc[self._file_idx, "video"]
@@ -193,15 +238,18 @@ class StateCheckerWindow(PyQt5ShapeDrawerWindow):
         except Exception as exc:
             QMessageBox.warning(self, "Save failed", str(exc))
             return False
-        self.statusBar().showMessage(f"Saved state reviews to {self.candidates.path.name}")
+        self.statusBar().showMessage(f"Saved event reviews to {self.candidates.path.name}")
         return True
 
     def review(self, status):
         if not self._valid_bounds():
             return
         self.candidates.data.loc[self._file_idx, "review"] = status
+        if self.modifier_checkbox is not None and status:
+            self._modifier_changed(self.modifier_checkbox.isChecked())
         self._show_candidate()
-        self._store_current()
+        if self._store_current() and self.advance_after_review.isChecked():
+            self._navigate_to(self._file_idx + 1)
 
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key_Left, Qt.Key_Right):
@@ -211,7 +259,7 @@ class StateCheckerWindow(PyQt5ShapeDrawerWindow):
 
     def closeEvent(self, event):
         if self.candidates.dirty:
-            answer = QMessageBox.question(self, "Unsaved state reviews", "Save pending CSV edits before closing?",
+            answer = QMessageBox.question(self, "Unsaved event reviews", "Save pending CSV edits before closing?",
                 QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel, QMessageBox.Save)
             if answer == QMessageBox.Cancel or (answer == QMessageBox.Save and not self._store_current()):
                 event.ignore()
@@ -224,14 +272,15 @@ class StateCheckerWindow(PyQt5ShapeDrawerWindow):
                 self.cap.release()
 
 
-def state_checker(csv_file, video_dir, frame_base=1):
+def event_checker(csv_file, video_dir, frame_base=1, modifier=None):
     """Review a MoveR candidate CSV; save inclusive bounds and confirmed/denied review labels.
 
     UI frames are one-based. Set frame_base=0 explicitly for zero-based input CSVs.
+    modifier optionally adds a named checkbox saved as true/false in that CSV column.
     Extra CSV columns and unselected rows are preserved. Confirm/Deny and S save
     all pending edits to the original CSV; navigation alone does not write it.
     """
-    candidates = StateCandidates(csv_file, video_dir, frame_base=frame_base)
+    candidates = StateCandidates(csv_file, video_dir, frame_base=frame_base, modifier=modifier)
     # Check bounds before Qt can silently clamp them to the available video frames.
     for video, path in candidates.paths.items():
         cap = cv2.VideoCapture(path)
