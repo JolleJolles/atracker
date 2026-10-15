@@ -28,7 +28,7 @@ ATracker is developed and actively maintained by **Dr Jolle Jolles**, senior res
 - **Automated contour-based tracking** with centroid, orientation, skeleton, and shape features
 - **Manual tracking and correction interface** for efficient annotation and quality control
 - **Post-processing pipeline** for trajectory smoothing, interpolation, and distance calculations
-- **Batch measurement tools** for manual measurement of points and distances across image/video collections
+- **Image measurement tools** for manual measurement of points and distances across image/video collections
 - **Batch processing framework** for large collections of videos
 - **Project organisation tools** for managing tracking experiments and outputs
 - **Config-based workflows** for reproducible tracking pipelines
@@ -44,22 +44,20 @@ ATracker is developed and actively maintained by **Dr Jolle Jolles**, senior res
 - multiple tracking modes are used within the same experiment
 - large video datasets must be processed in a structured, reproducible workflow
 
-## Project Structure
+## Documentation
 
-- The **`documentation/` folder** provides full instructions for:
-  - Installing prerequisites and setting up your Python environment
-  - Platform-specific guidance for **macOS**, **Windows**, and **Linux**
-  - Using ATracker to set up a project workspace, define tracking settings, and run analysis
-  - [Tuning automated tracking](documentation/3-tracking.md), covering thresholding, gamma, area/aspect-ratio filters, flicker rejection and the rolling size filter
-  - [Processing and interpreting tracking results](documentation/4-processing_data.md), including how to choose processing parameters
-  - [Standalone tracking, processing and visualisation](documentation/6-standalone_tracking.md), without a project or overview spreadsheet
-  - [Manual tracking and correction](documentation/5-manual_tracking.md), with project and standalone examples
+The current guides use Markdown, with practical examples for each workflow:
 
-- The **`tutorial/` folder** contains a curated set of example videos to learn ATracker's capabilities. It is accompanied by a compact Jupyter notebook (`atracker_tutorial_compact.ipynb`) that demonstrates the key steps for:
-  - Setting up the workspace
-  - Drawing masks, ROIs, zones, and walls
-  - Setting thresholding parameters
-  - Running tracking in various modes
+1. [Installing ATracker](documentation/1-installing_atracker.md)
+2. [Using ATracker: capabilities and workflow overview](documentation/2-using_atracker.md)
+3. [Folder tracking](documentation/3-folder_tracking.md)
+4. [Standalone tracking, processing and visualisation](documentation/4-standalone_tracking.md)
+5. [Tracking editor: setup, correction and event review](documentation/5-tracking_editor.md)
+6. [Processing tracking data](documentation/6-processing_data.md)
+7. [Measuring images](documentation/7-measuring_images.md)
+
+Older notebooks are preserved in [documentation/archive](documentation/archive/README.md)
+as historical examples; use the guides above for current APIs.
 
 ## Installation
 
@@ -73,35 +71,44 @@ All dependencies (including `pythutils`) are installed automatically.
 
 ## Usage
 
-The core workflow uses the `ATracker` class, which manages a project folder:
+For a structured video project:
 
 ```python
 from atracker import ATracker
 
-AT = ATracker("/path/to/project")   # initialise project
-AT.setup_files()                    # register videos and extract metadata
-AT.set_interactive()                # interactively set ROI, mask, thresholds
-AT.track()                          # run automated tracking
+AT = ATracker("/path/to/project")
+AT.setup_files(fname_extract=False)
+AT.get_bgfiles()
+AT.editor(inds=[0], purpose="thresholding", threshtypes=["bw"])
+AT.track(folder="originals", threshtype="bw", overwrite=False)
+AT.process()
 ```
 
-Post-process tracked data with `Processor`:
+Configure ROI, masks, object counts and calibration as needed before tracking.
+The [folder guide](documentation/3-folder_tracking.md) walks through setup.
+
+For one video without a project:
 
 ```python
-from atracker import Processor
+from atracker import track_video, process_video
 
-P = Processor("/path/to/project")
-P.process()
+tracked = track_video("/path/to/video.mp4", save_settings=True)
+processed = process_video(tracked, videofile="/path/to/video.mp4", conv=0.25)
 ```
 
-For manual annotation or visual quality control, use `manual_tracker` and `batch_measure`:
+Here `conv` is the experiment's calibration in mm/pixel. See the
+[standalone guide](documentation/4-standalone_tracking.md) for ROI/mask handling,
+reusing setup and rendering an overlay video.
+
+For image measurements:
 
 ```python
-from atracker import manual_tracker, batch_measure
+from atracker import measure_images
 
-manual_tracker("/path/to/video.mp4")           # interactive manual tracking
-batch_measure("/path/to/images", output="measures.csv")  # batch measurement
+measure_images("/path/to/images", px_per_mm=10,
+    variables=["length"], out_csv="measurements.csv")
 ```
 
 ## Compatibility
 
-ATracker relies on a stable set of packages and is designed to work out of the box with **Python 3.9+**. Due to ongoing updates in upstream libraries (e.g., `opencv`, `PyQt5`), we recommend using the versions specified in `setup.py` for a fully tested environment.
+ATracker relies on a stable set of packages and is designed to work out of the box with **Python 3.9+**. Dependencies are declared in `setup.py`; keep a record of your working environment when reproducing an analysis.

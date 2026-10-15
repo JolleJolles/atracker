@@ -5,6 +5,8 @@
 
 
 ## Unreleased
+- Replaced the notebook-led documentation with seven connected Markdown guides: installation, capabilities, folder tracking, standalone tracking, the editor, processing and image measurement. Archived the historical notebooks and refreshed README examples and links.
+- Renamed batch_measure() to measure_images() without an alias; fixed known-scale calibration so px_per_mm works without interactive calibration. Added a dedicated measurement guide with calibration, CSV output and resume behaviour.
 - Reorganised the manual-tracking guide to match the standalone tutorial: numbered workflows, compact examples and control/output tables, with current event-review options and legacy notes at the end.
 - Added a standalone tutorial covering single-video setup, saved .atrk bundles, processing, processed-video overlays and batch automation, with a README link.
 - Improved event review with playback retained across navigation, coloured review buttons and an optional advance-after-review toggle. Added immediate frame-box seeking and frame/second step buttons, separated and widened candidate-bound controls, removed the unused visible-range option, and added a draggable editor sidebar divider. Avoid loading empty mask filenames to remove the harmless Qt warning.

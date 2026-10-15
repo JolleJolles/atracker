@@ -2,7 +2,7 @@ from .__version__ import __version__
 from .atracker import ATracker
 from .standalone import track_video, save_atcache, load_atcache, process_video, editor
 from .editor import manual_tracker, event_checker
-from .measure import batch_measure
+from .measure import measure_images
 from .process import Processor
 from .visualise import Visualiser
 

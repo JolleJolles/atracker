@@ -1,9 +1,11 @@
-# Manual tracking, correction and event review
+# Tracking editor: setup, correction and event review
+
+[Guide overview](2-using_atracker.md)
 
 Use the interactive editor to correct tracked coordinates, annotate positions from
 scratch, or review candidate events. The examples below cover project and
 standalone workflows. For widespread detection failures, improve
-[automated tracking](3-tracking.md) before correcting individual frames.
+[automated tracking](3-folder_tracking.md) before correcting individual frames.
 
 | Task | Function |
 | --- | --- |
@@ -74,7 +76,7 @@ Place points consistently on the same part of the animal. Prioritise identity
 swaps, turns, abrupt speed changes and refuge entry/exit. Leave gaps when the
 animal is hidden rather than inventing positions.
 
-After saving, rerun [processing](4-processing_data.md) with `overwrite=True` to
+After saving, rerun [processing](6-processing_data.md) with `overwrite=True` to
 update existing processed outputs. Sparse annotation needs care: isolated points
 may be removed by `min_traj_len`, and long gaps may remain unfilled. Pilot a short
 interval before annotating an entire experiment.
@@ -140,7 +142,7 @@ Tracking gamma is saved with the named threshold configuration and applies to al
 videos using it. Colour thresholding also supports it; configurations without a
 `gamma` entry use `1.0`. Source videos and saved backgrounds are unchanged.
 The separate **Gamma** control under Drawing functions changes only the display.
-See [tracking settings](3-tracking.md) for the detection pipeline and parameter
+See [tracking settings](3-folder_tracking.md) for the detection pipeline and parameter
 choices.
 
 ## 4. Annotate a standalone video
@@ -176,7 +178,7 @@ for video in sorted(Path("/path/to/videos").glob("*.mp4")):
         break
 ```
 
-Follow the [standalone tutorial](6-standalone_tracking.md) to process and visualise
+Follow the [standalone tutorial](4-standalone_tracking.md) to process and visualise
 these files with explicit video, ROI and calibration settings. Standalone CSVs
 are not automatically registered with a project. To use `AT.process()`, provide a
 matching overview row and put the coordinate CSV under the expected basename in

@@ -1,241 +1,124 @@
-# ATracker Setup Guide (macOS and Windows)
+# Installing ATracker
 
-**ATracker** is not yet publicly available through pip or GitHub. Until it is, you can install it manually. This guide covers the basics of setting up a Python environment, installing dependencies, and configuring tools so that you can run ATracker easily on macOS and Windows.
+[Guide overview](2-using_atracker.md)
 
-## 1. Terminal and Editor
+Install ATracker into a dedicated Python environment, then use it from a script,
+Python console or notebook. The package uses OpenCV for video handling and PyQt5
+for its interactive editor; interactive workflows need a graphical desktop.
 
-### Using the terminal
+## 1. Install Python and create an environment
 
-We will make use of the terminal for installing **atracker** and its dependencies:
-- **macOS:** Open **Terminal** from **Applications → Utilities → Terminal**.  
-- **Windows:** Open **Command Prompt** (type “cmd” in Start menu)
+ATracker documents Python 3.9+ compatibility. Use a Python installation compatible
+with its dependencies; do not replace a working environment just to follow this
+example. Python installers are available from [python.org](https://www.python.org/downloads/).
+On Windows, enable the installer's option to add Python to PATH.
 
-> The terminal/command prompt is a text-based interface where you type commands (like installing Python packages). On **macOS**, you’ll see a prompt like `MacBook:~ user$`. On **Windows**, you might see `C:\Users\YourName>`. From now on "the terminal".
+Open Terminal on macOS/Linux or Command Prompt on Windows. Check your interpreter:
 
-### Editing files
-
-Sometimes you need to edit configuration files directly from the terminal. A simple and commonly used text editor is **nano**. For files that require administrative permissions, use **sudo nano**. For example:
-    
 ```bash
-sudo nano ~/.zshrc
+python3 --version
 ```
 
-After making changes in nano:
+On Windows, use `py --version`. Create and activate an environment:
 
-- Press `Ctrl+X` to exit.
-- When prompted "Save modified buffer?", press `Y` to confirm.
-- Then press `Enter` to save the file with the current name.
+**macOS / Linux**
 
-This process will update the file and return you to the terminal prompt.
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
 
-## 2. Install Python 3.9
+**Windows — Command Prompt**
 
-**Mac/Linux**
+```bat
+py -m venv .venv
+.venv\Scripts\activate.bat
+```
 
-First, install Homebrew (if you haven’t already). In Terminal, paste:
+Reactivate the environment when starting a new terminal session. Use `deactivate`
+to leave it. Keep the environment outside folders you use for video data.
 
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+## 2. Install the package
 
-Then use homebrew to install python:
+With the environment active:
 
-    brew install python@3.9
+```bash
+python -m pip install --upgrade pip
+python -m pip install git+https://github.com/JolleJolles/atracker.git
+```
 
-After installation, check that Python and pip are available:
+This installation method requires [Git](https://git-scm.com/downloads). If you have
+instead downloaded the source folder, open a terminal in that folder and run:
 
-    python3 --version
-    pip3 --version
+```bash
+python -m pip install .
+```
 
-> You should see something like Python 3.9.x and pip 21.x or similar.
+For development, use `python -m pip install -e .` instead. An editable installation
+uses the source folder directly, so keep it in place. Python dependencies,
+including `pythutils`, are installed from the package's `setup.py` requirements.
 
-**Windows**
+Check that the environment can import ATracker:
 
-1. Go to: https://www.python.org/downloads/release/python-390/
-2. Scroll  to the **"Files"** section and download **Windows installer (64-bit)** --> e.g., `python-3.9.0-amd64.exe`.
+```bash
+python -c "import atracker; print(atracker.__version__); print(atracker.__file__)"
+```
 
-Then, 
+## 3. Add FFmpeg if you need video conversion
 
-1. Run the installer.
-2. **IMPORTANT**: Tick the checkbox **"Add Python 3.9 to PATH"* before clicking *Install Now*.
-3. In  "Advanced Options", also tick:
-    - "Add Python to environment variables"
-    - "Precompile standard library"
+A system FFmpeg installation is useful for converting camera recordings such as
+`.h264` files and for video output. Install it using your system's package manager
+or the instructions at [ffmpeg.org](https://ffmpeg.org/download.html). For example,
+with Homebrew on macOS:
 
-After installation, check it worked:
-
-    python --version
-    pip --version
-
-### 3. Create and Activate a Virtual Environment
-
-✅ Python's built-in `venv` lets you safely install packages without affecting your system Python.
-
-To create a virtual environment on Mac, create the virtual environment as follows. 
-
-First, look for the directory where python3.9 is installed (see your installation log). This is typically:
-
-- `/usr/local/opt/python@3.9/libexec/bin/python` (Intel Mac, Homebrew)
-- `/opt/homebrew/opt/python@3.9/bin/python3.9` (Apple Silicon/M1/M2, Homebrew)
-
-Now, create the virtual environment by running (adjust the path as needed):
-
-    /opt/homebrew/opt/python@3.9/bin/python3.9 -m venv ~/.virtualenvs/tracker
-
-or
-
-    /usr/local/opt/python@3.9/libexec/bin/python -m venv ~/.virtualenvs/tracker
-
-And activate it (every time you start a new terminal) with:
-
-    source ~/.virtualenvs/tracker/bin/activate
-
-> If you're on an Intel Mac, use `/usr/local/opt/python@3.9/bin/python3.9` instead.
-
-On Windows, use:
-
-    python -m venv tracker
-    tracker\Scripts\activate
-
-You’ll know it’s activated when your terminal prompt shows:
-
-    (tracker) $
-
-To deactivate later:
-
-    deactivate
-
----
-
-#### Optional: **Set up virtualenvwrapper for easier environment activation**
-
-*This step is optional, but recommended if you want to quickly activate your environment with a simple command (`workon tracker`) instead of typing the full `source ...` path each time.*
-
-1. **Install virtualenvwrapper (if not already):**
-
-    ```bash
-    pip3 install virtualenvwrapper
-    ```
-
-2. **Add these lines to the end of your `~/.zshrc` (or `~/.bashrc` if using bash):**
-
-    ```bash
-    export WORKON_HOME=$HOME/.virtualenvs
-    export VIRTUALENVWRAPPER_PYTHON=$(which python3)
-    source /usr/local/bin/virtualenvwrapper.sh
-    ```
-
-    > *If `/usr/local/bin/virtualenvwrapper.sh` does not exist, run `which virtualenvwrapper.sh` to find the path.*
-
-3. **Restart your terminal or run:**
-
-    ```bash
-    source ~/.zshrc
-    ```
-
-4. **Now, you can activate your environment at any time with:**
-
-    ```bash
-    workon tracker
-    ```
-
-    Your prompt should show `(tracker) $`.
-
-5. **To deactivate:**
-
-    ```bash
-    deactivate
-    ```
-
-## 4. Install ATracker
-
-1. Download or clone the `ATracker` folder to your computer. 
-2. Open a terminal folder and make sure your virtual environment is activated.
-3. and `cd` into that folder (e.g. on mac `cd ~/Desktop/atracker/`) by typing `cd` on mac or `cd /d` on windows, followed by a space, and dragging the folder into the terminal, and pressing `Enter`.
-4. Install `ATracker` in editable mode by typing the following:
-
-    ```bash
-    pip install -e
-    ```
-    
-    Make sure there’s a space after `-e`, then drag the `ATracker` folder into the terminal so the full path appears and press Enter.
-
-    > **Tip**: If you use pip install -e , make sure not to move or delete the ATracker folder afterward, as this installation method links directly to the source code. If you want a permanent installation that doesn’t depend on the folder location, use pip install . instead.
-
-## 5. Installing FFmpeg (optional but recommended)
-
-ATracker can convert `.h264` video files (commonly recorded by Raspberry Pi cameras) to `.mp4` format. This functionality works out of the box using a built-in fallback via `imageio[ffmpeg]`, so **you do not need to install FFmpeg manually** for basic use.
-
-However, if you **install FFmpeg on your system**, ATracker will use it automatically for conversion. This is much **faster**, especially for larger video files, because it avoids re-encoding and directly repackages the video. To do this, simply open a new terminal window (make sure you are not in the virtual environment) and run:
-
-**macOS:**
 ```bash
 brew install ffmpeg
 ```
 
-**Windows:**
-```bash
-winget install "FFmpeg (Essentials Build)"
-```
-
-🔍 Verify it's installed:
+Then check it is available:
 
 ```bash
 ffmpeg -version
 ```
 
-If it prints version info, you're all set.
+ATracker also has imageio-based conversion support; a system FFmpeg installation
+allows efficient repackaging where appropriate.
 
-> 💡 If FFmpeg is not found, ATracker will still convert videos using imageio, but this may be significantly slower as it decodes and re-encodes each frame.
+## 4. Run scripts or notebooks
 
-## 6. Using Your Environment in VS Code or Jupyter
+For a script, use the activated environment:
 
-I recommend using **Visual Studio Code (VS Code)** for editing, running, and testing your scripts and notebooks.
-
-1. **Install VS Code:**  
-
-Download from https://code.visualstudio.com/, install, and launch.
-
-2. **Install the Python and Jupyter Extensions:**  
-
-Click the **Extensions icon (left bar)**, then:
-    - Install **Python** (by Microsoft)
-    - Install **Jupyter** (by Microsoft)
-
-    > This allows you to open .ipynb notebooks and run code interactively.
-
-3. **Install `ipykernel` into your virtual environment:**
-
-Make sure the environment is activated, then run:
-    ```bash
-    pip install ipykernel
-    python -m ipykernel install --user --name tracker --display-name "Python 3.9 (tracker)"
-    ```
-    > This registers your virtual environment as a selectable "kernel" in Jupyter or VS Code.
-
-    > You can change "Python 3.9 (tracker)" to anything you want — it’s just the name that shows up in menus.
-
-
-4. **Select interpreter in VS Code:**  
-Open the Command Palette:
-    - Press `Ctrl+Shift+P` (Windows) or `Cmd+Shift+P` (macOS)
-    - Type: `Python: Select Interpreter`
-    - Choose: **Python 3.9 (tracker)** or browse to your virtualenv’s python.exe
-
-## 6. ATracker Documentation
-
-ATracker’s functions come with built-in documentation strings. You can view the documentation for any function by printing its __doc__ attribute. This works the same on Windows and macOS. 
-
-For example, to display the documentation for the manual tracking function, you can run:
-
-```Python
-print(atracker.ATracker.process.__doc__)
+```bash
+python my_tracking_script.py
 ```
 
-This will print out the usage information and description for that function directly in your terminal or Python interactive shell.
+In VS Code, install the Python extension and select this environment with
+**Python: Select Interpreter**. For notebooks, also install the Jupyter extension
+and register the environment as a kernel:
 
-> **Tip**: If you're using an interactive environment such as Jupyter Notebook in Visual Studio Code, you can also use the question mark operator for quick help:
-
-```Python
-atracker.ATracker.process?
+```bash
+python -m pip install ipykernel
+python -m ipykernel install --user --name atracker --display-name "Python (ATracker)"
 ```
 
-This command opens a help pane with the documentation for that function.
+Select **Python (ATracker)** as the notebook kernel. After editing package source,
+restart the Python session or kernel to load the changes.
+
+## 5. Choose a workflow
+
+Start with the [capabilities and workflow overview](2-using_atracker.md). Use
+[folder tracking](3-folder_tracking.md) for a structured project or
+[standalone tracking](4-standalone_tracking.md) for individual videos.
+Image measurements can be made directly with [measure_images](7-measuring_images.md).
+
+To inspect a function's arguments from Python:
+
+```python
+from atracker import track_video
+help(track_video)
+```
+
+If an import fails, check `python -m pip --version` and the Python/kernel selected
+in your editor: installation and execution must use the same environment. GUI
+windows need a desktop session. Preserve a working environment's package versions
+with `python -m pip freeze > requirements.txt` if you need an installation record.

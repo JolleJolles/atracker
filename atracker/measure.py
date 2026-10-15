@@ -5,7 +5,7 @@ import pandas as pd
 from .helpers.logging import lineprint
 from atracker.editor import annotation_gui
 
-def batch_measure(
+def measure_images(
     folder=".",
     filetypes=("jpg", "png", "jpeg", "bmp", "tif", "tiff", "mp4", "avi"),
     ask_id=True,
@@ -17,6 +17,13 @@ def batch_measure(
     conversion="first",
     variables=None,
 ):
+    """Draw calibrated lengths and polygon areas on a sorted collection of images.
+
+    Supply px_per_mm for a known scale, or conversion_image_mm to draw a
+    calibration line (conversion='first' or 'all'). variables names the measures
+    requested for each file. out_csv appends new files and skips saved filenames;
+    the return value contains only the current session's measurements.
+    """
     if variables is None:
         variables = ["SL_mm", "BH_mm", "eye_bottom_mm", "eye_top_mm"]
 
@@ -87,6 +94,7 @@ def batch_measure(
         ID = ids[i] if ids is not None else basename
 
         # --- Determine the px-per-mm for this file ---
+        status = "ok"
         if px_per_mm is not None:
             conv_this = px_per_mm
         elif per_file_calibration:
@@ -171,7 +179,7 @@ if __name__ == "__main__":
                         help="Calibration mode: 'first' (one-time) or 'all' (per file).")
     args = parser.parse_args()
 
-    batch_measure(
+    measure_images(
         folder=args.folder,
         px_per_mm=args.px_per_mm,
         conversion_image_mm=args.calib_mm,

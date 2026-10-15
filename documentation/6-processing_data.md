@@ -1,8 +1,10 @@
 # Processing tracking data
 
+[Guide overview](2-using_atracker.md)
+
 Use `AT.process()` to turn tracked CSV files into cleaned trajectories and movement measurements. This guide assumes you have already created your project instance, `AT`, and run tracking.
 
-First inspect representative tracking videos in `AT.dirs["tracked"]`. If detection fails throughout a video, improve its background, masks or tracking thresholds and track it again. For local errors, missing positions or identity corrections, follow [Manual tracking and correction](5-manual_tracking.md) before processing.
+First inspect representative tracking videos in `AT.dirs["tracked"]`. If detection fails throughout a video, improve its background, masks or tracking thresholds and track it again. For local errors, missing positions or identity corrections, follow [Manual tracking and correction](5-tracking_editor.md) before processing.
 
 ## 1. Select files and run processing
 
@@ -93,7 +95,7 @@ AT.process(**settings)
 
 When using the complete dictionary, change its entries instead of repeating the same parameter in the function call: `AT.process(smoothwin=11, **settings)` would supply `smoothwin` twice and raise an error.
 
-## Existing edited files
+### Existing edited files
 
 The file selector currently prefers an `_E.csv` variant when present, but the processor's loader marks these files as empty. Use ordinary tracked CSVs for this workflow and check for old `_E.csv` files before processing; do not create that suffix for new manual corrections.
 
@@ -192,7 +194,7 @@ AT.process(**settings)
 Record any justified differences between experimental setups. Increase `pools` only after the single-file results are satisfactory.
 
 
-## Preview the processed tracking
+## 6. Visualise the processed tracking
 
 ```python
 AT.visualise(
@@ -214,3 +216,14 @@ The output is saved beside the processed CSV as `<name>_V.mp4`. If OpenCV cannot
 Heading arrows automatically detect whether the stored headings use upward- or downward-increasing y coordinates from the trajectory's pixel motion. For a very short or stationary selection where this cannot be inferred, pass `heading_y_up=True` for y-up headings or `heading_y_up=False` for image-coordinate headings. This does not change stored tracking data.
 
 Each disconnected piece of a zone colour is displayed and included when calculating zone distances. Reprocess older CSVs to update their zone distances.
+
+## What is saved?
+
+Processed data are written as `<video>_F.csv`; input tracking CSVs are retained.
+Coordinates in pixels remain available for overlays, with converted coordinates
+and movement measures added when enabled. `overwrite=True` regenerates existing
+processed outputs after you change settings or correct coordinates.
+
+For processing an individual CSV without a project, use `process_video()` as shown
+in the [standalone guide](4-standalone_tracking.md). Return to the
+[guide overview](2-using_atracker.md) to choose another workflow.

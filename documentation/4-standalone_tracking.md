@@ -1,5 +1,7 @@
 # Standalone tracking, processing and visualisation
 
+[Guide overview](2-using_atracker.md)
+
 Track individual videos without creating an ATracker project, overview spreadsheet
 or folder structure. Run these examples in a Python script or notebook after
 [installing ATracker](1-installing_atracker.md).
@@ -19,7 +21,7 @@ tracked_csv = track_video(str(video), n_objects=1, draw_roi=True,
 ATracker extracts a background automatically, opens an interface to draw the ROI,
 then opens threshold calibration. Save your choices in each interface to continue.
 Use `draw_roi=False` for the full frame, or `draw_mask=True` to draw an exclusion
-mask. There is no mask by default. See [tracking settings](3-tracking.md) for help
+mask. There is no mask by default. See [tracking settings](3-folder_tracking.md) for help
 with detection and threshold calibration.
 
 Outputs beside the original video:
@@ -63,7 +65,7 @@ processed_csv = process_video(tracked_csv, videofile=str(video),
 
 Run that optional block only when you drew a mask. Wall and zone images can also
 be supplied through `wallfile` and `zonefile`. See
-[processing settings](4-processing_data.md) before changing interpolation or
+[processing settings](6-processing_data.md) before changing interpolation or
 smoothing for your experiment.
 
 ## 3. Visualise the processed tracking
@@ -88,7 +90,7 @@ trajectory trail in frames. Add `showvideo=True` for a live preview; use
 `writevideo=False, showvideo=True` to preview without writing a video.
 
 For manual coordinate corrections, use the standalone tools described in
-[manual tracking](5-manual_tracking.md), then rerun processing with
+[manual tracking](5-tracking_editor.md), then rerun processing with
 `overwrite=True`.
 
 ## 4. Reuse settings and automate a batch
