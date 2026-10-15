@@ -1,200 +1,286 @@
-# Manual tracking and correction
+# Manual tracking, correction and event review
 
-Use the interactive editor to correct local tracking errors or annotate positions from scratch. For widespread detection failures, improve automated tracking first. Run [data processing](4-processing_data.md) after checking and saving the coordinates.
+Use the interactive editor to correct tracked coordinates, annotate positions from
+scratch, or review candidate events. The examples below cover project and
+standalone workflows. For widespread detection failures, improve
+[automated tracking](3-tracking.md) before correcting individual frames.
 
-See [Tuning automated tracking](3-tracking.md) for the detection pipeline, parameter meanings, aspect-ratio precedence, flicker rejection and the per-ID size filter.
+| Task | Function |
+| --- | --- |
+| Correct coordinates in a project | `AT.editor(..., purpose="timepoints")` |
+| Draw an ROI, mask or zones; adjust tracking settings | `AT.editor(..., purpose=...)` |
+| Annotate coordinates without a project | `manual_tracker(...)` |
+| Confirm candidate event intervals | `AT.event_checker(...)` or standalone `event_checker(...)` |
 
-Use `AT.editor(purpose="timepoints")` for project work. `AT.check_interactive()` remains available for older notebooks, and the standalone `manual_tracker()` function works without a project. Older examples using `AT.process(manfix=True, manonly=True)`, `Tracker_man`, `man_types` or `statevar` do not apply to the current API.
+## 1. Open project videos for correction
 
-## Correct files in an ATracker project
-
-With your project already loaded as `AT`, open selected videos in the multi-file editor:
+With your project loaded as `AT`, select a video by its overview basename:
 
 ```python
-# Replace with a video basename from AT.overview["video"].
-AT.editor(names=["your_video"], purpose="timepoints")
+AT.editor(names="your_video", purpose="timepoints")
 ```
 
-You can also select overview rows or use a query:
+The editor opens the original video and its tracked CSV. If no coordinate file
+exists, it starts empty. Select several videos by name, overview index or query:
 
 ```python
+AT.editor(names=["video_1", "video_2"], purpose="timepoints")
 AT.editor(inds=[0, 1], purpose="timepoints")
-
-AT.editor(
-    query="date in ['260225', '260226']",
-    purpose="timepoints",
-)
+AT.editor(query="date in ['260225', '260226']", purpose="timepoints")
 ```
 
-This opens the original video and loads its coordinate file from `AT.dirs["tracked"]/<video>.csv`, if present. When the overview has multiple regions for a video, the Editor uses `<video>_R<region>.csv`, matching the tracker. Select a specific region with its overview index or `names="your_video_R2"`. Without an existing CSV, you can start annotating from scratch. Avoid `cats` when you intend to correct every video: it selects representatives of category combinations.
+Replace these names and dates with values from your overview. Avoid `cats` when
+you want every matching video: that option selects representatives of category
+combinations.
 
-**Save current** (or **S**) writes the current task immediately and stays on the same video. For coordinates, this replaces the tracked CSV. **Next** and **Prev** navigate separately and retain pending work. **Close** checks for unsaved edits across all visited videos and purposes; it does not save them automatically.
+**Next / Prev** move between files and retain pending edits. **S / Save current**
+saves the current task and stays on that video. Closing prompts before discarding
+unsaved work across visited files and purposes.
 
-You can complete several tasks without leaving the window:
+Tracked coordinates are loaded from `AT.dirs["tracked"]/<video>.csv`. For videos
+with multiple overview regions, the editor uses `<video>_R<region>.csv`, matching
+the tracker. Select a region through its overview index or
+`names="your_video_R2"`.
+
+## 2. Add, move and delete positions
+
+Choose the animal ID and point type (**Centroid**, **Head** or **Tail**) first.
+For a new annotation, set the number of animals using the ID-count control.
+
+1. Navigate to the frame using the frame box, video slider or keyboard.
+2. Select **(re)Draw point at current frame** and click the animal's position.
+3. To adjust a point, select **Move point nearest to mouse** and drag it.
+4. To delete several points, draw a rectangle or polygon and use **In shape**.
+   Set the visible frame range and **Current ID** scope before deleting.
+5. Inspect the interval, then press **S** to save.
+
+**Last**, **In shape**, **Visible** and **Undo** control deletion. The
+**Change angle of nearest point** tool edits a point's associated angle; it does
+not move its head or tail. Use point visibility, frame labels and visible-range
+controls to focus on a manageable interval.
+
+| Control | Action |
+| --- | --- |
+| Space | Play/pause. |
+| Q / Y | First/last video frame. |
+| E / R | Previous/next frame. |
+| W / T | Backward/forward by the displayed FPS step. |
+| I / O | Previous/next animal ID. |
+| P | Cycle Centroid, Head and Tail. |
+| S | Save current in the project editor; save and close in standalone manual tracking. |
+| Escape twice quickly | Close, checking for pending project edits. |
+
+Place points consistently on the same part of the animal. Prioritise identity
+swaps, turns, abrupt speed changes and refuge entry/exit. Leave gaps when the
+animal is hidden rather than inventing positions.
+
+After saving, rerun [processing](4-processing_data.md) with `overwrite=True` to
+update existing processed outputs. Sparse annotation needs care: isolated points
+may be removed by `min_traj_len`, and long gaps may remain unfilled. Pilot a short
+interval before annotating an entire experiment.
+
+## 3. Edit setup and threshold settings
+
+Open an editor purpose directly:
 
 ```python
 AT.editor(names="your_video", purpose="roi")
 ```
 
-Draw the ROI and press **S**, choose **Mask** and draw/save it, then choose **Coordinate data** to load and edit the matching tracked CSV. Switching purposes retains unfinished drawings and coordinate edits separately. Return to a purpose to resume its pending work; on first use, its existing project data is loaded. ROI and frame-limit saves update the overview spreadsheet immediately. Masks and zones are saved as full-frame images; coordinates are edited against the saved ROI.
+You can switch purposes within the window. Draw and save an ROI, choose **Mask**
+and draw/save it, then choose **Coordinate data** to correct tracking. Each purpose
+retains its own pending work; returning to it restores that draft.
 
-**Measurement** saves calibration: draw a polyline, press **S**, and enter its known length in millimetres. **Thresholding** and **Thresholding color** load the video's configured threshold settings; when several configurations are available, choose which one to edit. Saving updates that named configuration.
-
-For dark footage, open `AT.editor(names="your_video", purpose="thresholding")` and adjust **Tracking gamma** in the threshold controls. The default **1.00** leaves detection unchanged; higher values brighten shadows before background subtraction and blur. Both the video frame and background receive the same correction. Retune the threshold while inspecting the detection preview, then press **S** to save `gamma` with the selected threshold configuration. Subsequent tracking uses that setting for every video using the configuration. Colour thresholding also supports tracking gamma. Existing configurations without `gamma` use 1.0.
-
-The separate **Gamma** control under Drawing functions only changes the displayed image and has no effect on tracking. Tracking gamma does not alter source videos or saved backgrounds.
-
-To edit or create a named threshold configuration independently of the overview assignments:
-
-```python
-AT.editor(inds=inds, threshtypes=["bwdark"])
-# Also accepted: purpose="thresholding", threshtypes=["bwdark"]
-```
-
-An existing `bwdark` entry is loaded; a new entry starts from defaults. **S / Save current** adds or updates it in `AT.threshinfo` and writes `AT.cfiles["threshinfo"]`, preserving other entries. With several names, the Editor asks which configuration to edit. Without an explicit purpose, the first name selects B/W thresholding for a `bw` prefix, otherwise colour thresholding. This does not assign the configuration to videos: tracking uses each overview row's `thresh_types` field, as with `set_interactive(threshtypes=...)`.
-
-The editor retains existing coordinate ID labels when saving, while showing numeric IDs for editing. It still writes coordinate columns rather than preserving every automated-tracker metadata column.
-
-When tuning a named threshold configuration across videos, **Next / Prev keep the current settings active**, including unsaved changes. Revisiting a video uses the latest settings for that configuration, not an older per-video copy. The selected configuration follows navigation whenever it is available for the next video; different configuration names retain separate settings. **S / Save current** writes the shared configuration to YAML without closing or advancing. Navigation itself never writes it; closing with unsaved threshold changes prompts before discarding them.
-
-For the older, one-window-per-video workflow:
-
-```python
-AT.check_interactive(inds=[0, 1], fileaction="overwrite")
-```
-
-This also edits tracked CSVs while displaying original videos, but uses the older per-video window and filename handling. Prefer `AT.editor()` for region-aware, multi-purpose work.
-
-## Review candidate events
-
-Open a MoveR event-window CSV in the new event checker:
-
-```python
-AT.event_checker("processed/barrier_jump_frames.csv", modifier="complete")
-# Equivalent editor mode:
-AT.editor(purpose="event_checker", candidates="processed/barrier_jump_frames.csv")
-```
-
-`event_checker` reviews discrete event intervals; the `state` column retains its
-MoveR label. Use `event_checker` for this mode.
-
-Use `modifier="complete"` to add a **Complete** checkbox, for example to mark a
-jump spanning the whole barrier. Its value is saved in a `complete` CSV column:
-`true` when checked, `false` when unchecked. Existing values are restored per
-event. Blank means not yet assessed; Confirm/Deny records the current checkbox
-value, while changing the checkbox alone remains pending until Save or a review
-button is pressed. The modifier can have another name, such as `contact`.
-
-The CSV must contain `video`, `start_frame`, `end_frame`, and `state` (for example,
-`state_jump` or `state_slow`). An empty `review` column is accepted and added if
-missing. Video names match files in the project's originals directory; region
-suffixes such as `_R2` can resolve to the corresponding full original video.
-The checker does not modify tracked coordinates or overview frame limits.
-
-- **Prev / Next** (or left/right arrow keys while the video canvas has focus)
-  move through candidate rows in CSV order, including multiple intervals in the
-  same video. **Video arrows** skip to the next/previous different video. Playback
-  resumes after navigation if it was playing. Use the frame box or ±1-frame/±1-second
-  buttons to step through the video.
-- Each candidate opens at its `start_frame`. The bottom timeline shows all
-  candidate intervals for that video, in separate rows per state. Click another
-  interval to select it; click or drag elsewhere to seek. Scroll the timeline to
-  step through frames (Shift-scroll uses the displayed FPS step). The black outline marks
-  the selected candidate. The normal playback/frame controls remain available.
-- Adjust the candidate start/end with the existing frame-limit controls, including
-  setting a bound to the current frame. Both bounds are inclusive.
-- Drag the divider between sidebar and video to resize the sidebar. Candidate
-  start/end controls occupy separate lines; the timeline shows the full video.
-- **Confirm** writes `confirmed`; **Deny** writes `denied`; **Unreviewed** clears
-  `review`. These buttons and **S / Save current** save all pending edits to the
-  same CSV. **Advance after review** controls whether these buttons select the next
-  candidate after saving (enabled by default). A denied row remains in the file,
-  retaining its state label and bounds.
-- Navigation retains edits without saving. Closing with pending edits offers
-  Save, Discard or Cancel. Extra CSV columns and row order are preserved. An
-  externally changed CSV must be reopened before saving, preventing lost edits.
-
-CSV frames are **one-based by default**, matching the editor. For a zero-based
-export, use `AT.event_checker(csv_file, frame_base=0)`: the interface still displays
-one-based frames, and saves bounds back in the original zero-based convention.
-The checker validates candidate bounds against video lengths before opening.
-
-Without a project:
-
-```python
-from atracker import event_checker
-event_checker("barrier_jump_frames.csv", video_dir="/path/to/originals")
-```
-
-When loading the reviewed CSV downstream, use `review == "confirmed"` for accepted
-states and distinguish `denied` from blank, unreviewed rows. Review decisions apply
-to the proposed event, not to the entire video.
-
-## Add, move and delete positions
-
-In the editor, choose the animal ID and point type (**Centroid**, **Head** or **Tail**) before editing.
-
-1. Navigate to the frame you want to correct using the frame control or video slider.
-2. Select **(re)Draw point at current frame** and click the desired body position to add or replace a point.
-3. To adjust an existing point, select **Move point nearest to mouse** and drag it.
-4. To remove several points, choose a rectangle or polygon, draw around them, and use **In shape**. Set the visible frame range and **Current ID** scope first to limit the selection.
-5. Review the corrected interval, then press **S** to save it.
-
-The **Last**, **In shape**, **Visible** and **Undo** buttons provide deletion controls. Check the selected point type, ID scope and visible range before deleting. The **Change angle of nearest point** mode edits an angle associated with an existing point; it is separate from moving its head or tail.
-
-| Control | Action |
+| Purpose | What to do and save |
 | --- | --- |
-| Space | Play/pause video. |
-| Q / Y | First/last video frame. |
-| E / R | Previous/next frame. |
-| W / T | Jump backward/forward by the displayed FPS step. |
-| I / O | Previous/next animal ID when multiple IDs are configured. |
-| P | Cycle Centroid, Head and Tail point types. |
-| S | Save current and stay in the project editor; save and close in the standalone/older interface. |
-| Escape twice quickly | Close the window, prompting about pending project edits; already saved files remain saved. |
+| `"roi"` | Draw the ROI; saving updates the project overview. |
+| `"mask"` | Draw an exclusion mask; saved as a full-frame image. |
+| `"zones"` | Draw zones; saved as a full-frame image. |
+| `"framelimits"` | Set the tracking interval; saving updates the overview. |
+| `"measure"` | Draw a polyline, press S and enter its known length in millimetres to save calibration. |
+| `"thresholding"` | Edit a named B/W threshold configuration. |
+| `"thresholding color"` | Edit a named colour threshold configuration. |
 
-Choose the number of IDs with the editor's ID-count control when starting a new annotation. Use the point display, frame labels and visible-range controls to inspect a manageable interval rather than the entire trajectory at once.
+Coordinates are edited against the saved ROI. Save setup changes before using
+them for later tasks.
 
-## Track a standalone video
+### Tune a named threshold configuration
 
-No ATracker project is required:
+To edit or create a configuration independently of overview assignments:
+
+```python
+AT.editor(names="your_video", threshtypes=["bwdark"])
+```
+
+An existing configuration is loaded; a new one starts from defaults. Without an
+explicit purpose, a `bw` prefix selects B/W thresholding; other names select
+colour thresholding. If several names are supplied, choose which one to edit.
+
+**S / Save current** updates that entry in `AT.threshinfo` and its YAML file,
+preserving other configurations. It does not assign the configuration to videos:
+tracking still uses each overview row's `thresh_types` field.
+
+**Next / Prev** retain the current named configuration and its unsaved settings
+across videos. Revisiting a video uses the latest draft for that configuration.
+Different configuration names retain separate drafts; navigation does not save
+them.
+
+### Brighten dark footage for detection
+
+```python
+AT.editor(names="your_video", purpose="thresholding")
+```
+
+Increase **Tracking gamma** in the threshold controls, inspect the detection
+preview, retune the threshold and press **S**. The default `1.00` leaves detection
+unchanged; higher values brighten shadows. The video frame and background both
+receive this correction before background subtraction and blur.
+
+Tracking gamma is saved with the named threshold configuration and applies to all
+videos using it. Colour thresholding also supports it; configurations without a
+`gamma` entry use `1.0`. Source videos and saved backgrounds are unchanged.
+The separate **Gamma** control under Drawing functions changes only the display.
+See [tracking settings](3-tracking.md) for the detection pipeline and parameter
+choices.
+
+## 4. Annotate a standalone video
+
+No project or overview is required:
 
 ```python
 from atracker import manual_tracker
 
-manual_tracker(
-    media_file="/path/to/video.mp4",
-    data_file="/path/to/video_coordinates.csv",
-    fileaction="overwrite",
-)
+manual_tracker(media_file="/path/to/video.mp4",
+    data_file="/path/to/video_coordinates.csv", fileaction="overwrite")
 ```
 
-An existing coordinate CSV is loaded; otherwise the editor starts empty. Choose the number of animals and point type in the interface, add positions, then press **S** to save and close. For a new file, add at least one point before saving.
+An existing coordinate CSV is loaded; otherwise annotation starts empty. Choose
+the number of animals and point type, add positions, then press **S** to save and
+close. A new file needs at least one point before saving.
 
-If `data_file` is omitted, the CSV is placed beside the video with the same basename. `fileaction="newfile"` saves to a numbered alternative when the target exists. Use an explicit `data_file` to keep annotation output separate from other CSVs.
+If `data_file` is omitted, the CSV is placed beside the video with the same
+basename. `fileaction="newfile"` saves to a numbered alternative when the target
+exists. An explicit filename keeps manual annotations separate from other CSVs.
 
-To annotate several standalone videos in sequence:
+To annotate several videos in sequence:
 
 ```python
 from pathlib import Path
 from atracker import manual_tracker
 
 for video in sorted(Path("/path/to/videos").glob("*.mp4")):
-    result = manual_tracker(
-        media_file=str(video),
+    result = manual_tracker(media_file=str(video),
         data_file=str(video.with_name(video.stem + "_coordinates.csv")),
-        fileaction="overwrite",
-    )
+        fileaction="overwrite")
     if result == "exit":
         break
 ```
 
-Standalone CSVs are not automatically registered with an ATracker project. To use `AT.process()`, the video needs a matching overview row with frame limits, FPS, ROI and calibration, and its coordinate CSV must use the expected basename in `AT.dirs["tracked"]`.
+Follow the [standalone tutorial](6-standalone_tracking.md) to process and visualise
+these files with explicit video, ROI and calibration settings. Standalone CSVs
+are not automatically registered with a project. To use `AT.process()`, provide a
+matching overview row and put the coordinate CSV under the expected basename in
+`AT.dirs["tracked"]`.
 
-## Decide what needs manual correction
+## 5. Review candidate events
 
-Place points consistently on the same part of the animal. Prioritise identity swaps, turns, rapid changes in speed, and visible refuge entry/exit frames. Do not invent positions while the animal is hidden: leave gaps and choose appropriate processing settings instead.
+Open a MoveR event-window CSV against your project's original videos:
 
-Sparse manual annotation needs special care during processing: isolated points may be removed by `min_traj_len`, and long gaps may remain unfilled. Pilot a short annotated interval and inspect its output before scoring an entire experiment. The old animal-state shortcuts and `statevar` argument are not supported by the current interface; keep separate event annotations if your analysis needs explicit refuge states.
+```python
+AT.event_checker("processed/barrier_jump_frames.csv", modifier="complete")
+```
 
-The editor remembers its drawing tool, window geometry and display preferences in `~/.atracker/editor_prefs.json`, outside your package. Return to [Processing tracking data](4-processing_data.md#5-choose-settings-for-your-experiment) when the saved coordinates are ready.
+The CSV needs `video`, `start_frame`, `end_frame` and `state` columns. The `state`
+value labels the candidate, for example `state_jump` or `state_slow`. A `review`
+column is added if absent. Extra columns and row order are preserved.
+
+Video names match files in the originals directory. Region suffixes such as
+`_R2` can resolve to the corresponding full original video. Event review updates
+the candidate CSV, leaving tracking coordinates and overview frame limits alone.
+
+### Review only unfinished events
+
+```python
+AT.event_checker("processed/barrier_jump_frames.csv",
+    modifier="complete", unreviewed_only=True)
+```
+
+Only rows with blank `review` values are selected when opening the checker.
+Saving still preserves all reviewed rows in the original CSV. Omit this option
+to browse every event.
+
+### Navigate, adjust and confirm
+
+| Control | Action |
+| --- | --- |
+| Prev / Next; left/right keys with canvas focus | Select the previous/next candidate in CSV order, seeking to its start. |
+| Video arrows | Skip to the previous/next different video. |
+| Frame box; ±1-frame / ±1-second buttons | Step through the current video. |
+| Candidate start/end | Edit inclusive bounds, or set a bound to the current frame. |
+| Confirm | Save `confirmed` in `review`. |
+| Deny | Save `denied` in `review`; retain the row. |
+| Unreviewed | Clear `review` and save. |
+| Advance after review | Move to the next candidate after a review button; enabled by default. |
+| S / Save current | Save all pending CSV edits without advancing. |
+
+Playback resumes on navigation if it was playing. The bottom timeline shows
+candidate intervals for the current video, with the selected interval outlined.
+Click an interval to select it, click/drag elsewhere to seek, or scroll to step
+through frames. Shift-scroll uses the displayed FPS step. Drag the divider
+between sidebar and video to resize the sidebar.
+
+Navigation retains pending edits without saving. Closing offers Save, Discard or
+Cancel. If the CSV was changed externally, reopen it before saving.
+
+### Add an event modifier
+
+`modifier="complete"` adds a **Complete** checkbox, for example for a jump spanning
+the whole barrier. Its value is saved in a `complete` column as `true` or `false`;
+blank means not yet assessed. Existing values are restored per event.
+
+Confirm/Deny records the current checkbox value. Changing the checkbox alone
+remains pending until Save or a review button is pressed. Use another name, such
+as `modifier="contact"`, to record a different yes/no property.
+
+### Frame numbering and standalone review
+
+CSV bounds are **inclusive and one-based by default**, matching the editor.
+For zero-based exports:
+
+```python
+AT.event_checker("processed/barrier_jump_frames.csv", frame_base=0)
+```
+
+The interface still displays one-based frames and saves back using the input
+convention. Candidate bounds are checked against video lengths before opening.
+
+Without a project:
+
+```python
+from atracker import event_checker
+
+event_checker("barrier_jump_frames.csv", video_dir="/path/to/originals",
+    modifier="complete", unreviewed_only=True)
+```
+
+The equivalent project editor call is
+`AT.editor(purpose="event_checker", candidates="path/to/events.csv")`.
+When analysing the reviewed file, select `review == "confirmed"` for accepted
+events; distinguish denied rows from blank, unreviewed ones.
+
+## What is saved?
+
+| Workflow | Saved output |
+| --- | --- |
+| Project coordinate editing | Replaces the matching tracked CSV on Save. Existing ID labels are retained; not all automated-tracker metadata columns are preserved. |
+| Project setup editing | Updates the overview, named threshold YAML or full-frame setup images, depending on purpose. |
+| Standalone manual tracking | Writes the specified coordinate CSV on Save, then closes. |
+| Event checking | Writes edited bounds, review decisions and optional modifier values to the original event CSV. |
+
+Display preferences and drawing-tool choices are stored outside the package in
+`~/.atracker/editor_prefs.json`.
+
+Older notebooks may use `AT.check_interactive(inds=[0, 1], fileaction="overwrite")`.
+It retains the older one-window-per-video workflow; use `AT.editor()` for current
+project work. Examples with `AT.process(manfix=True, manonly=True)`, `Tracker_man`,
+`man_types` or `statevar` do not apply to the current API.

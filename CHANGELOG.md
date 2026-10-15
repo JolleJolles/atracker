@@ -5,6 +5,7 @@
 
 
 ## Unreleased
+- Reorganised the manual-tracking guide to match the standalone tutorial: numbered workflows, compact examples and control/output tables, with current event-review options and legacy notes at the end.
 - Added a standalone tutorial covering single-video setup, saved .atrk bundles, processing, processed-video overlays and batch automation, with a README link.
 - Improved event review with playback retained across navigation, coloured review buttons and an optional advance-after-review toggle. Added immediate frame-box seeking and frame/second step buttons, separated and widened candidate-bound controls, removed the unused visible-range option, and added a draggable editor sidebar divider. Avoid loading empty mask filenames to remove the harmless Qt warning.
 - Renamed the discrete-interval reviewer to event_checker; removed the state_checker API and editor-purpose alias. Added modifier="complete" or another checkbox name, retaining per-event values in its own CSV column and restoring them on navigation.
