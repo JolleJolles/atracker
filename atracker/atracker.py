@@ -1387,6 +1387,18 @@ class ATracker:
         self.set_config(overwrite=a, show_tracking=b, frame_disstep=c,
             trajs_below=d, create_vid=e, create_dat=f)
 
+    def watch_folder(self, folder, template_ind, poll_interval=30, settle_seconds=60,
+                     extract_background=True):
+        """Discover new MP4s and track them using a configured overview row.
+
+        Reuses ROI, calibration, masks, walls, zones, objects and threshold names;
+        reads FPS/dimensions/frame count and extracts a new background per video.
+        Frame limits cover the full new recording. Stops with Ctrl+C.
+        """
+        from .helpers.watch import watch_folder
+        return watch_folder(self, folder, template_ind, poll_interval, settle_seconds,
+                            extract_background)
+
     def track(self, inds=None, names=None, query=None, cats=None, pools=1, folder="todo", frame_start=None,
         frame_stop=None, threshtype=None, objects=None, checkconschange=False, suffix="", threshfile=None,
         max_framedist=None, overwrite=None, check_flicker=None, skip_frames=None, watch=False, watch_interval=60,
@@ -1403,6 +1415,7 @@ class ATracker:
             lineprint(f"Watch mode enabled — checking every {watch_interval}s (Ctrl+C to stop)..")
 
         _stop = False
+        success = True
         while not _stop:
 
             # In watch mode reload overview and threshinfo from disk each pass
@@ -1509,6 +1522,7 @@ class ATracker:
                     except (KeyboardInterrupt, BatchInterrupted):
                         lineprint("\nUser terminated tracking..")
                         stop = True
+                        success = False
                         _stop = True
                     except Exception as e:
                         video = self.overview.loc[ind]["video"]
@@ -1519,6 +1533,7 @@ class ATracker:
                 if not _stop:
                     lineprint(f"Tracking finished; failed rows: {failed_rows or 'none'}.")
                 if failed_rows:
+                    success = False
                     _stop = True
             else:
                 tracking_config.vis.show_tracking = False
@@ -1530,6 +1545,7 @@ class ATracker:
                     groups.setdefault(item[1], []).append(item)
                 try:
                     if not run_pool(T.track_group, list(groups.values()), pools=pools, mode="process", label="tracking"):
+                        success = False
                         _stop = True
                 finally:
                     recover_tracking_sources(track_items, self.dirs)
@@ -1544,6 +1560,8 @@ class ATracker:
                 except KeyboardInterrupt:
                     lineprint("Watch mode stopped.")
                     _stop = True
+
+        return success
 
     def check_interactive(self, folder="tracked", inds=None, names=None, query=None, cats=None, fileaction="overwrite"):
         if names is not None:

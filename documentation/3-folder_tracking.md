@@ -331,6 +331,55 @@ Ctrl+C stops sequential tracking or terminates process workers and restores sour
 videos moved into the temporary folder. This retains the current numbered-folder
 workflow; it does not resume a video from its last tracked frame.
 
+## 12. Track new recordings during an experiment
+
+Use `watch_folder()` when new videos share an already tested setup. Configure and
+track a representative video first, then reuse its overview row as the template:
+
+```python
+AT.set_config(show_tracking=False, create_dat=True, create_vid=False)
+AT.watch_folder("/path/to/incoming", template_ind=0,
+    poll_interval=30, settle_seconds=60)
+```
+
+The call runs until Ctrl+C. It scans only this folder (not subfolders) for MP4s,
+including files already present when watching starts. A recording must have an
+unchanged size and modification time across two scans, and its last modification
+must be at least `settle_seconds` ago. Prefer moving/renaming completed recordings
+into the incoming folder: a camera or copy operation can pause longer than the
+settling interval, so stability alone cannot guarantee completion.
+
+Each new recording is copied into `0originals`; incoming sources remain in place.
+The watcher creates an overview row, reads video metadata, extracts a fresh
+background and tracks sequentially with `overwrite=False`. New files arriving
+while tracking wait for the next scan. Existing completed videos are skipped.
+Use unique video basenames across the project; existing files are never replaced.
+The incoming folder must be separate from `0originals` and its parent/child folders.
+
+The template supplies ROI, calibration, masks, walls, zones, object count and named
+threshold assignments; project tracking settings remain in effect. Shared geometry
+requires matching video dimensions and an unchanged camera/arena. Frame limits
+are reset to the entire new recording, and any exclusion flag is cleared. Other
+overview metadata is copied too: update fish IDs, dates and other experimental
+metadata as needed. The template is captured when watching starts; stop and restart
+the watcher after changing it. Do not edit the overview spreadsheet concurrently.
+
+For a fixed, validated background, use `extract_background=False` to reuse the
+template background. Automatic extraction otherwise uses the standard background
+estimator; validate it for your lighting and animal movement before unattended use.
+This convenience workflow is intended for a single configured region per arrival.
+
+Unreadable or mismatched files are reported once per unchanged file; restart the
+watcher after fixing them. If a video was already copied/registered, repair its
+setup and retry with `AT.track(names=["video_name"], folder="originals",
+overwrite=False)`. Tracking failure or interruption stops the watcher so it can be
+resolved. Registration alone does not mean tracking completed.
+
+The older `AT.track(watch=True)` only polls videos already registered in the
+overview and does not prepare new files. `watch_folder()` adds discovery and setup;
+a future instance-based project format can create each instance from the same
+kind of saved template.
+
 ## Diagnosing slow tracking
 
 Normal tracking prints a batch summary, file starts/completions and progress every

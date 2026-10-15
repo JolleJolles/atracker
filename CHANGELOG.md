@@ -36,6 +36,8 @@
 
 ## Unreleased
 
+- Added `AT.watch_folder()` to discover stable incoming MP4 recordings, copy them safely into the project, reuse a configured overview template, extract backgrounds and track during experiments. Documented settling limits, shared geometry, metadata and retry behaviour. `AT.track()` now returns a success flag so the watcher stops on tracking failure or interruption.
+
 - Improved batch failure reporting and cancellation: ordinary file errors no longer hide or stop other files, interrupted tracking restores moved source videos, and tracking/processing CSVs replace existing outputs only after a successful write. Parallel tracking serialises regions sharing a video; fixed single-region skip naming and per-file link-distance conversion. Processing and visualisation return the batch success flag.
 - Added position_source/head_source/tail_source and independent validity flags to tracking and processing. Editor saves retain unchanged origins and label per-point manual additions/corrections/deletions; coordinate interpolation is labelled at the fill step, and legacy files use unknown provenance. Preserve head/tail information during editor loading and retain tail coordinates in processed output. Added an output-column/units reference in guide 6.
 - Added AT.export_geometry() to save per-video/region geometry JSON beside originals: full-frame ROI and raster-derived mask/wall/zone polygons with holes and separate parts, calibration, metadata and associated file references. Documented export, R use and the continuing image-based workflow in guide 2.
