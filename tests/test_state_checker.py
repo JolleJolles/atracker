@@ -188,7 +188,11 @@ class StateCheckerTest(unittest.TestCase):
         project.dirs = {"originals": str(self.root)}
         with patch.object(importlib.import_module("atracker.editor"), "event_checker", return_value="opened") as launch:
             self.assertEqual(project.editor(purpose="event_checker", candidates=str(self.csv)), "opened")
-            launch.assert_called_once_with(str(self.csv), str(self.root), frame_base=1, modifier=None)
+            launch.assert_called_once()
+            args, kwargs = launch.call_args
+            self.assertEqual(args, (str(self.csv), str(self.root)))
+            self.assertEqual(kwargs["frame_base"], 1)
+            self.assertIsNone(kwargs["modifier"])
 
 
 if __name__ == "__main__":

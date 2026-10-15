@@ -76,6 +76,10 @@ Place points consistently on the same part of the animal. Prioritise identity
 swaps, turns, abrupt speed changes and refuge entry/exit. Leave gaps when the
 animal is hidden rather than inventing positions.
 
+Coordinate saves preserve the origins of unchanged points and mark added, moved
+or deleted points `manual`, separately for centroid/head/tail. See the
+[output and provenance reference](6-processing_data.md#7-output-columns-units-and-position-provenance).
+
 After saving, rerun [processing](6-processing_data.md) with `overwrite=True` to
 update existing processed outputs. Sparse annotation needs care: isolated points
 may be removed by `min_traj_len`, and long gaps may remain unfilled. Pilot a short

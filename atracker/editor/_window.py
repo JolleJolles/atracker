@@ -2044,7 +2044,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
                         a = typedict.get("a", {}).get(f)
                         row["angle"] = a if a is not None else None
                         data.append(row)
-                df_out = pd.DataFrame(data).sort_values(["id", "frame"]).reset_index(drop=True)
+                df_out = pd.DataFrame(data, columns=["frame", "id", "cx", "cy", "hx", "hy", "tx", "ty", "angle"]).sort_values(["id", "frame"]).reset_index(drop=True)
                 result = ("timepoints", df_out)
             elif opmode == "framelimits":
                 result = ("framelimits", (self.flim_start_spin.value(), self.flim_stop_spin.value()))

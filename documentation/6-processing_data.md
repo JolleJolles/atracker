@@ -217,6 +217,88 @@ Heading arrows automatically detect whether the stored headings use upward- or d
 
 Each disconnected piece of a zone colour is displayed and included when calculating zone distances. Reprocess older CSVs to update their zone distances.
 
+## 7. Output columns, units and position provenance
+
+### Tracked CSVs
+
+Raw `<video>.csv` files contain detections, not necessarily a row for every frame
+and animal. Frame numbers are one-based, refer to the source video, and retain
+their original values when tracking starts later or skips frames.
+
+| Column | Meaning and units |
+| --- | --- |
+| `frame` | Source-video frame number. |
+| `id` | Tracker identity label; colour methods can use named labels. |
+| `cx`, `cy` | Centroid, in pixels relative to the ROI's top-left; x rightward, y downward. |
+| `hx`, `hy`, `tx`, `ty` | Optional head/tail positions in the same pixel convention. |
+| `angle` | Optional detector orientation in degrees; axial B/W angles can be ambiguous by 180 degrees. |
+| `area` | Detected contour area in square pixels. |
+| `aspect_ratio` | Detected contour aspect ratio, dimensionless. |
+| `consmerged` | Optional internal contour merge indicator. |
+| `position_source`, `head_source`, `tail_source` | Origins of the centroid, head and tail, respectively; see below. |
+| `position_valid`, `head_valid`, `tail_valid` | Whether the corresponding x/y pair is finite in this file. |
+
+Manual coordinate CSVs use the same pixel convention, but may omit detector
+metadata such as area. Editor saves preserve source labels for unchanged points
+and mark added, moved or deleted point pairs `manual`. Deleted rows are retained
+as empty coordinate rows so deletion provenance is not lost. Changing only the
+head does not label the centroid as manually corrected.
+
+### Processed CSVs
+
+Processed `<video>_F.csv` files retain pixel positions for overlays and add the
+following fields when their calculations are enabled. Which rows are included
+depends on `fulldata`, frame limits and resampling settings.
+
+| Column | Meaning and units |
+| --- | --- |
+| `frame`, `time` | Original frame number and `frame / original_fps` in seconds; frame 1 is therefore not time zero. |
+| `ID` | Overview animal identity if assigned, otherwise the tracker label. |
+| `traj` | Valid trajectory segment within an individual; missing when no valid trajectory is retained. |
+| `inmask` | 1 when no valid trajectory is retained, including missing/filtered data; not proof of physical occupancy inside a mask. |
+| `cx`, `cy` | Processed centroid pixels, ROI-relative with y downward; may be interpolated/smoothed. |
+| `fx`, `fy`, `tx`, `ty` | Processed head/tail pixels; raw `hx`, `hy` become `fx`, `fy`. |
+| `cx_c`, `cy_c`, `fx_c`, `fy_c` | Converted centroid/head positions in mm with mm/pixel calibration; x ROI-relative, y flipped upward by default (`datflip=True`). |
+| `displ`, `cumdispl` | Displacement per retained step and cumulative displacement per individual, in mm with calibration. |
+| `speed`, `accel` | Linear speed in cm/s and acceleration in cm/s² with calibration, using the processing FPS. |
+| `heading`, `orient` | Movement heading and estimated body orientation in degrees; heading uses `atan2(dx, dy)`. |
+| `turnspeed`, `turnaccel` | Wrapped angular change per retained step and change of that angular change; not degrees/s or degrees/s². |
+| `cumturn`, `abscumturn` | Cumulative signed and absolute angular changes in degrees, per individual. |
+| `rdist` | Signed ROI-edge distance in mm with calibration; positive inside the ROI. |
+| `mdist`, `wdist`, `mzdist` | Mask, wall and mask-zone distances when retained; polygon distances can be signed. |
+| `mx`, `my`, `wx`, `wy` | Nearest saved mask/wall reference vertices in ROI-relative pixels. |
+| `z1dist`, `z2dist`, ... | Distance to each palette zone, in mm with calibration; zero inside a zone. |
+| `pt1dist`, `pt2dist`, ... | Distance to saved reference points, in mm with calibration. |
+
+Optional fields can be absent. In particular, head coordinates are omitted when
+B/W angle is used instead. Current output ordering does not retain every
+intermediate processing column. Without calibration, physical units cannot be
+inferred: displacement remains in pixel units and the legacy speed formula still
+divides by 10. Frame skipping/resampling also affects how step differences relate
+to time; inspect the retained frame interval before interpreting derivatives.
+
+### Source labels and validity
+
+| Source value | Meaning |
+| --- | --- |
+| `observed` | A coordinate supplied by this version's automated tracker. |
+| `manual` | A point added, moved or deleted in the coordinate editor. |
+| `interpolated` | A missing point filled by coordinate interpolation during processing. |
+| `missing` | No coordinate was supplied for that point type. |
+| `unknown` | A coordinate exists in an older/imported file without recorded provenance. |
+
+Sources describe how positions were obtained; they are not quality/confidence
+scores. A filtered observed position can remain `position_source="observed"` with
+`position_valid=False`. A manually deleted point is `manual` with validity false.
+An interpolated replacement is labelled `interpolated`. Smoothing can change
+existing values without changing their source label. Head/tail origins are
+tracked separately; orientation estimates and individual IDs do not receive a
+provenance label in this update.
+
+Legacy files cannot reveal whether their points were originally automated or
+manual, so they use `unknown` until a new edit or interpolation establishes the
+source. Validity is recalculated from the final saved coordinate pairs.
+
 ## What is saved?
 
 Processed data are written as `<video>_F.csv`; input tracking CSVs are retained.

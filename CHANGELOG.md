@@ -1,6 +1,41 @@
 # Changelog
 
+## TODO
+
+### Finish the current release
+
+1. **Tracking-data provenance and output documentation — completed.** Added separate centroid/head/tail source and validity fields through automated tracking, manual editing and processing, including legacy-unknown positions and manual deletion records. Documented output columns, units, frames and coordinate conventions in guide 6.
+2. **Small batch-workflow improvements.** Review skip/overwrite behaviour, failed-file reporting, cancellation and cleanup, and safe restarting of interrupted batches. Build on the existing batch functionality; defer configuration-aware run discovery to the instance redesign.
+3. **Focused code cleanup.** Consolidate duplicated video/region output naming and frame-index conversions. Extract manageable purpose-specific UI/load/save helpers from the large editor window and project class where this improves clarity; preserve behaviour and avoid a wholesale rewrite before release. Review silent exception handling and temporary-resource cleanup in touched paths.
+4. **Release preparation.** Finish and commit the pending unreviewed-only event-checker option; keep the package at 1.0.0 until the next release and distinguish the existing v1.0.1 tag from a published GitHub release; check public API changes and migration notes. Condense the roughly 70 Unreleased entries into clear user-facing groups, retaining the detailed Git history. Check documented entry points against the final release and prepare a tagged release candidate before the stable release.
+
+### Subsequent release A — modular tracking methods (point 4)
+
+- Define a common detector input: current frame, frame/time index, ROI/mask context, resolved method settings and explicit per-video temporal state where needed.
+- Define a common detector output: detections in a documented coordinate system, with positions, optional contours/orientation, confidence and optional identity hints. Keep optional capabilities explicit rather than requiring every method to produce every field.
+- Adapt existing background-subtraction and colour detection to that interface first, preserving their behaviour. Keep video reading, ID assignment, outputs, visualisation and processing outside the detector implementations.
+- Support independent backend state/reset and shared threshold-preview behaviour. Leave extension points for predictive backgrounds, barcode detection and YOLO; implementing those methods is separate work.
+
+### Subsequent release B — unified tracking instances and project layout (point 2)
+
+- Introduce one versioned, self-contained JSON per tracking instance: video reference, unique instance ID, frame limits, animal information, ROI/calibration, original vector masks/walls/zones, method settings and external asset references. Multiple instances can share one video and arena.
+- Use the same instance format for project and standalone workflows. Save resolved run settings/software version with outputs; copy presets into instances explicitly rather than silently changing them through shared references.
+- Add <project>.atracker.json, a flat instances/ directory, optional settings/ for presets/assets and a single processing-settings file, plus tracked/, processed/ and reviews/. Make source/output paths configurable and keep source videos in place; replace todo-folder queuing with instance selection/status and manage temporary files separately.
+- Make the overview a regenerable user-facing table of instances and experimental metadata, with explicit import/synchronisation of spreadsheet edits. Tracking reads saved instance definitions. Remove redundant image-path/geometry columns from the overview.
+- Store original editable vector geometry as authoritative data and generate raster masks/zone previews as needed; retain actual background images as method assets. Provide migration from numbered-folder projects, legacy overview/configuration files and raster geometry without moving or deleting source recordings.
+
+### Subsequent release C — portability and tutorial datasets (points 7 + 1)
+
+- Add installation and core end-to-end checks on supported operating systems/Python versions; separate GUI requirements from non-interactive tracking/processing where practical.
+- Curate the existing tutorial videos into a separate example-data folder or downloadable bundle covering different tracking scenarios, with setup files, runnable examples and expected outputs. Record permissions/licensing and dataset versions. Formal performance benchmarking is deferred and is not a priority for the planned paper.
+
+### Later
+
+- Extend the existing processing diagnostics and interactive review into an integrated quality-control report with direct navigation to flagged intervals (point 3).
+- Make an intermediate release only at a genuinely usable, checked milestone; use development commits or release candidates for intermediate work rather than retrospectively labelling old commits as releases. Choose version increments from public API/data-format compatibility, not the number of changelog entries. No releases or tags are created by this roadmap.
+
 ## Unreleased
+- Added position_source/head_source/tail_source and independent validity flags to tracking and processing. Editor saves retain unchanged origins and label per-point manual additions/corrections/deletions; coordinate interpolation is labelled at the fill step, and legacy files use unknown provenance. Preserve head/tail information during editor loading and retain tail coordinates in processed output. Added an output-column/units reference in guide 6.
 - Added AT.export_geometry() to save per-video/region geometry JSON beside originals: full-frame ROI and raster-derived mask/wall/zone polygons with holes and separate parts, calibration, metadata and associated file references. Documented export, R use and the continuing image-based workflow in guide 2.
 - Replaced the notebook-led documentation with seven connected Markdown guides: installation, capabilities, folder tracking, standalone tracking, the editor, processing and image measurement. Archived the historical notebooks and refreshed README examples and links.
 - Renamed batch_measure() to measure_images() without an alias; fixed known-scale calibration so px_per_mm works without interactive calibration. Added a dedicated measurement guide with calibration, CSV output and resume behaviour.

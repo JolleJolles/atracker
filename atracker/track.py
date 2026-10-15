@@ -777,6 +777,8 @@ class Tracker:
             else:
                 if create_dat:
                     finaldat = pd.DataFrame(self.fulldat)
+                    from .helpers.provenance import ensure_position_sources
+                    finaldat = ensure_position_sources(finaldat, default="observed")
                     finaldat.to_csv(trackeddata, index=False)
                 if create_vid and os.path.exists(trackedfile):
                     shutil.move(trackedfile, os.path.join(self.dirs["tracked"], filename+self.suffix+"_TR.mp4"))

@@ -41,6 +41,8 @@ def load_and_convert_tracking_dataframe(data_file, firstframe=None, lastframe=No
     """
     df = pd.read_csv(data_file)
     df.columns = [c.lower() for c in df.columns]
+    from .provenance import ensure_position_sources, point_values, SOURCE_COLUMNS
+    sources = ensure_position_sources(df)
 
     new_cols = {'frame', 'id', 'cx', 'cy', 'hx', 'hy', 'tx', 'ty', 'angle'}
     if not new_cols.issubset(df.columns):
@@ -54,10 +56,10 @@ def load_and_convert_tracking_dataframe(data_file, firstframe=None, lastframe=No
             new_df['frame'] = df['frame']
             new_df['IDstr'] = df['id'].astype(str)
             new_df[['cx', 'cy']] = df['com'].apply(parse_point).apply(pd.Series)
-            new_df['hx'] = np.nan
-            new_df['hy'] = np.nan
-            new_df['tx'] = np.nan
-            new_df['ty'] = np.nan
+            head = point_values(df, 'hx' if 'hx' in df else 'fx', 'hy' if 'hy' in df else 'fy', 'head')
+            tail = point_values(df, 'tx', 'ty', 'tail')
+            new_df['hx'], new_df['hy'] = head.iloc[:, 0], head.iloc[:, 1]
+            new_df['tx'], new_df['ty'] = tail.iloc[:, 0], tail.iloc[:, 1]
             new_df['angle'] = pd.to_numeric(df['angle'], errors='coerce')
             df = new_df
         elif {'cx', 'cy'}.issubset(df.columns):
@@ -66,16 +68,19 @@ def load_and_convert_tracking_dataframe(data_file, firstframe=None, lastframe=No
             new_df['IDstr'] = df['id'].astype(str)
             new_df['cx'] = df['cx']
             new_df['cy'] = df['cy']
-            new_df['hx'] = np.nan
-            new_df['hy'] = np.nan
-            new_df['tx'] = np.nan
-            new_df['ty'] = np.nan
+            head = point_values(df, 'hx' if 'hx' in df else 'fx', 'hy' if 'hy' in df else 'fy', 'head')
+            tail = point_values(df, 'tx', 'ty', 'tail')
+            new_df['hx'], new_df['hy'] = head.iloc[:, 0], head.iloc[:, 1]
+            new_df['tx'], new_df['ty'] = tail.iloc[:, 0], tail.iloc[:, 1]
             new_df['angle'] = np.nan
             df = new_df
         else:
             raise ValueError(f"Unrecognized tracking file format: {data_file}")
     else:
         df['IDstr'] = df['id'].astype(str)
+
+    for column in SOURCE_COLUMNS:
+        df[column] = sources[column]
 
     if firstframe is not None:
         df = df[df['frame'] >= firstframe]

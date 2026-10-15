@@ -222,7 +222,10 @@ def annotation_gui(data_file=None, media_file=None, background_file=None, mask_f
 
     # Format timepoints output (DataFrame)
     elif result is not None and result[0] == "timepoints":
-        df_out = result[1]  # Already a DataFrame!
+        df_out = result[1].copy()
+        from atracker.helpers.provenance import mark_manual_edits
+        df_out["id"] = df_out["id"].map(lambda i: idnum_to_idstr.get(i, str(i)))
+        df_out = mark_manual_edits(df_out, df if unique_idstrs else None)
         if "angle" in df_out.columns:
             df_out["angle"] = pd.to_numeric(df_out["angle"], errors="coerce").round(1)
         #print("Saving DataFrame:\n", df_out)

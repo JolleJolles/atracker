@@ -156,6 +156,10 @@ retain precise shapes, names and overlaps while keeping raster images convenient
 for detection. It requires coordinated editor and loader changes; this export
 adds portable geometry without changing the existing image workflow.
 
+Tracking and processing outputs record centroid/head/tail provenance separately.
+See the [output-column and units reference](6-processing_data.md#7-output-columns-units-and-position-provenance)
+for observed, manual, interpolated, missing and legacy-unknown positions.
+
 ## What is saved?
 
 | Workflow | Main records and outputs |

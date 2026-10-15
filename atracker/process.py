@@ -19,6 +19,7 @@ from .helpers.trajectory import (calcudiff, differentiate, fillmissing, getalone
 from .helpers.contours import coordsfrommask, coordsfromzones
 from scipy.spatial import KDTree
 from .helpers.data import ensure_columns, lit_converter
+from .helpers.provenance import ensure_position_sources
 
 
 class Processor:
@@ -290,6 +291,8 @@ class Processor:
                 "hx" not in self.data and "fx" not in self.data:
             self.data.rename(columns={"angle": "orient"}, inplace=True)
 
+        self.data = ensure_position_sources(self.data)
+
         # Set frame as index for alignment
         self.data.index = list(self.data.frame)
 
@@ -340,6 +343,7 @@ class Processor:
         self.data.index = list(range(len(self.data)))
         self.data["frame"] = self.data["frame"].astype(int)
 
+        self.data = ensure_position_sources(self.data)
         self._log("prepared")
 
 
@@ -549,11 +553,14 @@ class Processor:
 
         final.drop(columns=["inroi"], inplace=True, errors="ignore")
 
+        final = ensure_position_sources(final)
+
         # Column ordering
         base_order = [
             "frame", "time", "ID", "traj", "inmask",
+            "position_source", "position_valid", "head_source", "head_valid", "tail_source", "tail_valid",
             "cx", "cy", "cx_c", "cy_c",
-            "fx", "fy", "fx_c", "fy_c",
+            "fx", "fy", "fx_c", "fy_c", "tx", "ty",
             "displ", "speed", "accel", "cumdispl",
             "heading", "orient", "turnspeed", "turnaccel", "cumturn", "abscumturn",
             "rdist", "mdist", "wdist",
@@ -595,6 +602,7 @@ class Processor:
         out["cy_c"] = out["cy"]
         out["rdist"] = np.nan
         out["inmask"] = 1
+        out = ensure_position_sources(out)
         out.to_csv(self.procfile, index=False)
         self._log("no tracking data — empty file written")
 

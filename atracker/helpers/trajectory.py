@@ -150,6 +150,8 @@ def fillmissing(series, colpair, mask, roi, win=5, nearmaskdis=25, edgedis=10, l
     if roi is not None:
         roi = ((1, 1), (roi[1][0] - roi[0][0], roi[1][1] - roi[0][1]))
 
+    from .provenance import mark_interpolated
+    before_valid = np.isfinite(series[colpair].apply(pd.to_numeric, errors="coerce")).all(axis=1)
     missinds = findmissinginds(series, colpair[0], checkzero=False)
     missing = len(missinds)
     if missing > 0:
@@ -193,6 +195,7 @@ def fillmissing(series, colpair, mask, roi, win=5, nearmaskdis=25, edgedis=10, l
                     newvals = np.around(np.linspace(series[col][diffsec[0]], series[col][diffsec[1]], diffsec[2]), 3)[1:diffsec[2] - 1]
                     series.loc[indsec[0]:indsec[1], col] = newvals
 
+    series = mark_interpolated(series, before_valid, colpair)
     return series, missing
 
 
@@ -222,6 +225,7 @@ def process_trajectories(series, mask=None, cover=True, win=5,
         if erase_coords:
             series.loc[removed_mask, ["cx", "cy"]] = np.nan
 
+    before_valid = np.isfinite(series[["cx", "cy"]]).all(axis=1)
     nonmiss = series.index[series["cx"].notna() & (series["inroi"] != 0)]
 
     def _getindsections(idxs, gap=1):
@@ -242,6 +246,9 @@ def process_trajectories(series, mask=None, cover=True, win=5,
                     x = y.index
                     filled = y.interpolate(method='linear', limit_direction='both')
                     series.loc[x, col] = filled
+
+    from .provenance import mark_interpolated
+    series = mark_interpolated(series, before_valid, ["cx", "cy"])
 
     nremoved = 0
     for trajid, group in series.groupby("traj"):

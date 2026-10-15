@@ -1318,6 +1318,10 @@ class ATracker:
                             labels[editor_id] = str(candidate)
                     fi["id_labels"] = labels
                     data["id"] = data["id"].map(labels)
+                    from atracker.helpers.provenance import mark_manual_edits
+                    from atracker.helpers.data import load_and_convert_tracking_dataframe
+                    original = load_and_convert_tracking_dataframe(csv_path) if os.path.exists(csv_path) else None
+                    data = mark_manual_edits(data, original)
                     data.to_csv(csv_path, index=False)
                     lineprint(f"Stored coordinate data: {os.path.basename(csv_path)}")
 
