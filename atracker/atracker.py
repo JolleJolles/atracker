@@ -25,12 +25,12 @@ from pythutils.datutils import to_query
 
 from atracker.__version__ import __version__
 from atracker.editor import annotation_gui
-from atracker.track import Tracker
+from atracker.track import Tracker, recover_tracking_sources
 from atracker.process import Processor
 from atracker.helpers.media import convert_h264_to_mp4, bg_extract, find_max_working_pyframe
 from atracker.helpers.data import duplicate_row, notebook
 from atracker.helpers.contours import coordsfrommask, coordsfromzones
-from atracker.helpers.pool import run_pool
+from atracker.helpers.pool import run_pool, BatchInterrupted
 from atracker.visualise import Visualiser as _Visualiser
 
 warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
@@ -1435,10 +1435,9 @@ class ATracker:
             else:
                 _inds, trackfiles = self.get_files(folder, _inds, query, cats, existonly=False)
 
-            # Fix Localconfig messing up the class variables
+            # Give workers a serialisable snapshot without changing the project's configuration.
             cbak = self.config
-            del self.config
-            self.config = Box({s: {k:v for (k,v) in cbak.items(s)} for s in cbak})
+            tracking_config = Box({s: {k:v for (k,v) in cbak.items(s)} for s in cbak})
 
             existing = [os.path.exists(f) for f in trackfiles]
             existing_inds = [i for i, e in zip(_inds, existing) if e]
@@ -1446,11 +1445,14 @@ class ATracker:
             missing_count = len(trackfiles) - len(existing_trackfiles)
             if missing_count > 0:
                 lineprint(f"Skipped {missing_count} missing video file(s).")
+                for path, exists in zip(trackfiles, existing):
+                    if not exists:
+                        lineprint(f"Missing source: {path}")
             _inds = existing_inds
             trackfiles = existing_trackfiles
 
             # Pre-filter already-tracked files when overwrite is off
-            effective_overwrite = overwrite if overwrite is not None else self.config.track.overwrite
+            effective_overwrite = overwrite if overwrite is not None else tracking_config.track.overwrite
             if not effective_overwrite:
                 suffix_str = f"_{suffix}" if suffix else ""
                 todo_inds, todo_trackfiles = [], []
@@ -1458,7 +1460,8 @@ class ATracker:
                 for ind, tf in zip(_inds, trackfiles):
                     video = self.overview.loc[ind, "video"]
                     region = self.overview.loc[ind, "region"] if "region" in self.overview.columns else None
-                    name = f"{video}_R{int(region)}" if (region is not None and pd.notnull(region)) else video
+                    name = f"{video}_R{int(region)}" if (region is not None and pd.notnull(region)
+                        and (self.overview.video == video).sum() > 1) else video
                     csv_path = os.path.join(self.dirs["tracked"], name + suffix_str + ".csv")
                     if os.path.exists(csv_path):
                         skip_count += 1
@@ -1472,7 +1475,7 @@ class ATracker:
 
             # Now create the Tracker with only existing files
             T = Tracker(pools, _inds, trackfiles, self.dirs, self.overview,
-                        self.config, self.threshinfo, frame_start, frame_stop, threshtype,
+                        tracking_config, self.threshinfo, frame_start, frame_stop, threshtype,
                         objects, checkconschange, suffix,
                         max_framedist=max_framedist, overwrite=overwrite,
                         check_flicker=check_flicker, skip_frames=skip_frames,
@@ -1484,7 +1487,6 @@ class ATracker:
                       f"{workers} worker{'s' if workers != 1 else ''}.")
 
             if len(T.inds) == 0:
-                self.config = cbak
                 if not watch:
                     _stop = True
                 else:
@@ -1498,31 +1500,40 @@ class ATracker:
 
             if pools < 2:
                 stop = False
+                failed_rows = []
                 while len(T.inds) > 0 and not stop:
                     ind = T.inds[0]
                     trackfile = os.path.join(self.dirs[folder], self.overview.loc[ind]["video"] + ".mp4")
                     try:
                         T.setuptracking(ind, trackfile)
-                    except KeyboardInterrupt:
+                    except (KeyboardInterrupt, BatchInterrupted):
                         lineprint("\nUser terminated tracking..")
                         stop = True
                         _stop = True
                     except Exception as e:
                         video = self.overview.loc[ind]["video"]
                         lineprint(f"Error on row {ind} ({video}): {type(e).__name__}: {e} — skipping")
+                        failed_rows.append(ind)
                         if ind in T.inds:
                             T.inds.remove(ind)
                 if not _stop:
-                    lineprint("Tracking finished..")
+                    lineprint(f"Tracking finished; failed rows: {failed_rows or 'none'}.")
+                if failed_rows:
+                    _stop = True
             else:
-                self.config.vis.show_tracking = False
-                self.config.vis.waitkey = 1
+                tracking_config.vis.show_tracking = False
+                tracking_config.vis.waitkey = 1
                 track_items = [(ind, os.path.join(self.dirs[folder], self.overview.loc[ind]["video"] + ".mp4"))
                                for ind in T.inds]
-                if not run_pool(T.setuptracking, track_items, pools=pools, mode="process", label="tracking"):
-                    _stop = True
+                groups = {}
+                for item in track_items:
+                    groups.setdefault(item[1], []).append(item)
+                try:
+                    if not run_pool(T.track_group, list(groups.values()), pools=pools, mode="process", label="tracking"):
+                        _stop = True
+                finally:
+                    recover_tracking_sources(track_items, self.dirs)
 
-            self.config = cbak
 
             if not watch or _stop:
                 _stop = True
@@ -1650,6 +1661,7 @@ class ATracker:
 
         # Create a set to store selected files and avoid duplicates
         selected_files = set()
+        missing_names = []
 
         for base_name in base_names:
             # Check if _E.csv version exists for the current base name
@@ -1661,11 +1673,15 @@ class ATracker:
                 selected_files.add(e_file)  # Add _E file
             elif original_file in trackedfiles:
                 selected_files.add(original_file)  # Add original file if no _E file
+            else:
+                missing_names.append(base_name)
+        if missing_names:
+            lineprint(f"Missing tracked CSVs: {', '.join(missing_names)}")
 
         # Convert set to a list for final output
         trackedfiles = sorted(list(selected_files))
         if len(trackedfiles) == 0:
-            lineprint("No files to fix..")
+            lineprint("No tracked CSV files found to process.")
             return
 
         config_dict = {
@@ -1696,7 +1712,7 @@ class ATracker:
         def _proc_worker(f):
             Processor(**config_dict).setup(f, threading.get_ident() if pools > 1 else None)
 
-        run_pool(_proc_worker, trackedfiles, pools=pools, mode="thread", label="processing")
+        return run_pool(_proc_worker, trackedfiles, pools=pools, mode="thread", label="processing")
 
 
     def visualise(self, folder="processed", names=None, overwrite=False, pools=1, **kwargs):
@@ -1819,7 +1835,7 @@ class ATracker:
             vis.render(data=data, videofile=info["orig_video"], img_bg=img_bg, img_mask=img_mask,
                        roi=info["roi"], outfile=info["outfile"], **call_kwargs)
 
-        run_pool(_vis_worker, vis_items, pools=pools, mode="thread", label="visualising")
+        return run_pool(_vis_worker, vis_items, pools=pools, mode="thread", label="visualising")
 
     def centralise(self, centertype="roi", names=None):
         """

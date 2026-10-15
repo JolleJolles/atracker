@@ -39,6 +39,15 @@ Use the date format stored in your overview. Add `cats=["setup", "date"]` to `ge
 
 The call above uses all default processing settings and skips existing processed outputs. Use `AT.process(names=files, overwrite=True)` when you want to regenerate those outputs. Input tracking CSVs are not overwritten.
 
+Failed files are reported while the remaining files continue. `AT.process()` and
+`AT.visualise()` return `False` if any task fails or the batch is interrupted.
+Rerun processing with `overwrite=False` to skip completed outputs and retry failed
+files. Processed CSVs replace existing outputs only after a successful write.
+With threaded workers, Ctrl+C cancels pending tasks and waits for active files to
+finish. A forcibly killed worker may leave a `.tmp` file; it is not treated as a
+completed CSV.
+
+
 Outputs are saved in `AT.dirs["processed"]` as `<video>_F.csv`. To process all tracked CSVs with defaults, use `AT.process()`; to keep an overview-based selection, keep passing `names=files`.
 
 ## 2. Copy and adjust the complete default settings

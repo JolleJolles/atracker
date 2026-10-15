@@ -35,7 +35,11 @@ from .visualise import Visualiser
 from .helpers.detection_settings import aspect_limits
 from .helpers.timing import TrackingTiming
 
-class KeyboardInterruptError(Exception): pass
+from .helpers.pool import BatchInterrupted
+from .helpers.output import write_csv_atomic
+
+
+class KeyboardInterruptError(BatchInterrupted): pass
 
 class AsyncVideoWriter:
     def __init__(self, vidout):
@@ -125,11 +129,49 @@ class Tracker:
         self.profile_interval = profile_interval
 
     def setuptracking(self, ind, trackfile):
+        self.cap = None
+        self.vidout = None
+        self._source_moved = False
+        self._completed_tracking = False
+        try:
+            return self._setuptracking(ind, trackfile)
+        finally:
+            try:
+                self.exit()
+            finally:
+                if self._source_moved:
+                    if os.path.exists(self.tempfile):
+                        if os.path.exists(self.trackfile):
+                            lineprint(f"Source recovery retained {self.tempfile}: destination already exists.")
+                        else:
+                            shutil.move(self.tempfile, self.trackfile)
+                    if not self._completed_tracking and os.path.exists(self.trackedfile):
+                        os.remove(self.trackedfile)
+
+    def track_group(self, items):
+        """Regions sharing a moved source video must run in the same worker."""
+        failures = []
+        for ind, path in items:
+            try:
+                self.setuptracking(ind, path)
+            except BatchInterrupted:
+                raise
+            except Exception as exc:
+                lineprint(f"Tracking failed for row {ind} ({path}): {type(exc).__name__}: {exc}")
+                failures.append(ind)
+        if failures:
+            raise RuntimeError(f"Tracking failed for overview rows {failures}")
+
+    def _setuptracking(self, ind, trackfile):
 
         self.ind = ind
         if self.ind in self.inds:
             self.inds.remove(self.ind)
         self.trackfile = trackfile
+        if not os.path.exists(self.trackfile):
+            alternate = os.path.join(self.dirs["originals"], os.path.basename(trackfile))
+            if os.path.exists(alternate):
+                self.trackfile = alternate
         self.filebase = os.path.basename(trackfile)
         self.filebasezero = os.path.splitext(self.filebase)[0]
         self.filename = self.filebasezero
@@ -141,7 +183,7 @@ class Tracker:
                 self.filename = self.filename + "_R" + str(int(self.region))
         conv = self.overview.loc[ind]["conv"]
         conv = 1 if conv!=conv else float(conv)
-        self.linkdisthreshold = self.linkdisthreshold / conv
+        self.linkdisthreshold = getattr(self.config.track, "link_dist", getattr(self.config.track, "linkdisthreshold", 100)) / conv
         self.trackedfile = os.path.join(self.dirs["temp"], self.filename+self.suffix+"_TR.mp4")
         self.trackeddata = os.path.join(self.dirs["tracked"], self.filename+self.suffix+".csv")
 
@@ -197,8 +239,6 @@ class Tracker:
             try:
                 if os.path.exists(self.trackedfile):
                     os.remove(self.trackedfile)
-                if os.path.exists(self.trackeddata):
-                    os.remove(self.trackeddata)
             except Exception as e:
                 lineprint(self.pr_comm + f"warning while cleaning tracked files: {e}")
 
@@ -210,24 +250,19 @@ class Tracker:
 
         # Try moving video to temp folder
         try:
+            if os.path.exists(self.tempfile):
+                raise FileExistsError(f"Temporary source already exists: {self.tempfile}; recover it before retrying")
             shutil.move(self.trackfile, self.tempfile)
+            self._source_moved = True
         except Exception as e:
-            lineprint(self.pr_comm + f"could not move video to temp folder: {e}")
-            return self.inds
+            raise OSError(f"Could not move video to temporary folder: {self.trackfile}") from e
 
         # Check if moved file is valid media
         with Suppressor():
             self.mediaok = check_media(self.tempfile, internal=True)
 
         if not self.mediaok:
-            if os.path.exists(self.tempfile):
-                if not os.path.exists(self.trackedfile):
-                    self.inds.append(self.ind)
-                lineprint(self.pr_comm + "media check failed, skipping video..")
-            else:
-                lineprint(self.pr_comm + "video could not be found after moving, skipping..")
-            return self.inds
-
+            raise ValueError(f"Media check failed for {self.trackfile}")
 
         # Set up video and related resources
         self.cap = cv2.VideoCapture(self.tempfile)
@@ -316,8 +351,16 @@ class Tracker:
             for i in range(5):
                 cv2.waitKey(1)
         if self.vidout is not None:
-            self.vidout.close()
-        self.cap.release()
+            writer, self.vidout = self.vidout, None
+            try:
+                writer.close()
+            finally:
+                if self.cap is not None:
+                    self.cap.release()
+                    self.cap = None
+        if self.cap is not None:
+            self.cap.release()
+            self.cap = None
 
 
     def conschange(self):
@@ -779,7 +822,7 @@ class Tracker:
                     finaldat = pd.DataFrame(self.fulldat)
                     from .helpers.provenance import ensure_position_sources
                     finaldat = ensure_position_sources(finaldat, default="observed")
-                    finaldat.to_csv(trackeddata, index=False)
+                    write_csv_atomic(finaldat, trackeddata, index=False)
                 if create_vid and os.path.exists(trackedfile):
                     shutil.move(trackedfile, os.path.join(self.dirs["tracked"], filename+self.suffix+"_TR.mp4"))
                 elif create_vid:
@@ -788,6 +831,7 @@ class Tracker:
                 if key == ord('s'):
                     lineprint("User quit and saved, tracking output stored")
 
+            self._completed_tracking = key != 27
             self.tracked += 1
             if self.profile_interval:
                 diagnostic(f"{log_prefix}timing CSV / file finalization: "
@@ -816,3 +860,12 @@ class Tracker:
             progress.clear()
             lineprint(f"Error on [{self.ind}] {self.filename}: {type(e).__name__}: {e}")
             raise
+
+
+def recover_tracking_sources(items, dirs):
+    """Restore moved sources after all process workers have stopped."""
+    for _, source in items:
+        temporary = os.path.join(dirs["temp"], os.path.basename(source))
+        if os.path.exists(temporary) and not os.path.exists(source):
+            shutil.move(temporary, source)
+            lineprint(f"Recovered source video: {source}")

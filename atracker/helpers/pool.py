@@ -1,81 +1,90 @@
-#! /usr/bin/env python
-
+"""Shared batch execution with visible per-item failures."""
 import multiprocessing
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .logging import lineprint
 from .data import notebook
 
 
+class BatchInterrupted(Exception):
+    """Serializable cancellation signal for process workers."""
+
+
 def run_pool(worker, items, pools=1, mode="thread", label="task"):
-    """
-    Run worker over items sequentially (pools=1) or in a pool (pools>1).
+    """Run every item, report failures and return False on any failure/interruption.
 
-    Parameters
-    ----------
-    worker : callable
-        For mode='process', called as worker(*item) when item is a tuple,
-        worker(item) otherwise. For mode='thread', always called as worker(item).
-    items : list
-        Items to process.
-    pools : int
-        Number of parallel workers. 1 = sequential.
-    mode : str
-        'thread' uses ThreadPoolExecutor; 'process' uses multiprocessing.Pool.
-    label : str
-        Used in progress and error messages.
-
-    Returns
-    -------
-    bool
-        True on success, False if interrupted or fatally failed.
+    Process mode unpacks tuple items; thread mode passes each item unchanged.
+    Ordinary per-file errors do not prevent other files running. On interruption,
+    pending thread tasks are cancelled and active threads finish before returning;
+    process workers are terminated and joined. Process pools require a script.
     """
+    if mode not in ("thread", "process") or not isinstance(pools, int) or pools < 1:
+        raise ValueError("Use mode='thread' or 'process' and pools >= 1")
+    items = list(items)
     if not items:
         return True
+    failures = []
 
-    if pools < 2:
+    def failed(item, error):
+        failures.append(item)
+        lineprint(f"{label.capitalize()} failed for {item!r}: {type(error).__name__}: {error}")
+
+    def summary():
+        lineprint(f"{label.capitalize()}: {len(items)-len(failures)}/{len(items)} tasks succeeded; {len(failures)} failed.")
+        return not failures
+
+    if pools == 1:
         for item in items:
             try:
-                if mode == "process" and isinstance(item, tuple):
-                    worker(*item)
-                else:
-                    worker(item)
-            except KeyboardInterrupt:
-                lineprint(f"\nUser terminated {label}..")
+                worker(*item) if mode == "process" and isinstance(item, tuple) else worker(item)
+            except (KeyboardInterrupt, BatchInterrupted):
+                lineprint(f"User interrupted {label}; remaining tasks were not started.")
                 return False
-        lineprint(f"{label.capitalize()} completed..")
-        return True
-
-    if notebook():
-        lineprint(f"Pooled {label} can only be run from the terminal, exiting..")
-        return False
+            except Exception as exc:
+                failed(item, exc)
+        return summary()
 
     if mode == "thread":
+        executor = ThreadPoolExecutor(max_workers=min(pools, len(items)))
+        futures = {executor.submit(worker, item): item for item in items}
         try:
-            with ThreadPoolExecutor(max_workers=pools) as executor:
-                executor.map(worker, items)
-            lineprint(f"{label.capitalize()} completed..")
-            return True
-        except KeyboardInterrupt:
-            lineprint(f"\nUser terminated {label} pool..")
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except (KeyboardInterrupt, BatchInterrupted):
+                    raise
+                except Exception as exc:
+                    failed(futures[future], exc)
+        except (KeyboardInterrupt, BatchInterrupted):
+            for future in futures:
+                future.cancel()
+            lineprint(f"User interrupted {label}; pending tasks cancelled, waiting for active files to finish.")
             return False
+        finally:
+            executor.shutdown(wait=True, cancel_futures=True)
+        return summary()
 
-    # mode == "process"
+    if notebook():
+        lineprint(f"Process-pooled {label} requires a terminal script with a main guard.")
+        return False
     pool = multiprocessing.Pool(min(pools, len(items)))
     try:
-        args_list = [item if isinstance(item, tuple) else (item,) for item in items]
-        futures = [pool.apply_async(worker, args) for args in args_list]
-        for f in futures:
-            f.get()
+        futures = [(item, pool.apply_async(worker, item if isinstance(item, tuple) else (item,))) for item in items]
+        for item, future in futures:
+            try:
+                future.get()
+            except (KeyboardInterrupt, BatchInterrupted):
+                raise
+            except Exception as exc:
+                failed(item, exc)
         pool.close()
-        lineprint(f"{label.capitalize()} completed..")
-        return True
-    except KeyboardInterrupt:
-        lineprint(f"\nUser terminated {label} pool..")
+        return summary()
+    except (KeyboardInterrupt, BatchInterrupted):
+        lineprint(f"User interrupted {label}; terminating process workers.")
         pool.terminate()
         return False
-    except Exception as e:
-        lineprint(f"Error in {label} pool: {type(e).__name__}: {e}, terminating")
+    except Exception as exc:
+        lineprint(f"{label.capitalize()} pool failed: {type(exc).__name__}: {exc}")
         pool.terminate()
         return False
     finally:

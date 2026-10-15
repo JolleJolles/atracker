@@ -20,6 +20,7 @@ from .helpers.contours import coordsfrommask, coordsfromzones
 from scipy.spatial import KDTree
 from .helpers.data import ensure_columns, lit_converter
 from .helpers.provenance import ensure_position_sources
+from .helpers.output import write_csv_atomic
 
 
 class Processor:
@@ -164,6 +165,7 @@ class Processor:
         self.pr_comm = pr_procid + "[" + self.nr + "] " + self.filebase + " "
 
         if os.path.isfile(self.procfile) and not self.overwrite:
+            self._log("existing output retained (overwrite=False)")
             return
 
         print(f"{self.pr_comm.strip()} — processing", flush=True)
@@ -603,7 +605,7 @@ class Processor:
         out["rdist"] = np.nan
         out["inmask"] = 1
         out = ensure_position_sources(out)
-        out.to_csv(self.procfile, index=False)
+        write_csv_atomic(out, self.procfile, index=False)
         self._log("no tracking data — empty file written")
 
 
@@ -754,5 +756,5 @@ class Processor:
 
         # Step 10: finalise and save
         final = self._finalise(final)
-        final.to_csv(self.procfile, index=False)
+        write_csv_atomic(final, self.procfile, index=False)
         self._log("step 10: saved")

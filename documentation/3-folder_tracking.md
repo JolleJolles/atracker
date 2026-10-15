@@ -315,6 +315,22 @@ Tune settings before launching workers. To process or visualise the resulting
 files, continue with [processing](6-processing_data.md). For local corrections,
 use the [tracking editor](5-tracking_editor.md).
 
+### Failures and restarting
+
+Failed files are reported individually; ordinary errors do not stop the remaining
+files. Regions of one video run sequentially to avoid competing for its source
+file; different videos can still run in parallel.
+
+After fixing a failed file, rerun the same selection with `overwrite=False`.
+Completed CSVs are skipped; unfinished files are retried from the beginning.
+Skipping checks file existence, so use `overwrite=True` after changing settings.
+Tracking CSVs are replaced only after a successful write, preserving a previous
+CSV if replacement fails.
+
+Ctrl+C stops sequential tracking or terminates process workers and restores source
+videos moved into the temporary folder. This retains the current numbered-folder
+workflow; it does not resume a video from its last tracked frame.
+
 ## Diagnosing slow tracking
 
 Normal tracking prints a batch summary, file starts/completions and progress every
