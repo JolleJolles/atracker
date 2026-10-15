@@ -88,35 +88,37 @@ def bg_extract(vidfile, start=None, stop=None, framenr=25):
         print("Video needs to be .mp4")
         return
     cap = cv2.VideoCapture(vidfile)
-    if not cap.isOpened():
-        print("Video source failed to open..")
-        return
-    flag, frame = cap.read()
-    if not flag:
-        print("Video source opened but failed to read any images..")
-        return
-
-    start = 1 if start is None else start
-    stop = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) if stop is None else stop
-    framelist = seqcount(start, stop, framenr)
-    frames = []
-
-    print("Extracting bg image..", end=" ")
-    print(start, stop, framenr, end=" ")
-    for frameloc in framelist:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frameloc)
+    try:
+        if not cap.isOpened():
+            raise ValueError(f"Cannot open video for background extraction: {vidfile}")
         flag, frame = cap.read()
-        if flag:
-            frames.append(frame)
+        if not flag:
+            raise ValueError(f"Cannot read video for background extraction: {vidfile}")
 
-    if len([f for f in frames if f is not None]) < framenr:
-        frnr = str(len(frames))
-        print("Lost frames encountered, bgfile created from " + frnr + " files..")
-    else:
-        print("Done")
+        start = 1 if start is None else start
+        stop = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) if stop is None else stop
+        framelist = seqcount(start, stop, framenr)
+        frames = []
 
-    img_bg = np.median(frames, axis=0).astype(dtype=np.uint8)
-    return img_bg
+        print("Extracting bg image..", end=" ")
+        print(start, stop, framenr, end=" ")
+        for frameloc in framelist:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frameloc)
+            flag, frame = cap.read()
+            if flag:
+                frames.append(frame)
+
+        if len([f for f in frames if f is not None]) < framenr:
+            frnr = str(len(frames))
+            print("Lost frames encountered, bgfile created from " + frnr + " files..")
+        else:
+            print("Done")
+
+        if not frames:
+            raise ValueError(f"No readable background samples: {vidfile}")
+        return np.median(frames, axis=0).astype(dtype=np.uint8)
+    finally:
+        cap.release()
 
 
 def get_media_type(source):

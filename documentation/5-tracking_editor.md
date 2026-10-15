@@ -286,7 +286,10 @@ events; distinguish denied rows from blank, unreviewed ones.
 Display preferences and drawing-tool choices are stored outside the package in
 `~/.atracker/editor_prefs.json`.
 
-Older notebooks may use `AT.check_interactive(inds=[0, 1], fileaction="overwrite")`.
-It retains the older one-window-per-video workflow; use `AT.editor()` for current
-project work. Examples with `AT.process(manfix=True, manonly=True)`, `Tracker_man`,
+The obsolete `AT.set_interactive()` and `AT.check_interactive()` interfaces have
+been removed. Replace setup calls with `AT.editor(inds=[0], purpose="roi")`
+(or `"mask"`, `"zones"`, `"measure"`, `"framelimits"`, `"thresholding"`). Replace
+`AT.check_interactive(inds=[0, 1])` with
+`AT.editor(inds=[0, 1], purpose="timepoints")`. Save current writes edits directly;
+the old `fileaction` argument is no longer used. Examples with `AT.process(manfix=True, manonly=True)`, `Tracker_man`,
 `man_types` or `statevar` do not apply to the current API.

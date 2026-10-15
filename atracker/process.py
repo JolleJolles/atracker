@@ -357,8 +357,7 @@ class Processor:
         """Clean head/tail coordinate data per trajectory.
 
         Blanks coordinates near the ROI border, removes isolated detections,
-        and interpolates short gaps. Does not attempt head/tail swap correction
-        (fixheadtail requires a working orient column — that is computed later).
+        and interpolates short gaps. Does not attempt head/tail swap correction.
         """
         newroi = ((1, 1), (self.fileinfo.roi[1][0] - self.fileinfo.roi[0][0],
                            self.fileinfo.roi[1][1] - self.fileinfo.roi[0][1]))

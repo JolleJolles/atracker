@@ -1,6 +1,8 @@
 """Display-only coverage of the editor's one-based coordinate frames."""
 
 import numpy as np
+from atracker.helpers.frames import index_to_frame
+
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QImage, QPainter, QPen
 from PyQt5.QtWidgets import QWidget
@@ -53,7 +55,7 @@ class TrackingTimeline(QWidget):
         total = max(1, editor.total_frames)
         if not editor.timeline_use_range.isChecked():
             return 1, total
-        current = min(total, max(1, editor.current_frame_idx + 1))
+        current = min(total, max(1, index_to_frame(editor.current_frame_idx)))
         radius = editor.range_slider.value()
         first = current if editor.rb_range_future.isChecked() else max(1, current - radius)
         last = current if editor.rb_range_past.isChecked() else min(total, current + radius)
@@ -73,7 +75,7 @@ class TrackingTimeline(QWidget):
     def mouseMoveEvent(self, event):
         if event.buttons() & Qt.LeftButton:
             self._seek(event)
-        self.setToolTip(f"Frame {self._frame_at(event.x()) + 1} — click or drag to seek")
+        self.setToolTip(f"Frame {index_to_frame(self._frame_at(event.x()))} — click or drag to seek")
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton and self._drag_bounds is not None:
@@ -134,7 +136,7 @@ class TrackingTimeline(QWidget):
         painter.drawText(self.LEFT, bottom + 17, str(view_first))
         painter.drawText(self.LEFT + width - 65, bottom + 3, 65, 18, Qt.AlignRight, str(view_last))
         x = self.LEFT + max(0, min(width - 1,
-            int((editor.current_frame_idx + 1 - view_first + 0.5) * width / span)))
+            int((index_to_frame(editor.current_frame_idx) - view_first + 0.5) * width / span)))
         painter.setPen(QPen(QColor(35, 100, 235), 2))
         painter.drawLine(x, self.TOP - 4, x, bottom)
         painter.end()

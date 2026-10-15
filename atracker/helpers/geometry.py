@@ -9,7 +9,7 @@ from scipy.spatial import KDTree
 import shapely
 from shapely.geometry import Point, Polygon
 
-from pythutils.mathutils import ptsToDist, points_to_angle, angle_to_vec, get_weights
+from pythutils.mathutils import ptsToDist, points_to_angle, angle_to_vec
 
 
 # ---------------------------------------------------------------------------
@@ -322,67 +322,3 @@ def orientchecker(curr_frame, start_frame, prev_frame, delay, centre_coord, con_
         new_angle = np.nan
 
     return new_angle
-
-
-def fixheadtail(series, areamultiplier=1.75, distmultiplier=10,
-                seqlenthreshold=40, thresharea=None):
-    from .trajectory import calcudiff, get_anglediff as _get_anglediff
-
-    data = series.copy()
-    swappedinds = []
-    if thresharea is None:
-        thresharea = np.nanmedian(data.area)
-
-    data["headdiff"] = round(calcudiff(data.fx, data.fy, period=1))
-    data["taildiff"] = round(calcudiff(data.tx, data.ty, period=1))
-    data["headangle"] = round(calcudiff(data.fx, data.fy, period=1, angle=True))
-    data["tailangle"] = round(calcudiff(data.tx, data.ty, period=1, angle=True))
-    tx, ty, fx, fy = (data["tx"].copy(), data["ty"].copy(), data["fx"].copy(), data["fy"].copy())
-    data["fxsw"], data["fysw"] = (data.fx, data.fy)
-    inds = np.arange(0, len(data.fx), 2)
-    data.loc[inds, "fxsw"], data.loc[inds, "fysw"] = (data.loc[inds, "tx"], data.loc[inds, "ty"])
-    data["swapdiff"] = round(calcudiff(data.fxsw, data.fysw, period=1))
-    data["anglediff"] = get_anglediff(data.orient)
-
-    indstocheck = data.index[(data["headdiff"] > data["swapdiff"]) | (data["taildiff"] > data["swapdiff"])]
-    if len(indstocheck) > 0:
-        for i, ind in enumerate(indstocheck):
-            if ind in swappedinds:
-                continue
-            if i == len(indstocheck) - 1:
-                if len(indstocheck) == 1:
-                    pass
-                elif (max(data.index) - ind) < seqlenthreshold:
-                    data.loc[range(ind, max(data.index) + 1), ["head", "fx", "fy", "tail", "tx", "ty"]] = np.nan
-                else:
-                    data.loc[range(max(ind - 10, 0), ind + 10), ["head", "fx", "fy", "tail", "tx", "ty"]] = np.nan
-                continue
-            if data.loc[ind, "taildiff"] < (np.nanmedian(data["taildiff"]) * distmultiplier):
-                data.loc[ind, ["head", "fx", "fy"]] = np.nan
-                if data.loc[ind, "anglediff"] < 20:
-                    continue
-            if data.loc[ind, "headdiff"] < (np.nanmedian(data["headdiff"]) * distmultiplier):
-                data.loc[ind, ["tail", "fx", "fy"]] = np.nan
-                if data.loc[ind, "anglediff"] < 20:
-                    continue
-            if abs(anglediff(data.loc[ind, "headangle"], data.loc[ind, "tailangle"])) < 90:
-                continue
-            seqlen = indstocheck[i + 1] - indstocheck[i]
-            if (seqlen) > seqlenthreshold:
-                data.loc[range(ind, ind + 10), ["head", "fx", "fy", "tail", "tx", "ty"]] = np.nan
-                continue
-            if data.loc[ind, "orienttoexcl"] == 1:
-                while True:
-                    ind = ind + 1
-                    if ind > (len(data) - 1) or data.loc[ind, "orienttoexcl"] != 1:
-                        break
-            toswap = range(ind + 1, indstocheck[i + 1] + 1)
-            if data.loc[indstocheck[i + 1], "orienttoexcl"] == 1:
-                data.loc[toswap, ["head", "fx", "fy", "tail", "tx", "ty"]] = np.nan
-            data.loc[toswap, "fx"] = tx.loc[toswap]
-            data.loc[toswap, "fy"] = ty.loc[toswap]
-            data.loc[toswap, "tx"] = fx.loc[toswap]
-            data.loc[toswap, "ty"] = fy.loc[toswap]
-            swappedinds += toswap
-
-    return data, swappedinds

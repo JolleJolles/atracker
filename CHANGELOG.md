@@ -6,7 +6,7 @@
 
 1. **Tracking-data provenance and output documentation — completed.** Added separate centroid/head/tail source and validity fields through automated tracking, manual editing and processing, including legacy-unknown positions and manual deletion records. Documented output columns, units, frames and coordinate conventions in guide 6.
 2. **Small batch-workflow improvements — completed.** Added visible per-file failures, continuation after ordinary errors, cancellation cleanup, atomic tracking/processing CSV replacement and source-video recovery. Regions sharing a video run sequentially within parallel batches. Configuration-aware run discovery remains part of the instance redesign.
-3. **Focused code cleanup.** Consolidate duplicated video/region output naming and frame-index conversions. Extract manageable purpose-specific UI/load/save helpers from the large editor window and project class where this improves clarity; preserve behaviour and avoid a wholesale rewrite before release. Review silent exception handling and temporary-resource cleanup in touched paths.
+3. **Focused code cleanup — completed.** Centralised video/region output names and editor frame conversions; extracted project editor loading/saving and purpose-data loading. Removed superseded project editor methods, an unused private selector and the unused broken head/tail correction helper. Malformed ROI values now raise clear errors; background readers are released on failures and successful extraction.
 4. **Release preparation.** Finish and commit the pending unreviewed-only event-checker option; keep the package at 1.0.0 until the next release and distinguish the existing v1.0.1 tag from a published GitHub release; check public API changes and migration notes. Condense the roughly 70 Unreleased entries into clear user-facing groups, retaining the detailed Git history. Check documented entry points against the final release and prepare a tagged release candidate before the stable release.
 
 ### Subsequent release A — modular tracking methods (point 4)
@@ -35,6 +35,9 @@
 - Make an intermediate release only at a genuinely usable, checked milestone; use development commits or release candidates for intermediate work rather than retrospectively labelling old commits as releases. Choose version increments from public API/data-format compatibility, not the number of changelog entries. No releases or tags are created by this roadmap.
 
 ## Unreleased
+
+- Removed obsolete `AT.set_interactive()` and `AT.check_interactive()`; use `AT.editor(purpose=...)` for setup and `AT.editor(purpose="timepoints")` for coordinate correction (migration examples in guide 5). Removed unused private `_get_all_inds()` and unused `helpers.geometry.fixheadtail()`, which referenced a missing helper.
+- Centralised region output filenames across tracking, skip checks, background creation, editing and geometry exports, and shared one-based frame / zero-based index conversions in the editor. Extracted editor project I/O and purpose-data loading into smaller modules. Invalid ROI text now reports its overview row, coordinate saves use atomic CSV replacement, and background extraction always releases the video reader and reports unreadable input.
 
 - Added `AT.watch_folder()` to discover stable incoming MP4 recordings, copy them safely into the project, reuse a configured overview template, extract backgrounds and track during experiments. Documented settling limits, shared geometry, metadata and retry behaviour. `AT.track()` now returns a success flag so the watcher stops on tracking failure or interruption.
 

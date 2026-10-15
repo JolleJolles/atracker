@@ -37,6 +37,7 @@ from .helpers.timing import TrackingTiming
 
 from .helpers.pool import BatchInterrupted
 from .helpers.output import write_csv_atomic
+from .helpers.naming import output_basename
 
 
 class KeyboardInterruptError(BatchInterrupted): pass
@@ -174,13 +175,8 @@ class Tracker:
                 self.trackfile = alternate
         self.filebase = os.path.basename(trackfile)
         self.filebasezero = os.path.splitext(self.filebase)[0]
-        self.filename = self.filebasezero
+        self.filename = output_basename(self.overview, ind)
         self.tempfile = os.path.join(self.dirs["temp"], self.filebase)
-        if "region" in self.overview:
-            regions = self.overview[self.overview.video == self.filebasezero]["region"]
-            if len(regions) > 1:
-                self.region = self.overview.loc[ind]["region"]
-                self.filename = self.filename + "_R" + str(int(self.region))
         conv = self.overview.loc[ind]["conv"]
         conv = 1 if conv!=conv else float(conv)
         self.linkdisthreshold = getattr(self.config.track, "link_dist", getattr(self.config.track, "linkdisthreshold", 100)) / conv

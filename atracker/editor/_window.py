@@ -4,6 +4,7 @@ from ._utils import *
 from ._canvas import PyQt5ShapeDrawer, GROUPBOX_STYLE
 from ._prefs import load_prefs, save_prefs
 from ._timeline import TrackingTimeline
+from atracker.helpers.frames import frame_to_index, index_to_frame
 from pythutils.mediautils import get_vid_params
 from atracker.helpers.media import get_media_type
 from atracker.helpers.data import load_and_convert_tracking_dataframe
@@ -1073,7 +1074,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             print("Switch to rectangle, polygon, circle, or ellipse mode to draw a shape.")
             return
 
-        cur_frame = self.current_frame_idx + 1
+        cur_frame = index_to_frame(self.current_frame_idx)
         visible_range = self.tp_visible_range
         cur_ptype = self.current_ptype if hasattr(self, "current_ptype") else "c"
         scope = getattr(self, "edit_scope", None)
@@ -1125,7 +1126,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
 
     def deleteCurrentPoint(self):
         self.timeline.invalidate()
-        cur_frame = self.current_frame_idx + 1
+        cur_frame = index_to_frame(self.current_frame_idx)
         cur_ptype = self.current_ptype if hasattr(self, "current_ptype") else "c"
         scope = getattr(self, "edit_scope", None)
         deleted = []
@@ -1158,7 +1159,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
 
     def deleteVisiblePoints(self):
         self.timeline.invalidate()
-        cur_frame = self.current_frame_idx + 1
+        cur_frame = index_to_frame(self.current_frame_idx)
         visible_range = self.tp_visible_range
         start = max(0, cur_frame - visible_range)
         end = cur_frame + visible_range
@@ -1298,7 +1299,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         value = min(max(0, value), max(0, self.total_frames - 1))
         self.current_frame_idx = value
         if hasattr(self, "frame_spin"):
-            self.frame_spin.setValue(value + 1)
+            self.frame_spin.setValue(index_to_frame(value))
         if hasattr(self, "video_slider"):
             self.video_slider.blockSignals(True)
             self.video_slider.setValue(value)
@@ -1340,7 +1341,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame_idx)
             self.nextFrame()
         else:
-            self.frame_spin.setValue(self.current_frame_idx + 1)
+            self.frame_spin.setValue(index_to_frame(self.current_frame_idx))
             self.video_slider.setValue(self.current_frame_idx)
             self.proxyUpdate()
         self.drawing_widget.setFocus()
@@ -1358,7 +1359,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             # ===============================
 
             self.current_frame_idx = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
-            self.frame_spin.setValue(self.current_frame_idx + 1)
+            self.frame_spin.setValue(index_to_frame(self.current_frame_idx))
             self.video_slider.blockSignals(True)
             self.video_slider.setValue(self.current_frame_idx)
             self.video_slider.blockSignals(False)
@@ -1378,7 +1379,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
 
 
     def onFrameSpinEditingFinished(self):
-        value = self.frame_spin.value() - 1
+        value = frame_to_index(self.frame_spin.value())
         self.current_frame_idx = value
         if self.cap:
             self.timer.stop()
@@ -1392,12 +1393,12 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
     # ---------- Frame Limits Methods ----------
     def onUpdateStart(self):
         if self.is_video:
-            self.flim_start_spin.setValue(self.current_frame_idx + 1)
+            self.flim_start_spin.setValue(index_to_frame(self.current_frame_idx))
         self.drawing_widget.setFocus()
 
     def onUpdateStop(self):
         if self.is_video:
-            self.flim_stop_spin.setValue(self.current_frame_idx + 1)
+            self.flim_stop_spin.setValue(index_to_frame(self.current_frame_idx))
         self.drawing_widget.setFocus()
 
     # ---------- Slots ----------
@@ -1873,7 +1874,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
                     self.cap.set(cv2.CAP_PROP_POS_FRAMES, new_idx)
                     self.nextFrame()
                 else:
-                    self.frame_spin.setValue(self.current_frame_idx + 1)
+                    self.frame_spin.setValue(index_to_frame(self.current_frame_idx))
                     self.video_slider.setValue(self.current_frame_idx)
                     self.proxyUpdate()
         elif key == Qt.Key_E:
@@ -1885,7 +1886,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
                     self.cap.set(cv2.CAP_PROP_POS_FRAMES, new_idx)
                     self.nextFrame()
                 else:
-                    self.frame_spin.setValue(self.current_frame_idx + 1)
+                    self.frame_spin.setValue(index_to_frame(self.current_frame_idx))
                     self.video_slider.setValue(self.current_frame_idx)
                     self.proxyUpdate()
         elif key == Qt.Key_R:
@@ -1897,7 +1898,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
                     self.cap.set(cv2.CAP_PROP_POS_FRAMES, new_idx)
                     self.nextFrame()
                 else:
-                    self.frame_spin.setValue(self.current_frame_idx + 1)
+                    self.frame_spin.setValue(index_to_frame(self.current_frame_idx))
                     self.video_slider.setValue(self.current_frame_idx)
                     self.proxyUpdate()
         elif key == Qt.Key_T:
@@ -1910,7 +1911,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
                     self.cap.set(cv2.CAP_PROP_POS_FRAMES, new_idx)
                     self.nextFrame()
                 else:
-                    self.frame_spin.setValue(self.current_frame_idx + 1)
+                    self.frame_spin.setValue(index_to_frame(self.current_frame_idx))
                     self.video_slider.setValue(self.current_frame_idx)
                     self.proxyUpdate()
         elif key == Qt.Key_Y:
@@ -1920,7 +1921,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
                 if self.cap:
                     self.onEndClicked()
                 else:
-                    self.frame_spin.setValue(self.current_frame_idx + 1)
+                    self.frame_spin.setValue(index_to_frame(self.current_frame_idx))
                     self.video_slider.setValue(self.current_frame_idx)
                     self.proxyUpdate() 
         elif key == Qt.Key_A:
@@ -2085,7 +2086,7 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
             self.proxyUpdate()
         # add event-frame record key (K)
         elif key == Qt.Key_K:
-            frame = self.current_frame_idx + 1 if self.is_video else 1
+            frame = index_to_frame(self.current_frame_idx) if self.is_video else 1
             if not hasattr(self, "_event_frames"):
                 self._event_frames = []
             if frame not in self._event_frames:
@@ -2393,88 +2394,9 @@ class PyQt5ShapeDrawerWindow(QMainWindow):
         self.drawing_widget.update()
 
     def _auto_load_purpose_data(self, fi, purpose_text):
-        """Auto-load existing data from file_info for the given purpose."""
+        from ._purpose_data import load_purpose_data
         opmode = _PURPOSE_MAP.get(purpose_text.lower(), purpose_text.lower())
-        if opmode == "mask":
-            self.drawing_widget.mask_image = QImage(self.orig_width, self.orig_height, QImage.Format_Grayscale8)
-            self.drawing_widget.mask_image.fill(255)
-        elif opmode == "zones":
-            self.drawing_widget.zones_overlay = None
-        elif opmode == "timepoints":
-            self.drawing_widget.points_by_frame = {}
-            self.input_num_ids.setValue(1)
-            fi["id_labels"] = {}
-        if opmode == "mask":
-            mask_path = fi.get("mask_path")
-            if mask_path and os.path.isfile(mask_path):
-                mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-                if mask is not None:
-                    from ._utils import numpy_to_qimage
-                    self.drawing_widget.mask_image = numpy_to_qimage(mask, force_grayscale=True)
-        elif opmode == "zones":
-            zones_path = fi.get("zones_path")
-            if zones_path and os.path.isfile(zones_path):
-                zones = cv2.imread(zones_path, cv2.IMREAD_UNCHANGED)
-                if zones is not None:
-                    from ._utils import numpy_to_qimage
-                    self.drawing_widget.zones_overlay = numpy_to_qimage(zones).convertToFormat(QImage.Format_ARGB32)
-        elif opmode == "roi":
-            roi = fi.get("roi")
-            if roi:
-                (x0, y0), (x1, y1) = roi
-                self.drawing_widget.shapes = [("rectangle", ((x0, y0), (x1, y0), (x1, y1), (x0, y1)))]
-        elif opmode == "framelimits":
-            start = fi.get("frame_start")
-            stop = fi.get("frame_stop")
-            if start:
-                self.flim_start_spin.setValue(int(start))
-            if stop:
-                self.flim_stop_spin.setValue(int(stop))
-        elif opmode == "timepoints":
-            csv_path = fi.get("tracked_csv")
-            if csv_path and os.path.isfile(csv_path):
-                from ._utils import build_points_by_frame
-                df = load_and_convert_tracking_dataframe(csv_path)
-                if df is not None and len(df) > 0:
-                    if "IDstr" in df.columns:
-                        unique_ids = sorted([s for s in df["IDstr"].unique() if pd.notna(s)], key=str)
-                        id_map = {s: i for i, s in enumerate(unique_ids)}
-                        fi["id_labels"] = {i: s for s, i in id_map.items()}
-                        df["ID"] = df["IDstr"].map(id_map).fillna(-1).astype(int)
-                    pbf = build_points_by_frame(df)
-                    self.drawing_widget.points_by_frame = pbf
-                    if pbf:
-                        self.input_num_ids.setValue(len(pbf))
-                        self.current_id_box.setValue(1)
-                        self.updateCurrentID(1)
-                        self.drawing_widget.tp_current_id = 0
-        elif opmode in ("thresholding", "thresholding color"):
-            options = fi.get("threshold_options", {})
-            selected = self._threshold_selection.get(opmode)
-            if selected in options:
-                pass
-            elif len(options) > 1:
-                selected, ok = QInputDialog.getItem(self, "Threshold configuration",
-                    "Configuration to edit:", list(options), 0, False)
-                if not ok:
-                    selected = None
-            elif options:
-                selected = next(iter(options))
-            else:
-                selected = None
-            fi["threshold_type"] = selected
-            if selected is not None:
-                self._threshold_selection[opmode] = selected
-            params = options.get(selected, fi.get("threshold_dict", {}))
-            # New configurations must start from defaults, not the previous video's settings.
-            defaults = {"blur": 9, "erode": 1, "blur2": 1, "threshold": 50,
-                "min_area": 100, "max_area": 20000, "gamma": 1.0,
-                "hue_lo": 30, "hue_hi": 90, "sat_lo": 50, "sat_hi": 255,
-                "val_lo": 50, "val_hi": 255}
-            params = self._threshold_drafts.get(selected, {**defaults, **params})
-            params = {**fi.get("threshold_defaults", {}), **params}
-            self._restore_state({"thresh_params": params})
-        self.drawing_widget.update()
+        load_purpose_data(self, fi, opmode)
 
     def _navigate_to(self, new_idx):
         """Navigate to a different file, saving current state."""

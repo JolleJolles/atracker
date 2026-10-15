@@ -21,16 +21,15 @@ from pythutils.fileutils import listfiles
 from .helpers.logging import lineprint
 from pythutils.drawutils import namedcols
 from pythutils.mediautils import get_vid_params, check_media
-from pythutils.datutils import to_query
 
 from atracker.__version__ import __version__
-from atracker.editor import annotation_gui
 from atracker.track import Tracker, recover_tracking_sources
 from atracker.process import Processor
 from atracker.helpers.media import convert_h264_to_mp4, bg_extract, find_max_working_pyframe
-from atracker.helpers.data import duplicate_row, notebook
+from atracker.helpers.data import duplicate_row
 from atracker.helpers.contours import coordsfrommask, coordsfromzones
 from atracker.helpers.pool import run_pool, BatchInterrupted
+from atracker.helpers.naming import output_basename
 from atracker.visualise import Visualiser as _Visualiser
 
 warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
@@ -249,19 +248,6 @@ class ATracker:
             ind = ind[0]
 
         return name, ind
-
-    def _get_all_inds(self, query, cats, ind):
-
-        if cats is None:
-            qry = query
-        else:
-            cats = [cats] if type(cats) is not list else cats
-            vals = self.overview.loc[ind, cats].values.tolist()
-            nqry = to_query(cats, vals)
-            qry = query+' and '+nqry if query is not None else nqry
-        inds = self.overview.query(qry).index.tolist()
-
-        return inds
 
     def save(self, silent=False):
         self.overview.to_excel(self.cfiles["overview"], index=False)
@@ -722,25 +708,19 @@ class ATracker:
         todolist = []
         for idx in rows:
             video = self.overview.loc[idx, "video"]
-            region = self.overview.loc[idx].get("region", None)
-
-            # unique bg filename
-            if region is None:
-                bgname = f"{video}_bg.jpg"
-            else:
-                bgname = f"{video}_R{region}_bg.jpg"
+            bgname = output_basename(self.overview, idx) + "_bg.jpg"
 
             bgpath = os.path.join(self.dirs["originals"], bgname)
 
             # we will extract per row
             if overwrite or not os.path.isfile(bgpath):
-                todolist.append((idx, video, region, bgname, bgpath))
+                todolist.append((idx, video, bgname, bgpath))
         
         # 3) Extract backgrounds
         if len(todolist) == 0:
             print("All files done..", end=" ")
         else:
-            for k, (idx, video, region, bgname, bgpath) in enumerate(todolist):
+            for k, (idx, video, bgname, bgpath) in enumerate(todolist):
 
                 vidpath = os.path.join(self.dirs["originals"], f"{video}.mp4")
                 name, _ = self._name_and_index(vidpath)
@@ -766,355 +746,6 @@ class ATracker:
                 self.overview.loc[idx, "bgimg"] = bgname
 
             self.save(silent=True)
-
-    def set_interactive(self, inds=None, framelimits=None, roi=None, mask=None, maskzone=None, zones=None,
-                        walls=None, conv=None, getpts=None, conv_mm=None, threshtypes=None,
-                        query=None, cats=None, ptcolnames=None, threshfile=None, events=False):
-        """
-        Interactive mode for various tasks. Deprecated — use AT.editor() for the new multi-file editor.
-
-        Args:
-            events (bool): If True, enables event annotation mode.
-        """
-        # Validate input
-        input_flags = [framelimits, roi, mask, maskzone, zones, walls, conv, getpts, threshtypes, events]
-        active_modes = sum(x is not None and x is not False for x in input_flags)
-
-        if active_modes == 0:
-            mode = "default"
-        elif active_modes == 1:
-            if conv: mode, true_mode = "measure", "measure"
-            elif framelimits: mode, true_mode = "framelimits", "framelimits"
-            elif roi: mode, true_mode = "roi", "roi"
-            elif mask: mode, true_mode = "mask", "mask"
-            elif walls: mode, true_mode = "mask", "walls"
-            elif maskzone: mode, true_mode = "mask", "maskzone"
-            elif zones: mode, true_mode = "zones", "zones"
-            elif getpts: mode, true_mode = "points", "points"
-            elif events: mode, true_mode = "events", "events"
-        else:
-            raise ValueError("Please specify exactly one interactive mode (e.g., framelimits=True).")
-
-        inds, vids = self.get_files("originals", inds, query, cats)
-        fileaction = "overwrite"
-        datafile = None
-        overview_dirty = False
-
-        def _result_pxlen(res):
-            if res is None:
-                return None
-            if isinstance(res, tuple):
-                if len(res) > 1 and isinstance(res[1], (int, float)):
-                    return float(res[1])
-                if len(res) > 2 and isinstance(res[2], (int, float)):
-                    return float(res[2])
-                if len(res) > 1 and isinstance(res[1], (list, tuple)) and len(res[1]) >= 2:
-                    try:
-                        p0, p1 = res[1][0], res[1][1]
-                        return float(((float(p0[0])-float(p1[0]))**2 + (float(p0[1])-float(p1[1]))**2)**0.5)
-                    except Exception:
-                        return None
-            return None
-
-        gui_state = {"was_fullscreen": False}
-
-        for i, ind in enumerate(inds):
-            allinds = self._get_all_inds(query, cats, ind) if query or cats else ind
-            vid = os.path.join(self.dirs["originals"], f"{self.overview.loc[ind, 'video']}.mp4")
-            name, _ = self._name_and_index(vid)
-
-            if "region" in self.overview.columns and not pd.isna(self.overview.loc[ind, "region"]):
-                region = self.overview.loc[ind, "region"]
-                name += f"_R{int(region)}"
-
-            lineprint(f"\nVideo {i + 1} of {len(vids)} — {name}", True, False)
-
-            if not os.path.isfile(vid):
-                print("Video file does not exist, skipping..")
-                continue
-
-            # Read ROI if present, otherwise fallback later where needed
-            if "roi" in self.overview.columns and isinstance(self.overview.loc[ind].get("roi", None), str):
-                roival = literal_eval(self.overview.loc[ind]["roi"])
-            else:
-                # if resolution present, use it as full-frame ROI
-                try:
-                    res = literal_eval(self.overview.loc[ind, "resolution"])
-                    roival = ((0, 0), res)
-                except Exception:
-                    roival = None
-
-            firstframe = self.overview.loc[ind, "frame_start"]
-            firstframe = 1 if pd.isna(firstframe)or str(firstframe).strip() == "" else int(firstframe)
-            lastframe = self.overview.loc[ind, "frame_stop"]
-            lastframe = None if pd.isna(lastframe) or str(lastframe).strip() == "" else int(lastframe)
-
-            bgimg = self.overview.loc[ind].get("bgimg", None)
-            bgpath = os.path.join(self.dirs["originals"], bgimg) if isinstance(bgimg, str) else None
-
-            maskpath = None
-            mask_column = None
-            if mask: mask_column = "maskimg"
-            elif maskzone: mask_column = "maskzoneimg"
-            elif walls: mask_column = "wallimg"
-            elif zones: mask_column = "zoneimg"
-            elif threshtypes: mask_column = "maskimg"
-            if mask_column:
-                maskfile_entry = self.overview.loc[ind].get(mask_column, None)
-                if isinstance(maskfile_entry, str):
-                    maskpath = os.path.join(self.dirs["originals"], maskfile_entry)
-                    if os.path.isfile(maskpath):
-                        lineprint(f"Loaded {mask_column} file: {maskfile_entry}")
-                    else:
-                        print(f"{mask_column} file listed but not found: {maskpath}")
-
-            # ===== Handle multi-threshold interaction mode =====
-            if threshtypes:
-                print(f"Video {i + 1} of {len(vids)} — {name}", end="")
-
-                for j, ttype in enumerate(threshtypes):
-                    mode = "thresholding" if ttype.lower().startswith("bw") else "thresholding color"
-                    print(f" | Thresholding: {ttype}", end="")
-                    result = annotation_gui(
-                        media_file=vid,
-                        background_file=bgpath,
-                        mask_file=maskpath,
-                        mode=mode,
-                        threshold_dict=self.threshinfo.get(ttype, {}),
-                        firstframe=firstframe,
-                        lastframe=lastframe,
-                        fileaction=fileaction,
-                        data_file=datafile,
-                        start_fullscreen=gui_state["was_fullscreen"],
-                        _state=gui_state
-                    )
-                    if result is None or result == "exit":
-                        print(" — exited")
-                        break
-                    if isinstance(result[1], dict) and len(result[1]) > 0:
-                        self.threshinfo[ttype] = result[1]
-                        print(f" stored...", end=" ")
-                        # Save threshold info to file
-                        finalfile = threshfile
-                        if not finalfile:
-                            finalfile = self.cfiles.get("threshinfo", "threshinfo.yml")
-                        if not finalfile.endswith(".yml"):
-                            finalfile += ".yml"
-                        with open(finalfile, "w") as f:
-                            yaml.safe_dump(self.threshinfo, f, default_flow_style=False)
-                    else:
-                        print(f" → no values")
-                continue  # Skip all other interactive modes
-
-            # ======= Event Annotation Mode =======
-            if mode == "events":
-                events_list = []  # new value will overwrite existing
-                print(f"Video {i + 1} of {len(vids)} — {name} Event annotation mode")
-                print("Press event key (K) to record frames, L to remove last, S to finish, Esc/Q to abort.")
-                while True:
-                    result = annotation_gui(
-                        media_file=vid,
-                        background_file=bgpath,
-                        mask_file=maskpath,
-                        mode="timepoints",
-                        firstframe=firstframe,
-                        lastframe=lastframe,
-                        fileaction=None,
-                        data_file=None,
-                        start_fullscreen=gui_state["was_fullscreen"],
-                        _state=gui_state
-                    )
-
-                    # user requested quit from GUI
-                    if result == "exit":
-                        # Save overview if changed
-                        if overview_dirty:
-                            self.save()
-                            print("Overview stored..")
-                        print("Exiting event annotation mode.")
-                        return
-
-                    # remove any accidental CSV the GUI may have written
-                    try:
-                        csv_path = os.path.splitext(vid)[0] + ".csv"
-                        if os.path.isfile(csv_path):
-                            os.remove(csv_path)
-                    except Exception:
-                        pass
-
-                    # Accept only explicit ("events", [frames]) from the GUI.
-                    if isinstance(result, tuple) and len(result) == 2 and result[0] == "events":
-                        frames = result[1] or []
-                        frames = sorted(set(int(f) for f in frames))
-                        if not frames:
-                            # no frames recorded -> re-open GUI
-                            continue
-
-                        # Pair frames into tuples in order: (f0,f1),(f2,f3),... last singleton if odd
-                        grouped = []
-                        for j in range(0, len(frames), 2):
-                            if j + 1 < len(frames):
-                                grouped.append((int(frames[j]), int(frames[j + 1])))
-                            else:
-                                grouped.append((int(frames[j]),))
-
-                        # Overwrite events column for these rows
-                        self.overview.loc[allinds, "events"] = str(grouped)
-                        overview_dirty = True
-                        # single-line confirmation
-                        print("Event frames recorded: " + " ".join(str(f) for f in frames))
-                        break  # done with this video
-
-                    # otherwise ignore and re-open GUI
-                    continue
-
-                # next video
-                continue
-
-            # ======= Handle all other modes =======
-            result = annotation_gui(
-                media_file=vid,
-                background_file=bgpath,
-                mask_file=maskpath,
-                mode=mode,
-                firstframe=firstframe,
-                lastframe=lastframe,
-                fileaction=fileaction,
-                data_file=datafile,
-                start_fullscreen=gui_state["was_fullscreen"],
-                _state=gui_state
-            )
-
-            if result is None:
-                continue
-            if result == "exit":
-                break
-
-            # ----- Measure / conversion -----
-            if mode == "measure":
-                px_len = _result_pxlen(result)
-                if px_len is None:
-                    print("Could not determine pixel length from GUI result:", result)
-                    continue
-
-                if isinstance(conv_mm, (int, float)):
-                    # Single value, single interaction
-                    self.overview.loc[allinds, "conv"] = round(conv_mm / px_len, 4)
-                    overview_dirty = True
-                    lineprint(f"Conversion set to {self.overview.loc[ind, 'conv']} mm/pixel", end=" ")
-
-                elif isinstance(conv_mm, (list, tuple)):
-                    conv_vals = []
-
-                    for j, mm in enumerate(conv_mm):
-                        print(f"Draw conversion line {j+1} of {len(conv_mm)} ({mm} mm)")
-                        if j > 0:
-                            result = annotation_gui(
-                                media_file=vid,
-                                background_file=bgpath,
-                                mask_file=maskpath,
-                                mode=mode,
-                                firstframe=firstframe,
-                                lastframe=lastframe,
-                                fileaction=fileaction,
-                                data_file=datafile,
-                                start_fullscreen=gui_state["was_fullscreen"],
-                                _state=gui_state
-                            )
-                            if result is None or result == "exit":
-                                break
-                        px_len = _result_pxlen(result)
-                        if px_len is None:
-                            print("Could not determine pixel length from GUI result:", result)
-                            continue
-
-                        conv_val = mm / px_len
-                        conv_vals.append(conv_val)
-                        lineprint(f"Line {j+1}: {mm} mm over {round(px_len, 2)} px = {round(conv_val, 4)} mm/px", end=" ")
-
-                    if len(conv_vals) > 0:
-                        avg = round(sum(conv_vals) / len(conv_vals), 4)
-                        self.overview.loc[allinds, "conv"] = avg
-                        overview_dirty = True
-                        print(f"Average conversion set to {avg} mm/pixel")
-
-            elif mode == "framelimits":
-                self.overview.loc[allinds, "frame_start"] = result[1][0]
-                self.overview.loc[allinds, "frame_stop"] = result[1][1]
-                overview_dirty = True
-                print(f"Stored framelimits: start = {result[1][0]}, stop = {result[1][1]}")
-
-            elif mode == "roi":
-                self.overview.loc[allinds, "roi"] = str(result[1])
-                overview_dirty = True
-                print(f"Stored ROI: {result[1]}")
-
-            elif mode in ["mask", "maskzone", "zones", "walls"]:
-                if isinstance(result[1], np.ndarray):
-                    outname = f"{name}_{true_mode}.jpg"
-                    outpath = os.path.join(self.dirs["originals"], outname)
-                    cv2.imwrite(outpath, result[1])
-
-                    # Determine column name
-                    if mask:
-                        colname = "maskimg"
-                    elif maskzone:
-                        colname = "maskzoneimg"
-                    else:
-                        singular_map = {"zones": "zone", "walls": "wall"}
-                        base = singular_map.get(true_mode, true_mode)
-                        colname = f"{base}img"
-
-                    # Ensure the column exists
-                    if colname not in self.overview.columns:
-                        self.overview[colname] = pd.Series(dtype=object)
-
-                    self.overview.loc[allinds, colname] = outname
-                    overview_dirty = True
-                    print(f"Stored {colname} image: {outname}")
-
-                else:
-                    print("No changes made.")
-
-            elif mode == "points":
-                points = result[1]
-                if len(points) == 0:
-                    print("No points drawn.")
-                    continue
-                if ptcolnames:
-                    if len(points) < len(ptcolnames):
-                        print(f"Only {len(points)} of {len(ptcolnames)} required points drawn. Please draw all and try again.")
-                        continue
-                    if len(points) > len(ptcolnames):
-                        print(f"{len(points)} points drawn but only {len(ptcolnames)} labels provided. Extra points ignored.")
-                        points = points[:len(ptcolnames)]
-                    for j, col in enumerate(ptcolnames):
-                        self.overview.loc[allinds, col] = str(points[j])
-                    overview_dirty = True
-                    print(f"Stored {len(points)} named points: {dict(zip(ptcolnames, points))}")
-                else:
-                    for j, pt in enumerate(points):
-                        self.overview.loc[allinds, f"pt{j+1}"] = str(pt)
-                    overview_dirty = True
-                    print(f"Stored unnamed points: {[str(p) for p in points]}")
-
-            elif isinstance(result, tuple) and result[0] == "timepoints":
-                # result is ("timepoints", df)
-                df = result[1]
-                if df is None or df.shape[0] == 0:
-                    print("No valid frames obtained from GUI.")
-                    continue
-                # Save timepoints CSV adjacent to video
-                csv_out = os.path.splitext(vid)[0] + ".csv"
-                df.to_csv(csv_out, index=False)
-                print(f"Saved timepoints to: {csv_out}")
-
-            # final exit check for GUI result
-            if result == "exit":
-                break
-
-        if overview_dirty:
-            self.save()
 
     def export_geometry(self, names=None, inds=None, query=None, cats=None,
                         output=None, zone_names=None, epsilon=0, overwrite=False):
@@ -1194,165 +825,18 @@ class ATracker:
             _inds = self.get_inds(names)
         resolved_inds, _ = self.get_files("originals", _inds, query, cats)
 
-        file_infos = []
-        for ind in resolved_inds:
-            row = self.overview.loc[ind]
-            vid_name = str(row.get("video", ""))
-            basename = vid_name
-            if "region" in self.overview and (self.overview.video == vid_name).sum() > 1:
-                region = row.get("region")
-                if pd.isna(region):
-                    raise ValueError(f"Missing region for overview row {ind}")
-                basename += f"_R{int(region)}"
-            vid_path = os.path.join(self.dirs["originals"], vid_name + ".mp4")
-
-            bgimg = row.get("bgimg")
-            bgpath = os.path.join(self.dirs["originals"], bgimg) if isinstance(bgimg, str) else None
-
-            maskimg = row.get("maskimg")
-            maskpath = os.path.join(self.dirs["originals"], maskimg) if isinstance(maskimg, str) else None
-
-            zoneimg = row.get("zoneimg")
-            zonespath = os.path.join(self.dirs["originals"], zoneimg) if isinstance(zoneimg, str) else None
-
-            roi_val = row.get("roi")
-            roi = None
-            if isinstance(roi_val, str):
-                try:
-                    roi = literal_eval(roi_val)
-                except Exception:
-                    pass
-
-            frame_start = row.get("frame_start")
-            frame_start = None if pd.isna(frame_start) or str(frame_start).strip() == "" else int(frame_start)
-            frame_stop = row.get("frame_stop")
-            frame_stop = None if pd.isna(frame_stop) or str(frame_stop).strip() == "" else int(frame_stop)
-
-            tracked_csv = os.path.join(self.dirs["tracked"], basename + ".csv")
-
-            thresh_types = row.get("thresh_types")
-            requested_types = threshtypes if threshtypes is not None else (
-                [t.strip() for t in thresh_types.split(",") if t.strip()] if isinstance(thresh_types, str) else [])
-            thresh_dict = {}
-            if requested_types:
-                thresh_dict = self.threshinfo.get(requested_types[0], {})
-
-            file_infos.append({
-                "ind": ind,
-                "video_name": vid_name,
-                "output_basename": basename,
-                "video_path": vid_path if os.path.isfile(vid_path) else None,
-                "background_path": bgpath if (bgpath and os.path.isfile(bgpath)) else None,
-                "mask_path": maskpath if (maskpath and os.path.isfile(maskpath)) else None,
-                "zones_path": zonespath if (zonespath and os.path.isfile(zonespath)) else None,
-                "roi": roi,
-                "frame_start": frame_start,
-                "frame_stop": frame_stop,
-                "tracked_csv": tracked_csv,
-                "threshold_dict": thresh_dict,
-                "threshold_defaults": {"min_aspect_ratio": default_min_ar, "max_aspect_ratio": default_max_ar},
-                "threshold_options": {t: self.threshinfo.get(t, {}) for t in requested_types},
-                "dirs": self.dirs,
-            })
+        from atracker.editor._project import editor_files, save_editor_data
+        file_infos = editor_files(self, resolved_inds, threshtypes,
+                                  (default_min_ar, default_max_ar))
 
         if not file_infos:
             lineprint("No files found for editor.")
             return
 
-        overview_dirty = False
-
         def save_callback(file_idx, ind, purpose_key, data):
-            nonlocal overview_dirty
-            fi = file_infos[file_idx]
-            vid_name = fi["output_basename"]
-
-            if purpose_key == "mask":
-                if isinstance(data, np.ndarray):
-                    outname = f"{vid_name}_mask.jpg"
-                    outpath = os.path.join(self.dirs["originals"], outname)
-                    if not cv2.imwrite(outpath, data):
-                        raise OSError(f"Could not write {outpath}")
-                    fi["mask_path"] = outpath
-                    self.overview.loc[ind, "maskimg"] = outname
-                    overview_dirty = True
-                    lineprint(f"Stored mask: {outname}")
-
-            elif purpose_key == "roi":
-                if data:
-                    self.overview.loc[ind, "roi"] = str(data)
-                    fi["roi"] = data
-                    overview_dirty = True
-                    lineprint(f"Stored ROI: {data}")
-
-            elif purpose_key == "zones":
-                if isinstance(data, np.ndarray):
-                    outname = f"{vid_name}_zone.jpg"
-                    outpath = os.path.join(self.dirs["originals"], outname)
-                    if not cv2.imwrite(outpath, data):
-                        raise OSError(f"Could not write {outpath}")
-                    fi["zones_path"] = outpath
-                    if "zoneimg" not in self.overview.columns:
-                        self.overview["zoneimg"] = pd.Series(dtype=object)
-                    self.overview.loc[ind, "zoneimg"] = outname
-                    overview_dirty = True
-                    lineprint(f"Stored zones: {outname}")
-
-            elif purpose_key == "framelimits":
-                if data:
-                    self.overview.loc[ind, "frame_start"] = data[0]
-                    self.overview.loc[ind, "frame_stop"] = data[1]
-                    fi["frame_start"], fi["frame_stop"] = data
-                    overview_dirty = True
-                    lineprint(f"Stored frame limits: start={data[0]}, stop={data[1]}")
-
-            elif purpose_key == "timepoints":
-                if data is not None and hasattr(data, "to_csv"):
-                    csv_path = fi["tracked_csv"]
-                    data = data.copy()
-                    labels = fi.get("id_labels", {})
-                    for editor_id in data["id"].unique():
-                        if editor_id not in labels:
-                            candidate = int(editor_id)
-                            while str(candidate) in labels.values():
-                                candidate += 1
-                            labels[editor_id] = str(candidate)
-                    fi["id_labels"] = labels
-                    data["id"] = data["id"].map(labels)
-                    from atracker.helpers.provenance import mark_manual_edits
-                    from atracker.helpers.data import load_and_convert_tracking_dataframe
-                    original = load_and_convert_tracking_dataframe(csv_path) if os.path.exists(csv_path) else None
-                    data = mark_manual_edits(data, original)
-                    data.to_csv(csv_path, index=False)
-                    lineprint(f"Stored coordinate data: {os.path.basename(csv_path)}")
-
-            elif purpose_key == "measure":
-                self.overview.loc[ind, "conv"] = float(data)
-                overview_dirty = True
-
-            elif purpose_key in ("thresholding", "thresholding color"):
-                if isinstance(data, dict):
-                    tt = fi.get("threshold_type")
-                    if tt:
-                        self.threshinfo[tt] = data
-                        with open(self.cfiles["threshinfo"], "w") as f:
-                            yaml.safe_dump(self.threshinfo, f, default_flow_style=False)
-                        for target in file_infos:
-                            if tt in target["threshold_options"]:
-                                target["threshold_options"][tt] = dict(data)
-                        lineprint(f"Stored thresholding for {tt}")
-                    else:
-                        raise ValueError("No threshold configuration selected for this video.")
-            else:
-                raise ValueError(f"Saving is not implemented for {purpose_key}")
-
-            if overview_dirty:
-                self.save()
-                overview_dirty = False
+            save_editor_data(self, file_infos, file_idx, ind, purpose_key, data)
 
         editor_gui(file_infos, purpose=purpose, save_callback=save_callback)
-
-        if overview_dirty:
-            self.save()
 
     def drymode(self, rand_filenr=10, rand_seqnr=5, rand_seqlen=100, suffix="dry", rerun=False):
 
@@ -1471,10 +955,7 @@ class ATracker:
                 todo_inds, todo_trackfiles = [], []
                 skip_count = 0
                 for ind, tf in zip(_inds, trackfiles):
-                    video = self.overview.loc[ind, "video"]
-                    region = self.overview.loc[ind, "region"] if "region" in self.overview.columns else None
-                    name = f"{video}_R{int(region)}" if (region is not None and pd.notnull(region)
-                        and (self.overview.video == video).sum() > 1) else video
+                    name = output_basename(self.overview, ind)
                     csv_path = os.path.join(self.dirs["tracked"], name + suffix_str + ".csv")
                     if os.path.exists(csv_path):
                         skip_count += 1
@@ -1562,52 +1043,6 @@ class ATracker:
                     _stop = True
 
         return success
-
-    def check_interactive(self, folder="tracked", inds=None, names=None, query=None, cats=None, fileaction="overwrite"):
-        if names is not None:
-            inds = self.get_inds(names)
-        inds, vids = self.get_files(folder, inds, query, cats)
-        for i, ind in enumerate(inds):
-            video_name = self.overview.loc[ind, "video"]
-            region = self.overview.loc[ind].get("region", None)
-            if region is not None:
-                basename = f"{video_name}_R{region}"
-            else:
-                basename = video_name
-            vid = os.path.join(self.dirs["originals"], f"{video_name}.mp4")
-            datafile = os.path.join(self.dirs["tracked"], f"{basename}.csv")
-
-            bgimg = self.overview.loc[ind].get("bgimg", None)
-            bgpath = os.path.join(self.dirs["originals"], bgimg) if isinstance(bgimg, str) else None
-            maskimg = self.overview.loc[ind].get("maskimg", None)
-            maskpath = os.path.join(self.dirs["originals"], maskimg) if isinstance(maskimg, str) else None
-
-            # --- Read and parse ROI ---
-            if "roi" in self.overview.columns and isinstance(self.overview.loc[ind]["roi"], str):
-                roival = literal_eval(self.overview.loc[ind]["roi"])
-            else:
-                res = literal_eval(self.overview.loc[ind, "resolution"])
-                roival = ((0, 0), res)
-
-            firstframe = self.overview.loc[ind, "frame_start"]
-            firstframe = 1 if pd.isna(firstframe) else int(firstframe)
-            lastframe = self.overview.loc[ind, "frame_stop"]
-            lastframe = None if pd.isna(lastframe) else int(lastframe)
-
-            # Pass roi to your annotation GUI if supported
-            result = annotation_gui(
-                media_file=vid,
-                background_file=bgpath,
-                mask_file=maskpath,
-                mode="timepoints",
-                firstframe=firstframe,
-                lastframe=lastframe,
-                fileaction=fileaction,
-                data_file=datafile,
-                roi=roival
-            )
-            if result == "exit":
-                break
 
     def process(self, pools=1, names=None, overwrite=False,
                 fulldata=True, convert=True, changefps=None,

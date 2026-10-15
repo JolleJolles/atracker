@@ -1,4 +1,5 @@
 """Portable, full-frame geometry exports from saved project images."""
+
 import ast
 import json
 import os
@@ -9,6 +10,7 @@ import cv2
 import numpy as np
 import pandas as pd
 
+from .helpers.naming import output_basename
 
 def _polygons(binary, epsilon):
     """Represent disconnected regions, holes and nested islands without flattening."""
@@ -77,10 +79,7 @@ def export_geometry(project, names=None, inds=None, query=None, cats=None,
         row = project.overview.loc[index]
         video = str(row.video)
         region = row.get("region")
-        multiple = (project.overview.video == video).sum() > 1
-        if multiple and (region is None or pd.isna(region)):
-            raise ValueError(f"Missing region for overview row {index}")
-        basename = f"{video}_R{int(region)}" if multiple else video
+        basename = output_basename(project.overview, index)
         path = destination / f"{basename}.geometry.json"
         if path.exists() and not overwrite:
             print(f"Existing geometry retained: {path}")
